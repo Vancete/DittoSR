@@ -1,5 +1,5 @@
 // DittoSR on D3D12 (dittosr.h), as compute shaders: convert (render size) -> change (4 x 4, then 1 x 1; skipped on a
-// reset) -> upscale (output size) -> sharpen (output size, when sharpness > 0), the history and the convert pass's
+// reset) -> upscale (output size) -> sharpen (output size, but with a debug view), the history and the convert pass's
 // output each a ping-pong pair. The history is RGBA16F (rgb encoded: common.hlsli enc, a = the stability level): the
 // game's colour is linear HDR.
 #include "dittosr.h"
@@ -402,7 +402,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     }
     transition(cl, histC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     // sharpen (output size): the history into the game's output
-    if (s_.sharpness > 0.0f) {
+    if (!s_.debugView) {  // (always: at sharpness 0 a soft blur; a debug view: the upscale writes it)
         ID3D12Resource *s[7] = {histC.res, mdaC.res, nullptr, nullptr, nullptr, expo};
         DXGI_FORMAT f[7] = {histC.fmt, mdaC.fmt, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN, exf};
         ID3D12Resource *u[2] = {nullptr, out};

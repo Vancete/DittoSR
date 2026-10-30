@@ -40,14 +40,14 @@ scripts\uninstall.ps1 -Dir "<the same folder>"
 
 ## What it does
 
-Each frame, three compute passes run on the game's command list (a fourth when sharpening is on):
+Each frame, four compute passes run on the game's command list:
 
 | Pass           | Size          | What it does                                                                                                                                                            |
 | -------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `convert.hlsl` | render        | GSR 2's convert pass: the motion of the nearest of the 3x3 and its depth clip; DittoSR adds the nearness the disocclusion test reads                                    |
 | `change.hlsl`  | 4x4, then 1x1 | how much of the image changed against the history (scene cuts, menus, fades settle at once)                                                                             |
 | `upscale.hlsl` | output        | the reconstruction: the jittered render samples through an edge-directed Gaussian, blended with the history moved along the motion vectors, clipped against the samples |
-| `sharpen.hlsl` | output        | a light contrast-adaptive sharpen that fades out with motion                                                                                                            |
+| `sharpen.hlsl` | output        | a light contrast-adaptive sharpen, at rest and moving                                                                                                                   |
 
 ### Changes from GSR 2
 
@@ -148,18 +148,21 @@ The shipped file has five keys. **F9** reads the file again while playing, so `s
 | Section     | Key            | Meaning                                                                                                                                                                                                           |
 | ----------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `[dittosr]` | `enabled`      | `1` DittoSR; `0` AMD's FSR instead (needs AMD's DLL alongside as `.orig.dll`)                                                                                                                                     |
-| `[dittosr]` | `sharpness`    | the sharpening while the image holds still (it fades out with motion): `0` off to `1` strongest; 0.2                                                                                                              |
-| `[dittosr]` | `frame_weight` | the weight of each new frame against the accumulated image, 0.25 to 4; 1. Lower: more persistence (steadier, smoother, more motion blur and trailing). Higher: more responsive (crisper in motion, more shimmer). |
+| `[dittosr]` | `sharpness`    | at rest `0` soft, `0.6` the image as reconstructed, `1` sharpened; moving, sharpened more the higher; 0.2                                                                                                                   |
+| `[dittosr]` | `frame_weight` | the weight of each new frame against the accumulated image, 0.25 to 4; 2. Lower: more persistence (steadier, smoother, more motion blur and trailing). Higher: more responsive (crisper in motion, more shimmer). |
 | `[debug]`   | `enabled`      | `1`: F10 switches DittoSR ↔ AMD's FSR live, and the log describes the first upscales in full                                                                                                                      |
 | `[debug]`   | `indicator`    | `1`: a small green square in the top-left corner while DittoSR upscales                                                                                                                                           |
 
-What `frame_weight` does in the harness (dense grass, 2x):
+Above 1, the image at rest takes only a quarter of the excess (3 acts as 1.5 there): more of each new frame at rest only brings in the jittered samples' grain, which looks like oversharpening.
+
+What `frame_weight` does in the harness (dense grass, 2x, `sharpness` 0.5; still: `vel=0`, uneven pan: `vel=4 wobble=4`, moving object: the tiles scene):
 
 | `frame_weight` | Still: PSNR, shimmer | Uneven pan: PSNR, shimmer | Moving object: PSNR |
 | -------------- | -------------------- | ------------------------- | ------------------- |
-| 0.5            | 33.1 dB, 0.72        | 31.6 dB, 1.10             | 27.5 dB             |
-| 1              | 34.6 dB, 1.44        | 32.5 dB, 1.96             | 28.4 dB             |
-| 2              | 34.1 dB, 3.03        | 32.5 dB, 3.72             | 29.4 dB             |
+| 0.5            | 32.1 dB, 0.67        | 31.7 dB, 1.91             | 27.6 dB             |
+| 1              | 33.7 dB, 1.32        | 33.0 dB, 2.82             | 28.6 dB             |
+| 2              | 34.1 dB, 1.67        | 33.3 dB, 4.20             | 29.3 dB             |
+| 3              | 34.2 dB, 2.03        | 32.8 dB, 5.61             | 29.8 dB             |
 
 ### Advanced keys
 

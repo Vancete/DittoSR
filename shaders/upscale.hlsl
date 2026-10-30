@@ -41,7 +41,7 @@ void put(uint2 id, float3 g, float stab, float e) {
     g = saturate(g);
     History[id] = hstore(id, g, stab);
 #if !DITTO_VK
-    if (sharpness > 0.0) return;  // (sharpen.hlsl writes the output from the history)
+    if (debugView < 0.5) return;  // (sharpen.hlsl writes the output from the history; a debug view: this pass)
     float3 o = dec(g, e);
     if (indicator > 0.5 && id.x < 12 && id.y < 12) o = float3(0.0, 1.0, 0.0) / e;
     Output[id] = float4(o, 1.0);
@@ -159,8 +159,11 @@ void main(uint2 id : SV_DispatchThreadID) {
     // shimmers - at rest it is what resolves the detail)
     float near = motionNear > 0.0 ? lerp(shareNear, motionNear, mf) : shareNear;
     float a = base * lerp(shareFar, near, smoothstep(0.05, 0.8, cf));
-    // (frame_weight: the user's persistence - the reactions below still take over where something changed)
-    a = saturate(a * frameWeight);
+    // (frame_weight: the user's persistence - the reactions below still take over where something changed. Above 1, in
+    // full moving and a quarter of its excess at rest: there the jittered samples it lets in showed as a grain - a
+    // sharpening at rest with the sharpening off)
+    float fwRest = frameWeight > 1.0 ? 1.0 + 0.25 * (frameWeight - 1.0) : frameWeight;
+    a = saturate(a * lerp(fwRest, frameWeight, mf));
     a = lerp(a, 0.6, mda.z);
     // the reaction: the history outside the samples' range by t - something changed - the new frame by it
     // (with much of the image changed the reaction goes further: the new frame up to 0.95)

@@ -34,7 +34,7 @@ cbuffer C : register(b0) {
     float motionShare;    // the new frame's base share while moving (0.3)
     float motionMinMax;   // how far the box is held within the samples' min / max while moving (1)
     float depthMode;      // 0: disocclusion by the previous frame's depth where the pixel was; 1: GSR 2's depth clip
-    float sharpness;      // 0: no sharpening pass (the upscale writes the output); > 0: its strength
+    float sharpness;      // 0 - 1: at rest soft below 0.6, sharpened above; moving, sharpened by it (sharpen.hlsl)
     float changeScale;    // how far the share of the image that changed drives the reaction (1)
     float shareFar;       // the new frame's share x this where no sample landed close (0.6 originally)
     float shareNear;      // ... x this where one did (1.4: ANEAR)

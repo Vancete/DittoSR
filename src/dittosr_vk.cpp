@@ -1,5 +1,5 @@
 // DittoSR on Vulkan (dittosr_vk.h): convert (render size) -> change (4 x 4, then 1 x 1; skipped on a reset) -> upscale
-// (output size) -> sharpen (output size; always - it writes the game's output, as a plain decode at sharpness 0). One
+// (output size) -> sharpen (output size; always - it writes the game's output). One
 // descriptor set per pass, from a ring rewritten kRing frames later (as the D3D12 descriptor ring), the constants in a
 // uniform buffer ring alongside. The internal images stay in GENERAL; the game's are moved to what the passes need and
 // back to the layouts they came in.
