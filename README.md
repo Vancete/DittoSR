@@ -11,6 +11,8 @@ serves both APIs, under the names games load: `amd_fidelityfx_dx12.dll`, `amd_fi
 
 You can expect a perceived quality between FSR3.1 and FSR4.1 while being lighter than both. Also, a little .ini is next to the .dll on every game so you can configure the sharpness and frame blending with hot reloading (F9).
 
+![FSR and DittoSR comparison](/docs/comp1.png)
+
 ## Install
 
 Build it (below), then run, in PowerShell:
@@ -148,7 +150,7 @@ The shipped file has five keys. **F9** reads the file again while playing, so `s
 | Section     | Key            | Meaning                                                                                                                                                                                                           |
 | ----------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `[dittosr]` | `enabled`      | `1` DittoSR; `0` AMD's FSR instead (needs AMD's DLL alongside as `.orig.dll`)                                                                                                                                     |
-| `[dittosr]` | `sharpness`    | at rest `0` soft, `0.6` the image as reconstructed, `1` sharpened; moving, sharpened more the higher; 0.2                                                                                                                   |
+| `[dittosr]` | `sharpness`    | at rest `0` soft, `0.6` the image as reconstructed, `1` sharpened; moving, sharpened more the higher; 0.2                                                                                                         |
 | `[dittosr]` | `frame_weight` | the weight of each new frame against the accumulated image, 0.25 to 4; 2. Lower: more persistence (steadier, smoother, more motion blur and trailing). Higher: more responsive (crisper in motion, more shimmer). |
 | `[debug]`   | `enabled`      | `1`: F10 switches DittoSR ↔ AMD's FSR live, and the log describes the first upscales in full                                                                                                                      |
 | `[debug]`   | `indicator`    | `1`: a small green square in the top-left corner while DittoSR upscales                                                                                                                                           |
@@ -180,6 +182,7 @@ These are not in the shipped file. They are read from `[dittosr]` when added the
 ## Build
 
 Needs Visual Studio 2022 (C++ tools), the Windows SDK's `dxc` (DirectX 12 shaders), and a `dxc` built with SPIR-V for the Vulkan shaders. The Windows SDK's isn't. Either:
+
 - extract the [DirectXShaderCompiler release](https://github.com/microsoft/DirectXShaderCompiler/releases) into `tools\dxc\` (`tools\dxc\bin\x64\dxc.exe`; `tools\` is ignored by git), or
 - install the Vulkan SDK (`%VULKAN_SDK%\Bin\dxc.exe`).
 
