@@ -89,6 +89,7 @@ private:
     bool texValid_ = false;
     uint64_t frames_ = 0;
     float prevJit_[2] = {0, 0};
+    bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
 };
 
 // An FSR 3.1 upscale dispatch (Vulkan backend) as a DittoFrameVk (false: a resource missing or an unknown format)

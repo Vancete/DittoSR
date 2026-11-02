@@ -7,7 +7,7 @@
 #include "ffx_api/ffx_upscale.h"
 
 // the version both front ends report (the FidelityFX API provider, the libxess.dll proxy)
-#define DITTOSR_VERSION_NAME "DittoSR 0.2.0"
+#define DITTOSR_VERSION_NAME "DittoSR 0.2.1"
 
 struct DittoSettings {
     float alphaRest = 0.035f;  // a stable pixel's share of each new frame at rest
@@ -110,6 +110,7 @@ private:
     ID3D12PipelineState *psoConvert_ = nullptr, *psoChange_ = nullptr, *psoUpscale_ = nullptr, *psoSharpen_ = nullptr;
     ID3D12PipelineState *psoUpscale16_ = nullptr, *psoSharpen16_ = nullptr;  // (null: no native 16-bit math)
     bool lastFp16_ = false;
+    bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     bool amd_ = false;  // (the device's vendor is AMD: fp16 = -1 picks the FP16 shaders)
     ID3D12DescriptorHeap *heap_ = nullptr;
     uint32_t heapSize_ = 0, heapNext_ = 0, descInc_ = 0;

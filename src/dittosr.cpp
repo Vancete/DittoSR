@@ -69,6 +69,18 @@ DXGI_FORMAT view_format(DXGI_FORMAT f, bool uav) {
     }
 }
 
+// A float colour format: values above 1 (HDR)
+bool float_format(DXGI_FORMAT f) {
+    switch (view_format(f, false)) {
+    case DXGI_FORMAT_R32G32B32A32_FLOAT:
+    case DXGI_FORMAT_R32G32B32_FLOAT:
+    case DXGI_FORMAT_R16G16B16A16_FLOAT:
+    case DXGI_FORMAT_R11G11B10_FLOAT:
+    case DXGI_FORMAT_R9G9B9E5_SHAREDEXP: return true;
+    default: return false;
+    }
+}
+
 }  // namespace
 
 float ditto_ratio_from_quality(uint32_t q) {
@@ -342,6 +354,12 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     // the constants
     DittoConstants k;
     ditto_fill_constants(k, s_, fr, reset, expo != nullptr, reac != nullptr, hist_[0].fmt == DXGI_FORMAT_R10G10B10A2_UNORM, prevJit_);
+    // (a float colour declared LDR is read as HDR: as [0, 1] colour it would be clipped at 1 - Witcher 3 through
+    // OptiScaler, its highlights flattened)
+    if (!fr.hdr && float_format(cd.Format)) {
+        if (!hdrFromFormat_) ditto_log("colour: float format %d without the HDR flag - read as HDR\n", (int)cd.Format), hdrFromFormat_ = true;
+        k.hdr = 1.0f;
+    }
     bool fp16 = psoUpscale16_ && (s_.fp16 > 0 || (s_.fp16 < 0 && amd_));
     if (fp16 != lastFp16_ || frames_ == 0) ditto_log("shaders: %s\n", fp16 ? "FP16" : "FP32"), lastFp16_ = fp16;
 

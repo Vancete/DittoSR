@@ -83,6 +83,18 @@ VkFormat vk_format(uint32_t f, bool depth) {
     }
 }
 
+// A float colour format: values above 1 (HDR)
+bool float_format(VkFormat f) {
+    switch (f) {
+    case VK_FORMAT_R32G32B32A32_SFLOAT:
+    case VK_FORMAT_R32G32B32_SFLOAT:
+    case VK_FORMAT_R16G16B16A16_SFLOAT:
+    case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
+    case VK_FORMAT_E5B9G9R9_UFLOAT_PACK32: return true;
+    default: return false;
+    }
+}
+
 // the sharpening pipeline for an output format (-1: none - a format DittoSR cannot write)
 int sharpen_variant(VkFormat f) {
     switch (f) {
@@ -416,6 +428,11 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
     // the constants: this frame's two slots of the ring (mode 0, and mode 1 for the change pass's second step)
     DittoConstants k;
     ditto_fill_constants(k, s_, fr, reset, vExpo != VK_NULL_HANDLE, vReac != VK_NULL_HANDLE, false, prevJit_);
+    // (a float colour declared LDR is read as HDR: as [0, 1] colour it would be clipped at 1)
+    if (!fr.hdr && float_format(fr.color.format)) {
+        if (!hdrFromFormat_) ditto_log("colour: float format %d without the HDR flag - read as HDR\n", (int)fr.color.format), hdrFromFormat_ = true;
+        k.hdr = 1.0f;
+    }
     uint32_t slot = (uint32_t)(frames_ % kRing);
     VkDeviceSize u0 = (VkDeviceSize)uboStride_ * (slot * kUbosPerFrame), u1 = u0 + uboStride_;
     memcpy(uboMap_ + u0, &k, sizeof k);
