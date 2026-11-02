@@ -154,7 +154,11 @@ void main(uint2 id : SV_DispatchThreadID) {
     float t = max(ad.x, max(ad.y, ad.z));
     float3 hcc = t > 1.0 ? bc + dir / t : hc;
     hy = splitClip > 0.5 ? hcc + (hy - hl) * (1.0 - smoothstep(1.0, 2.5, t)) : hcc;
-    float base = lerp(lerp(0.2, alphaRest > 0.0 ? alphaRest : 0.035, sp), motionShare, saturate(mlen * 0.125));
+    // (above 2x - hr 0 to 1 at 3x - moving, more of the new frame: its jittered samples are what carries a moving
+    // object's detail, the history resampled every frame softening it - at 3x a moving object matched FSR's at 2.3x,
+    // and the grass still shimmered half as much as FSR's)
+    float hr = saturate(ratio - 2.0);
+    float base = lerp(lerp(0.2, alphaRest > 0.0 ? alphaRest : 0.035, sp), motionShare * (1.0 + 0.67 * hr), saturate(mlen * 0.125));
     // (moving, less contrast between the pixels a sample landed near and the rest: each frame's own pattern of them
     // shimmers - at rest it is what resolves the detail)
     float near = motionNear > 0.0 ? lerp(shareNear, motionNear, mf) : shareNear;
@@ -176,10 +180,14 @@ void main(uint2 id : SV_DispatchThreadID) {
         rv = saturate(Reactive.SampleLevel(linearClamp, uv, 0.0) * reactiveScale);
         a = max(a, rv);
     }
-    // (the stability for the next frame: 0 where the history was cut, else one step up)
+    // (the stability for the next frame: 0 where the history was cut, else one step up. Above 2x at rest, a step only
+    // when a sample landed near the pixel: at 3x one does every ~9 frames, and a step each frame had the pixel stable -
+    // taking little of each new sample - before its first ones came; 30.8 to 31.9 dB on still grass at 3x, as a pixel
+    // after a cut converges)
     bool cut = t > 1.25 || rj > 0.5 || mda.z > 0.5 || gch > 0.5 || rv > 0.5;
     float3 res = lerp(rgb(hy), cur, saturate(a));
-    float stab = cut ? 0.0 : min(sp + 0.34, 1.0);
+    bool landed = hr <= 0.0 || cf > 0.15 * hr || mlen > 1.0;
+    float stab = cut ? 0.0 : min(sp + (landed ? 0.34 : 0.0), 1.0);
     if (debugView > 1.5) {  // (the history as usual, the output a view of the decision)
         float3 v = debugView < 2.5 ? saturate(a).xxx : debugView < 3.5 ? sp.xxx : float3(saturate(t - 1.0), cut ? 1.0 : 0.0, cf);
 #if DITTO_VK

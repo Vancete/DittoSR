@@ -5,7 +5,9 @@
 // 0.6) - below 0.6 a soft blur instead (the reconstruction alone looked oversharpened: 0 soft, 0.6 as it is), above it
 // the sharpening x 0.5 - 1 by the stability level (a pixel just cut still holds the jittered samples' noise it would
 // amplify); moving - from 2 output pixels a frame - 0.1 x sharpness: the wider reconstruction there softens the image
-// (0.2 doubled the shimmer of an uneven pan).
+// (0.2 doubled the shimmer of an uneven pan). Above 2x the moving term grows with the ratio (x 2.25 at 3x): a moving
+// object's detail is softer there - at 3x it was 12 % below 2x's against the reference, now level - while at rest the
+// ratio left the sharpness as it was (the sharpness value means the same at 2x and 3x).
 // t0 = the history (u0 of the upscale; a = the stability level), t1 = the convert pass's (motion), u1 = the game's output.
 #include "common.hlsli"
 
@@ -23,7 +25,8 @@ void main(uint2 id : SV_DispatchThreadID) {
     float2 uv = (float2(id) + 0.5) * osRcp;
     float mlen = length(0.5 * MotionDepthClip.SampleLevel(linearClamp, uv, 0.0).xy * os);
     float sh = saturate(sharpness), kr = 0.25 * (sh - 0.6);
-    float k = lerp(kr > 0.0 ? kr * (0.5 + 0.5 * c4.a) : kr, 0.1 * sh, saturate(mlen * 0.5));  // (1: CAS's strongest)
+    float km = 0.1 * sh * (1.0 + 1.25 * saturate(ratio - 2.0));
+    float k = lerp(kr > 0.0 ? kr * (0.5 + 0.5 * c4.a) : kr, km, saturate(mlen * 0.5));  // (1: CAS's strongest)
     // (the filter at hf precision - half in the FP16 variant)
     hf3 ch = (hf3)c;
     hf3 n = (hf3)History.Load(int3(clamp(p + int2(0, -1), int2(0, 0), m), 0)).rgb;
