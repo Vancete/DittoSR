@@ -73,7 +73,7 @@ static Sample tiles(float x, float y, int t) {
         float v = (fmodf(lx, 20.0f) < 3.0f || fmodf(ly, 20.0f) < 3.0f) ? 1.0f : 0.3f;
         s.rgb[0] = 1.5f * v, s.rgb[1] = 0.4f * v, s.rgb[2] = 0.2f * v;
         s.depth = 0.8f;  // (reversed-Z: nearer)
-        s.mv[0] = FG_VEL[0], s.mv[1] = FG_VEL[1];
+        s.mv[0] = -FG_VEL[0], s.mv[1] = -FG_VEL[1];  // (the square moves by +FG_VEL: it was FG_VEL back)
         return s;
     }
     float sx = x + BG_VEL[0] * t, sy = y + BG_VEL[1] * t;
