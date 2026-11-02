@@ -8,7 +8,7 @@ $build = Join-Path $root "build"
 $stage = Join-Path $build "package\DittoSR"
 if (Test-Path (Join-Path $build "package")) { Remove-Item -Recurse -Force (Join-Path $build "package") }
 New-Item -ItemType Directory -Force (Join-Path $stage "build"), (Join-Path $stage "scripts"), (Join-Path $stage "licenses") | Out-Null
-foreach ($f in "amd_fidelityfx_dx12.dll", "amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_vk.dll", "harness.exe") {
+foreach ($f in "amd_fidelityfx_dx12.dll", "amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_vk.dll", "libxess.dll", "harness.exe") {
     $p = Join-Path $build $f
     if (-not (Test-Path $p)) { throw "build first (build.bat): $p" }
     Copy-Item $p (Join-Path $stage "build")

@@ -7,7 +7,8 @@ dense foliage, fast camera turns) while staying lighter than the usual alternati
 It ships as a drop-in **FidelityFX API** provider for **DirectX 12 and Vulkan**: a game that offers FSR 3.1 (or a
 tool that loads FSR 3.1, such as OptiScaler) upscales through DittoSR instead, with no change to the game. One DLL
 serves both APIs, under the names games load: `amd_fidelityfx_dx12.dll`, `amd_fidelityfx_loader_dx12.dll`,
-`amd_fidelityfx_vk.dll` and `amd_fidelityfx_upscaler_dx12.dll`.
+`amd_fidelityfx_vk.dll` and `amd_fidelityfx_upscaler_dx12.dll`. For games whose FSR it can't reach, it also goes in
+place of **XeSS** on DirectX 12, as `libxess.dll`.
 
 You can expect a perceived quality between FSR3.1 and FSR4.1 while being lighter than both. Also, a little .ini is next to the .dll on every game so you can configure the sharpness and frame blending with hot reloading (F9).
 
@@ -18,10 +19,11 @@ You can expect a perceived quality between FSR3.1 and FSR4.1 while being lighter
 Extract `DittoSR.zip` and run **`DittoSRLoader.exe`**:
 
 1. Pick the game in the **Steam game** list, or **Browse...** to its folder. The game's install folder is enough: the loader looks in every folder below it.
-2. It lists the FidelityFX DLLs it finds and what each one is now: AMD's (with its FSR version) or DittoSR's. The ones to replace are already checked.
-3. **Install DittoSR**, then choose **FSR** (FSR 3.1 or later) in the game's settings.
+2. Under **Replace**, choose **FSR** (the default) or **XeSS** (see below).
+3. It lists the DLLs it finds and what each one is now: AMD's or Intel's (with its version) or DittoSR's. The ones to replace are already checked.
+4. **Install DittoSR**, then choose **FSR** (FSR 3.1 or later) or **XeSS** in the game's settings.
 
-**Restore AMD's files** puts the game's DLLs back. **Settings** opens the folder's `dittosr.ini`, and **Log** opens `dittosr.log`. For a folder Windows protects (under `Program Files`), the loader offers to restart as administrator.
+**Restore game's files** puts the game's DLLs back. **Settings** opens the folder's `dittosr.ini`, and **Log** opens `dittosr.log` (`dittosr-xess.log` on XeSS). For a folder Windows protects (under `Program Files`), the loader offers to restart as administrator.
 
 The loader looks for these DLLs:
 
@@ -31,6 +33,14 @@ The loader looks for these DLLs:
 - `amd_fidelityfx_upscaler_dx12.dll`, when the folder has neither of the first two. That is an SDK 2.x game with the loader built into its executable, which loads the upscaler by name.
 
 Each one is checked for AMD's signature, backed up to `dittosr-backup\` with its SHA-256, kept as `<name>.orig.dll`, and replaced by DittoSR. `dittosr.ini` goes next to it.
+
+**XeSS:** some games, such as Cyberpunk 2077, build their FSR into the executable. They only ask the FidelityFX DLL which versions there are, so DittoSR never gets an upscale to do. If the game offers XeSS, choose **XeSS** in the loader:
+
+- The game's `libxess.dll` is checked for Intel's signature, backed up the same way, and kept as `libxess_orig.dll`. DittoSR's `libxess.dll` goes in its place.
+- The game's XeSS still creates and sets up its contexts as usual. Only the upscale itself, XeSS's DirectX 12 execute, runs DittoSR. **F10** switches back to XeSS live, as it does to FSR.
+- Every other XeSS export is forwarded to the game's own, so XeSS on Vulkan and DirectX 11 stays XeSS. The forwarders cover XeSS 2.0's exports. The loader refuses a newer `libxess.dll` with exports the proxy doesn't have, because the game wouldn't start. `scripts\xess_exports.py` regenerates the forwarders from newer DLLs.
+- The cost: each frame runs DittoSR instead of XeSS, plus one extra function call. XeSS's context is still created, so its memory stays allocated and its setup at game start is unchanged.
+- The scripts don't install on XeSS, but `uninstall.ps1` and `uninstall.sh` restore it.
 
 The same, in PowerShell (the loader and the scripts are interchangeable):
 
@@ -215,6 +225,7 @@ build.bat
 The output goes to `build\`:
 
 - `amd_fidelityfx_dx12.dll`, `amd_fidelityfx_loader_dx12.dll` and `amd_fidelityfx_vk.dll`: the same DLL under the three names games load;
+- `libxess.dll`: DittoSR in place of XeSS (`src\xess_dll.cpp`), the game's own XeSS renamed `libxess_orig.dll` behind it;
 - `harness.exe`: the offline test;
 - `DittoSRLoader.exe`: the loader, from `loader\`. It's a small WinForms app that `loader\build.bat` compiles with the `csc.exe` of .NET Framework 4.x, which comes with Windows: it needs no SDK, and runs on Windows 10 and 11 as it is.
 

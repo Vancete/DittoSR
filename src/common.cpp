@@ -112,5 +112,5 @@ void ditto_init(void *module, const char *logName) {
     char *s = strrchr(g_dir, '\\');
     if (s) s[1] = 0;
     load_config();
-    ditto_log("DittoSR loaded from %s\n", g_dir);
+    ditto_log("%s loaded from %s\n", DITTOSR_VERSION_NAME, g_dir);
 }

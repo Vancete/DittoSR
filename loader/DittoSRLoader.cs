@@ -1,4 +1,5 @@
-// DittoSR Loader: a small window that installs DittoSR into a game - install.ps1's job without PowerShell.
+// DittoSR Loader: a small window that installs DittoSR into a game - install.ps1's job without PowerShell - in place of
+// its FSR or of its XeSS (libxess.dll, for games whose FSR can't be reached).
 //   Pick the game's folder (or one of the Steam games found), and it looks below it for the FidelityFX DLLs games load:
 // amd_fidelityfx_dx12.dll (FidelityFX SDK 1.1, FSR 3.1), amd_fidelityfx_loader_dx12.dll (SDK 2.x), amd_fidelityfx_vk.dll
 // (FSR 3.1 on Vulkan) and amd_fidelityfx_upscaler_dx12.dll where the folder has neither of the first two (an SDK 2.x game
@@ -6,7 +7,10 @@
 // AMD's file (checked for AMD's signature) backed up to <folder>\dittosr-backup\ with its SHA-256, copied to
 // <name>.orig.dll (what DittoSR hands frame generation and the FSR toggle to) and replaced by DittoSR; dittosr.ini next
 // to it (kept if already there). Restoring does what uninstall.ps1 does. The two are interchangeable with the scripts.
-//   DittoSR's DLL and the default dittosr.ini: next to this executable, in build\ (the release's layout) or alongside it
+//   XeSS: the game's libxess.dll (checked for Intel's signature, and for exports DittoSR's proxy forwards all of) backed
+// up the same way and kept as libxess_orig.dll, which the proxy creates XeSS's contexts with - only its D3D12 execute
+// runs DittoSR. Not in the scripts.
+//   DittoSR's DLLs and the default dittosr.ini: next to this executable, in build\ (the release's layout) or alongside it
 // (the repository's build\), else in ..\build\ and ..\.
 // Built by loader\build.bat with the csc.exe of .NET Framework 4.x (part of Windows): C# 5, no other dependency.
 using System;
@@ -28,29 +32,38 @@ using Microsoft.Win32;
 
 [assembly: AssemblyTitle("DittoSR Loader")]
 [assembly: AssemblyProduct("DittoSR")]
-[assembly: AssemblyVersion("0.1.4.0")]
-[assembly: AssemblyFileVersion("0.1.4.0")]
+[assembly: AssemblyVersion("0.2.0.0")]
+[assembly: AssemblyFileVersion("0.2.0.0")]
 
 namespace DittoSR {
 
-// A FidelityFX DLL the scan found, and what it is now.
+// A FidelityFX or XeSS DLL the scan found, and what it is now.
 class Candidate {
     public string Folder, Name, State;
     public bool Installable, Recommended;
     public string Path { get { return System.IO.Path.Combine(Folder, Name); } }
+    public bool Xess { get { return Name == Files.Xess; } }
 }
 
 static class Files {
     public const string Dx12 = "amd_fidelityfx_dx12.dll", Loader = "amd_fidelityfx_loader_dx12.dll",
                         Vk = "amd_fidelityfx_vk.dll", Upscaler = "amd_fidelityfx_upscaler_dx12.dll";
     public static readonly string[] All = { Dx12, Loader, Vk, Upscaler };
-    public const string Backup = "dittosr-backup", Ini = "dittosr.ini", Log = "dittosr.log";
+    public const string Xess = "libxess.dll", XessOrig = "libxess_orig.dll";
+    public static readonly string[] Restorable = { Dx12, Loader, Vk, Upscaler, Xess };
+    public const string Backup = "dittosr-backup", Ini = "dittosr.ini", Log = "dittosr.log", XessLog = "dittosr-xess.log";
 
     public static string Orig(string folder, string name) {
-        return System.IO.Path.Combine(folder, System.IO.Path.GetFileNameWithoutExtension(name) + ".orig.dll");
+        // (the XeSS proxy's forwarders name libxess_orig.dll)
+        return System.IO.Path.Combine(folder, name == Xess ? XessOrig : System.IO.Path.GetFileNameWithoutExtension(name) + ".orig.dll");
     }
 
-    // ---- AMD's signature (Authenticode, as install.ps1's Get-AuthenticodeSignature)
+    // the vendor a DLL of that name is signed by
+    public static string Vendor(string name) {
+        return name == Xess ? "Intel Corporation" : "Advanced Micro Devices";
+    }
+
+    // ---- the vendor's signature (Authenticode, as install.ps1's Get-AuthenticodeSignature)
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     class TrustFileInfo {
         public uint cbStruct = (uint)Marshal.SizeOf(typeof(TrustFileInfo));
@@ -75,13 +88,13 @@ static class Files {
     static extern int WinVerifyTrust(IntPtr hwnd, [MarshalAs(UnmanagedType.LPStruct)] Guid action, [In] TrustData data);
     static readonly Guid GenericVerifyV2 = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
 
-    public static bool AmdSigned(string path) {
+    public static bool SignedBy(string path, string vendor) {
         var info = new TrustFileInfo { path = path };
         IntPtr p = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(TrustFileInfo)));
         try {
             Marshal.StructureToPtr(info, p, false);
             if (WinVerifyTrust(IntPtr.Zero, GenericVerifyV2, new TrustData { file = p }) != 0) return false;
-            return X509Certificate.CreateFromSignedFile(path).Subject.Contains("Advanced Micro Devices");
+            return X509Certificate.CreateFromSignedFile(path).Subject.Contains(vendor);
         } catch (Exception) {
             return false;
         } finally {
@@ -90,7 +103,7 @@ static class Files {
         }
     }
 
-    // DittoSR's version name in a DLL ("DittoSR 0.1.4"), or null: not DittoSR's (AMD's DLLs are tens of MB: not read)
+    // DittoSR's version name in a DLL ("DittoSR 0.2.0"), or null: not DittoSR's (AMD's DLLs are tens of MB: not read)
     public static string DittoVersion(string path) {
         try {
             var fi = new FileInfo(path);
@@ -108,17 +121,45 @@ static class Files {
             return BitConverter.ToString(sha.ComputeHash(f)).Replace("-", "");
     }
 
-    public static string AmdVersion(string path) {
+    // a PE DLL's exported names
+    public static HashSet<string> Exports(string path) {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        byte[] d = File.ReadAllBytes(path);
+        int pe = BitConverter.ToInt32(d, 0x3c), sections = BitConverter.ToUInt16(d, pe + 6), opt = pe + 24;
+        int dirs = opt + (BitConverter.ToUInt16(d, opt) == 0x20b ? 112 : 96), sec = opt + BitConverter.ToUInt16(d, pe + 20);
+        Func<uint, int> at = rva => {
+            for (int i = 0; i < sections; i++) {
+                int h = sec + 40 * i;
+                uint vs = BitConverter.ToUInt32(d, h + 8), va = BitConverter.ToUInt32(d, h + 12), rs = BitConverter.ToUInt32(d, h + 16);
+                if (rva >= va && rva < va + Math.Max(vs, rs)) return (int)(rva - va + BitConverter.ToUInt32(d, h + 20));
+            }
+            throw new InvalidDataException("not a DLL: " + path);
+        };
+        uint exportRva = BitConverter.ToUInt32(d, dirs);
+        if (exportRva == 0) return names;
+        int e = at(exportRva), count = BitConverter.ToInt32(d, e + 24), table = at(BitConverter.ToUInt32(d, e + 32));
+        for (int i = 0; i < count; i++) {
+            int p = at(BitConverter.ToUInt32(d, table + 4 * i)), end = Array.IndexOf(d, (byte)0, p);
+            names.Add(Encoding.ASCII.GetString(d, p, end - p));
+        }
+        return names;
+    }
+
+    public static string VendorVersion(string path) {
         string name = System.IO.Path.GetFileName(path), v = FileVersionInfo.GetVersionInfo(path).ProductVersion;
-        string what = string.Equals(name, Loader, StringComparison.OrdinalIgnoreCase) ? "AMD's FidelityFX loader"
+        string what = name == Xess ? "Intel's XeSS"
+                    : string.Equals(name, Loader, StringComparison.OrdinalIgnoreCase) ? "AMD's FidelityFX loader"
                     : string.Equals(name, Upscaler, StringComparison.OrdinalIgnoreCase) ? "AMD's FSR upscaler" : "AMD's FSR";
         return string.IsNullOrEmpty(v) ? what : what + " " + v;
     }
 }
 
-// The scan: every folder at or below the one picked that holds a FidelityFX DLL, and the ones OptiScaler is in (its
-// OptiScaler.ini: it loads amd_fidelityfx_dx12.dll from its own folder for its FSR 3.1 option).
+// The scan: every folder at or below the one picked that holds a FidelityFX or XeSS DLL, and the ones OptiScaler is in
+// (its OptiScaler.ini: it loads amd_fidelityfx_dx12.dll from its own folder for its FSR 3.1 option).
 static class Scanner {
+    // the exports DittoSR's libxess.dll has (null: not found next to the loader) - a game's XeSS with others would not load
+    public static HashSet<string> XessProxyExports;
+
     public static List<Candidate> Scan(string root, Func<bool> cancelled, List<string> optiScaler) {
         var found = new List<Candidate>();
         var stack = new Stack<string>();
@@ -145,6 +186,9 @@ static class Scanner {
     }
 
     static void Look(string dir, List<Candidate> found) {
+        // (XeSS: the game's libxess.dll - not OptiScaler's own, its XeSS backend)
+        if (File.Exists(System.IO.Path.Combine(dir, Files.Xess)) && !File.Exists(System.IO.Path.Combine(dir, "OptiScaler.ini")))
+            found.Add(DescribeXess(dir));
         var present = Files.All.Where(n => File.Exists(System.IO.Path.Combine(dir, n))).ToList();
         if (present.Count == 0) return;
         // (the upscaler alone where the game has no loader DLL: its executable carries it. A DittoSR installed alone as
@@ -167,11 +211,35 @@ static class Scanner {
             c.State = ditto + (orig ? " installed (AMD's kept)" : " installed alone");
             c.Installable = true;
             c.Recommended = true;
-        } else if (Files.AmdSigned(path)) {
-            c.State = Files.AmdVersion(path) + " (the game's)";
+        } else if (Files.SignedBy(path, Files.Vendor(name))) {
+            c.State = Files.VendorVersion(path) + " (the game's)";
             c.Installable = c.Recommended = true;
         } else {
             c.State = "not AMD's - verify the game's files first";
+        }
+        return c;
+    }
+
+    static Candidate DescribeXess(string dir) {
+        var c = new Candidate { Folder = dir, Name = Files.Xess };
+        string path = c.Path, ditto = Files.DittoVersion(path);
+        bool orig = File.Exists(Files.Orig(dir, Files.Xess));
+        if (ditto != null) {
+            c.State = orig ? ditto + " installed (XeSS kept)" : ditto + ", but " + Files.XessOrig + " is missing - verify the game's files";
+            c.Installable = c.Recommended = orig;
+        } else if (Files.SignedBy(path, Files.Vendor(Files.Xess))) {
+            c.State = Files.VendorVersion(path) + " (the game's)";
+            c.Installable = c.Recommended = true;
+            if (XessProxyExports != null) {
+                int missing;
+                try { missing = Files.Exports(path).Count(n => !XessProxyExports.Contains(n)); } catch (Exception) { missing = -1; }
+                if (missing != 0) {
+                    c.State = Files.VendorVersion(path) + " - newer than DittoSR's proxy knows (" + (missing > 0 ? missing + " new exports" : "unreadable") + ")";
+                    c.Installable = c.Recommended = false;
+                }
+            }
+        } else {
+            c.State = "not Intel's - verify the game's files first";
         }
         return c;
     }
@@ -181,14 +249,16 @@ static class Scanner {
 static class Installer {
     public static void Install(Candidate c, string dll, string ini, Action<string> log) {
         string target = c.Path, orig = Files.Orig(c.Folder, c.Name), backup = Path.Combine(c.Folder, Files.Backup);
+        if (dll == null) throw new InvalidOperationException("DittoSR's " + (c.Xess ? Files.Xess : Files.Dx12) + " was not found next to the loader");
         if (File.Exists(target) && !File.Exists(orig) && Files.DittoVersion(target) == null) {
-            // the first install: AMD's file, before anything replaces it
-            if (!Files.AmdSigned(target)) throw new InvalidOperationException(target + " is not AMD's (not signed by Advanced Micro Devices): restore the game's file first");
+            // the first install: the vendor's file, before anything replaces it
+            string vendor = Files.Vendor(c.Name);
+            if (!Files.SignedBy(target, vendor)) throw new InvalidOperationException(target + " is not signed by " + vendor + ": restore the game's file first");
             Directory.CreateDirectory(backup);
             File.Copy(target, Path.Combine(backup, c.Name), true);
             File.WriteAllText(Path.Combine(backup, c.Name + ".sha256"), Files.Sha256(target) + "\r\n", Encoding.ASCII);
             File.Copy(target, orig, true);
-            log("backed up " + c.Name + " to " + backup + ", AMD's copy as " + Path.GetFileName(orig));
+            log("backed up " + c.Name + " to " + backup + ", the game's copy as " + Path.GetFileName(orig));
         }
         File.Copy(dll, target, true);
         log("installed DittoSR as " + target);
@@ -201,7 +271,7 @@ static class Installer {
 
     public static void Restore(string folder, Action<string> log) {
         string backup = Path.Combine(folder, Files.Backup);
-        foreach (string n in Files.All) {
+        foreach (string n in Files.Restorable) {
             string target = Path.Combine(folder, n), saved = Path.Combine(backup, n), orig = Files.Orig(folder, n);
             if (File.Exists(saved)) {
                 string want = File.Exists(saved + ".sha256") ? File.ReadAllText(saved + ".sha256").Trim() : "";
@@ -209,14 +279,21 @@ static class Installer {
                     throw new InvalidOperationException("the backup of " + n + " in " + folder + " does not match its hash: verify the game's files in its launcher instead");
                 File.Copy(saved, target, true);
                 if (File.Exists(orig)) File.Delete(orig);
-                log("restored AMD's " + target);
+                log("restored the game's " + target);
             } else if (File.Exists(target) && Files.DittoVersion(target) != null) {
-                // (installed alone - no AMD file was there)
-                File.Delete(target);
-                log("removed DittoSR's " + target);
+                if (File.Exists(orig)) {
+                    // (no backup - an install from before the loader kept none: the game's copy)
+                    File.Copy(orig, target, true);
+                    File.Delete(orig);
+                    log("restored the game's " + target + " from " + Path.GetFileName(orig));
+                } else {
+                    // (installed alone - no game file was there)
+                    File.Delete(target);
+                    log("removed DittoSR's " + target);
+                }
             }
         }
-        foreach (string f in new[] { Files.Ini, Files.Log }) {
+        foreach (string f in new[] { Files.Ini, Files.Log, Files.XessLog }) {
             string p = Path.Combine(folder, f);
             if (File.Exists(p)) File.Delete(p);
         }
@@ -321,6 +398,10 @@ static class Theme {
 
 class RoundButton : Button {
     bool hover, down;
+    // a toggle (FSR / XeSS): blue when selected, else dark with a border
+    public bool Toggle;
+    bool selected;
+    public bool Selected { get { return selected; } set { selected = value; Invalidate(); } }
 
     public RoundButton(string text, float k) {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
@@ -345,21 +426,32 @@ class RoundButton : Button {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.Clear(Parent != null ? Parent.BackColor : Theme.Back);
-        Color c = !Enabled ? Theme.AccentOff : down ? Theme.AccentDown : hover ? Theme.AccentHover : Theme.Accent;
+        bool off = Toggle && !selected;
+        Color c = !Enabled ? Theme.AccentOff : off ? (hover ? Theme.Border : Theme.Header)
+                : down ? Theme.AccentDown : hover ? Theme.AccentHover : Theme.Accent;
         using (var path = Theme.Round(new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f), Height * 0.3f))
         using (var b = new SolidBrush(c)) {
             g.FillPath(b, path);
+            if (off)
+                using (var pen = new Pen(Theme.Border)) g.DrawPath(pen, path);
             if (Focused && ShowFocusCues)
                 using (var pen = new Pen(Color.FromArgb(150, 255, 255, 255))) g.DrawPath(pen, path);
         }
-        TextRenderer.DrawText(g, Text, Font, ClientRectangle, Enabled ? Color.White : Theme.Faint,
+        TextRenderer.DrawText(g, Text, Font, ClientRectangle, !Enabled ? Theme.Faint : off ? Theme.Muted : Color.White,
                               TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
     }
 }
 
 class LoaderForm : Form {
-    readonly string dll, ini, version;
+    readonly string dll, xessDll, ini, version;
     readonly float k;
+    bool xessMode;  // the upscaler DittoSR goes in place of: FSR (false) or XeSS
+    readonly RoundButton fsrButton, xessButton;
+    readonly Label modeHint = new Label { AutoSize = true, ForeColor = Theme.Muted, Anchor = AnchorStyles.Left };
+    // the last scan: shown by mode
+    string lastRoot;
+    List<Candidate> lastFound = new List<Candidate>();
+    List<string> lastOpti = new List<string>();
     readonly ComboBox games = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, DrawMode = DrawMode.OwnerDrawFixed, Dock = DockStyle.Fill };
     readonly TextBox folder = new TextBox { BorderStyle = BorderStyle.None };
     readonly ListView list = new ListView { View = View.Details, CheckBoxes = true, FullRowSelect = true, HideSelection = false, OwnerDraw = true, BorderStyle = BorderStyle.None };
@@ -370,6 +462,9 @@ class LoaderForm : Form {
 
     public LoaderForm(string startFolder) {
         dll = Find(@"build\" + Files.Dx12, Files.Dx12, @"..\build\" + Files.Dx12);
+        xessDll = Find(@"build\" + Files.Xess, Files.Xess, @"..\build\" + Files.Xess);
+        if (xessDll != null && Files.DittoVersion(xessDll) == null) xessDll = null;  // (Intel's, next to a build of the loader)
+        try { Scanner.XessProxyExports = xessDll != null ? Files.Exports(xessDll) : null; } catch (Exception) { }
         ini = Find(Files.Ini, @"..\" + Files.Ini);
         version = dll != null ? Files.DittoVersion(dll) : null;
         Text = "DittoSR Loader" + (version != null ? " - " + version : "");
@@ -386,14 +481,16 @@ class LoaderForm : Form {
         browse = new RoundButton("Browse...", k);
         scan = new RoundButton("Scan", k);
         install = new RoundButton("Install DittoSR", k);
-        restore = new RoundButton("Restore AMD's files", k);
+        restore = new RoundButton("Restore game's files", k);
+        fsrButton = new RoundButton("FSR", k) { Toggle = true, Selected = true };
+        xessButton = new RoundButton("XeSS", k) { Toggle = true };
         settings = new RoundButton("Settings", k);
         logButton = new RoundButton("Log", k);
         open = new RoundButton("Open folder", k);
 
         // the header: the name, what it does
         var head = new Panel { Dock = DockStyle.Top, Height = (int)(58 * k) };
-        head.Controls.Add(new Label { Text = "Installs DittoSR in place of a game's FSR" + (version != null ? "  ·  " + version : ""),
+        head.Controls.Add(new Label { Text = "Installs DittoSR in place of a game's FSR or XeSS" + (version != null ? " - " + version : ""),
                                       ForeColor = Theme.Muted, AutoSize = true, Location = new Point(0, (int)(34 * k)) });
         head.Controls.Add(new Label { Text = "DittoSR Loader", Font = new Font("Segoe UI Semibold", 15F), ForeColor = Theme.Text,
                                       AutoSize = true, Location = new Point(-(int)(2 * k), 0) });
@@ -421,6 +518,14 @@ class LoaderForm : Form {
         top.Controls.Add(folderBox, 1, 1);
         top.Controls.Add(browse, 2, 1);
         top.Controls.Add(scan, 3, 1);
+        // the upscaler to replace
+        var modes = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, (int)(2 * k), 0, 0) };
+        fsrButton.MinimumSize = xessButton.MinimumSize = new Size((int)(70 * k), (int)(30 * k));
+        modeHint.Margin = new Padding((int)(8 * k), 0, 0, 0);
+        modes.Controls.AddRange(new Control[] { fsrButton, xessButton, modeHint });
+        top.Controls.Add(Caption("Replace"), 0, 2);
+        top.Controls.Add(modes, 1, 2);
+        top.SetColumnSpan(modes, 3);
 
         // the DLLs found
         list.Columns.Add("File");
@@ -478,7 +583,9 @@ class LoaderForm : Form {
         install.Click += (s, e) => Install();
         restore.Click += (s, e) => Restore();
         settings.Click += (s, e) => OpenFile(Files.Ini, "no dittosr.ini there yet: install DittoSR first");
-        logButton.Click += (s, e) => OpenFile(Files.Log, "no dittosr.log yet: it appears once the game loads DittoSR");
+        logButton.Click += (s, e) => OpenFile(xessMode ? Files.XessLog : Files.Log, "no log yet: it appears once the game loads DittoSR");
+        fsrButton.Click += (s, e) => SetMode(false);
+        xessButton.Click += (s, e) => SetMode(true);
         open.Click += (s, e) => { string f = SelectedFolder(); if (f != null) Process.Start("explorer.exe", "\"" + f + "\""); };
         list.ItemChecked += (s, e) => UpdateButtons();
         list.SelectedIndexChanged += (s, e) => UpdateButtons();
@@ -486,8 +593,8 @@ class LoaderForm : Form {
 
         if (dll == null) Log("DittoSR's DLL was not found next to the loader (build\\" + Files.Dx12 + "): extract the whole DittoSR.zip");
         else Log("DittoSR: " + dll + (version != null ? " (" + version + ")" : ""));
-        Log("Pick the game's folder (or a Steam game) - the FidelityFX DLLs are looked for in every folder below it.");
-        UpdateButtons();
+        Log("Pick the game's folder (or a Steam game) - the FidelityFX and XeSS DLLs are looked for in every folder below it.");
+        SetMode(false);
         if (!string.IsNullOrEmpty(startFolder)) { folder.Text = startFolder; Shown += (s, e) => StartScan(); }
     }
 
@@ -585,6 +692,32 @@ class LoaderForm : Form {
 
     void Show(string root, List<Candidate> found, List<string> optiScaler) {
         SetBusy(false);
+        lastRoot = root;
+        lastFound = found;
+        lastOpti = optiScaler;
+        int fsr = found.Count(c => !c.Xess), xess = found.Count(c => c.Xess);
+        if (fsr > 0 && xess > 0)
+            Log("This game has both FSR and XeSS. If DittoSR's green square doesn't show with FSR (some games, as Cyberpunk 2077, " +
+                "build their FSR in), install it on XeSS and pick XeSS in the game.");
+        else if (xess > 0 && !xessMode && optiScaler.Count == 0)
+            Log("No FidelityFX DLL, but XeSS: switch to XeSS above.");
+        Render();
+    }
+
+    void SetMode(bool xess) {
+        xessMode = xess;
+        fsrButton.Selected = !xess;
+        xessButton.Selected = xess;
+        modeHint.Text = xess ? "the game's libxess.dll (XeSS on DirectX 12) - then pick XeSS in the game"
+                             : "the game's FidelityFX DLLs (FSR 3.1 or later) - then pick FSR in the game";
+        if (lastRoot != null) Render();
+        else UpdateButtons();
+    }
+
+    void Render() {
+        string root = lastRoot;
+        var found = lastFound.Where(c => c.Xess == xessMode).ToList();
+        var optiScaler = xessMode ? new List<string>() : lastOpti;
         list.BeginUpdate();
         list.Items.Clear();
         foreach (var c in found) list.Items.Add(Row(root, c, c.Recommended));
@@ -595,7 +728,11 @@ class LoaderForm : Form {
         }
         foreach (string f in optiScaler)
             Log("OptiScaler in " + f + ": DittoSR goes there as " + Files.Dx12 + ". Then pick FSR 3.X as OptiScaler's upscaler (its FSR version list shows DittoSR first).");
-        if (found.Count == 0 && optiScaler.Count == 0) {
+        if (xessMode) {
+            if (found.Count == 0) Log("no libxess.dll below " + root + ": the game doesn't offer XeSS on DirectX 12, or keeps it elsewhere.");
+            else if (xessDll == null) Log("DittoSR's " + Files.Xess + " was not found next to the loader: extract the whole DittoSR.zip");
+            else Log("found " + found.Count + " XeSS DLL" + (found.Count > 1 ? "s" : ""));
+        } else if (found.Count == 0 && optiScaler.Count == 0) {
             // (no FidelityFX DLL: DittoSR alone, for OptiScaler or a game that loads it optionally)
             var c = new Candidate { Folder = root, Name = Files.Dx12, State = "not there - DittoSR alone (OptiScaler)", Installable = true };
             list.Items.Add(Row(root, c, false));
@@ -634,14 +771,14 @@ class LoaderForm : Form {
     void UpdateButtons() {
         bool idle = scanning == null || !scanning.IsAlive;
         var chk = Checked();
-        install.Enabled = idle && dll != null && chk.Count > 0 && chk.All(c => c.Installable);
+        install.Enabled = idle && (xessMode ? xessDll : dll) != null && chk.Count > 0 && chk.All(c => c.Installable);
         restore.Enabled = idle && chk.Count > 0;
         settings.Enabled = logButton.Enabled = open.Enabled = idle && list.Items.Count > 0;
     }
 
     void Install() {
-        Run("install", c => Installer.Install(c, dll, ini, Log), Checked());
-        Log("Now choose FSR (FSR 3.1 or later) in the game's settings. With [debug] indicator=1, a green square shows top-left when DittoSR runs.");
+        Run("install", c => Installer.Install(c, c.Xess ? xessDll : dll, ini, Log), Checked());
+        Log("Now choose " + (xessMode ? "XeSS" : "FSR (FSR 3.1 or later)") + " in the game's settings. With [debug] indicator=1, a green square shows top-left when DittoSR runs.");
     }
 
     void Restore() {

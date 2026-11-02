@@ -1,7 +1,7 @@
 @echo off
 rem Builds build\amd_fidelityfx_dx12.dll, build\amd_fidelityfx_loader_dx12.dll and build\amd_fidelityfx_vk.dll (DittoSR:
-rem one DLL, D3D12 and Vulkan, under the three names games load), build\harness.exe (the offline test) and
-rem build\DittoSRLoader.exe (the loader, by loader\build.bat).
+rem one DLL, D3D12 and Vulkan, under the three names games load), build\libxess.dll (DittoSR in place of XeSS),
+rem build\harness.exe (the offline test) and build\DittoSRLoader.exe (the loader, by loader\build.bat).
 rem Needs Visual Studio's C++ tools, the Windows SDK's dxc (DXIL) and a dxc with SPIR-V (the Vulkan shaders): the
 rem DirectXShaderCompiler release in tools\dxc\ (bin\x64\dxc.exe) or the Vulkan SDK's (%VULKAN_SDK%\Bin\dxc.exe).
 setlocal
@@ -44,8 +44,12 @@ cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /LD /I"%ROOT%src" /I"%OUT%\gen" /I"%ROOT
    /link d3d12.lib dxgi.lib user32.lib || exit /b 1
 copy /y "%OUT%\amd_fidelityfx_dx12.dll" "%OUT%\amd_fidelityfx_loader_dx12.dll" >nul || exit /b 1
 copy /y "%OUT%\amd_fidelityfx_dx12.dll" "%OUT%\amd_fidelityfx_vk.dll" >nul || exit /b 1
+rem the libxess.dll proxy (XeSS on D3D12; the game's own XeSS renamed libxess_orig.dll behind it)
+if not exist "%OUT%\obj_xess" mkdir "%OUT%\obj_xess"
+cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /LD /I"%ROOT%src" /I"%OUT%\gen" "%ROOT%src\xess_dll.cpp" "%ROOT%src\dittosr.cpp" ^
+   "%ROOT%src\common.cpp" /Fo"%OUT%\obj_xess\\" /Fe"%OUT%\libxess.dll" /link d3d12.lib dxgi.lib user32.lib || exit /b 1
 
 cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /I"%ROOT%src" /I"%ROOT%test" "%ROOT%test\harness.cpp" ^
    /Fo"%OUT%\obj\\" /Fe"%OUT%\harness.exe" /link d3d12.lib dxgi.lib || exit /b 1
 call "%ROOT%loader\build.bat" || exit /b 1
-echo built %OUT%\amd_fidelityfx_dx12.dll, amd_fidelityfx_loader_dx12.dll, amd_fidelityfx_vk.dll, harness.exe
+echo built %OUT%\amd_fidelityfx_dx12.dll, amd_fidelityfx_loader_dx12.dll, amd_fidelityfx_vk.dll, libxess.dll, harness.exe

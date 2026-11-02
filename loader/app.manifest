@@ -2,7 +2,7 @@
 <!-- DittoSR Loader: runs as the user (it asks to restart as administrator only for a folder Windows protects), on Windows
      10 and 11, DPI aware. -->
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
-  <assemblyIdentity version="0.1.4.0" name="DittoSR.Loader"/>
+  <assemblyIdentity version="0.2.0.0" name="DittoSR.Loader"/>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">

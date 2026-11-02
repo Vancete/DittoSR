@@ -6,6 +6,9 @@
 
 #include "ffx_api/ffx_upscale.h"
 
+// the version both front ends report (the FidelityFX API provider, the libxess.dll proxy)
+#define DITTOSR_VERSION_NAME "DittoSR 0.2.0"
+
 struct DittoSettings {
     float alphaRest = 0.035f;  // a stable pixel's share of each new frame at rest
     float conf = 0.05f;        // the confidence the narrow estimate is taken alone from (originally 0.3)
