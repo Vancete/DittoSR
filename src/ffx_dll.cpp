@@ -30,7 +30,7 @@ struct ffxCreateBackendDX12Desc {
 
 // DittoSR's provider id in the version queries ("DITTO", version 1)
 static const uint64_t kVersionId = 0x00444954544f0001ull;
-static const char *const kVersionName = "DittoSR 0.1.2";
+static const char *const kVersionName = "DittoSR 0.1.4";
 
 static std::mutex g_mu;
 static HMODULE g_self;

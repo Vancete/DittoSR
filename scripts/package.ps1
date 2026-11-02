@@ -1,6 +1,7 @@
-# Packs a build into build\DittoSR.zip, laid out as the repository (build\ for the binaries, scripts\, the ini and
-# the documents), so install.ps1 and bench.ps1 run from it as they are: copy the zip to another PC (a ROG Ally),
-# extract it, and run scripts\bench.ps1 or scripts\install.ps1 from the extracted folder.
+# Packs a build into build\DittoSR.zip: the loader (DittoSRLoader.exe) at its top, next to it build\ for DittoSR's
+# binaries, scripts\, the ini and the documents - the repository's layout, so the loader, install.ps1, install.sh and
+# bench.ps1 run from it as they are: copy the zip to another PC (a ROG Ally, a Steam Deck), extract it, and run
+# DittoSRLoader.exe (or a script) from the extracted folder.
 $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $build = Join-Path $root "build"
@@ -12,12 +13,25 @@ foreach ($f in "amd_fidelityfx_dx12.dll", "amd_fidelityfx_loader_dx12.dll", "amd
     if (-not (Test-Path $p)) { throw "build first (build.bat): $p" }
     Copy-Item $p (Join-Path $stage "build")
 }
-foreach ($f in "install.ps1", "uninstall.ps1", "bench.ps1") { Copy-Item (Join-Path $root "scripts\$f") (Join-Path $stage "scripts") }
+$loader = Join-Path $build "DittoSRLoader.exe"
+if (-not (Test-Path $loader)) { throw "build the loader first (loader\build.bat): $loader" }
+Copy-Item $loader $stage
+foreach ($f in "install.ps1", "uninstall.ps1", "install.sh", "uninstall.sh", "bench.ps1") { Copy-Item (Join-Path $root "scripts\$f") (Join-Path $stage "scripts") }
 foreach ($f in "dittosr.ini", "README.md", "LICENSE", "THIRD-PARTY-NOTICES.md") { Copy-Item (Join-Path $root $f) $stage }
 Copy-Item (Join-Path $root "licenses\*") (Join-Path $stage "licenses")
 New-Item -ItemType Directory -Force (Join-Path $stage "licenses\ffx_api") | Out-Null
 Copy-Item (Join-Path $root "src\ffx_api\LICENSE.txt") (Join-Path $stage "licenses\ffx_api\LICENSE.txt")
 $zip = Join-Path $build "DittoSR.zip"
 if (Test-Path $zip) { Remove-Item $zip }
-Compress-Archive -Path $stage -DestinationPath $zip
+# (not Compress-Archive: Windows PowerShell 5.1's stores the paths with backslashes, which Linux's extractors - SteamOS's
+# Ark - take as part of a file name)
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+$base = Split-Path $stage
+$archive = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
+try {
+    foreach ($f in Get-ChildItem -Recurse -File $stage) {
+        $entry = $f.FullName.Substring($base.Length + 1).Replace('\', '/')
+        [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $f.FullName, $entry, [IO.Compression.CompressionLevel]::Optimal)
+    }
+} finally { $archive.Dispose() }
 Write-Host "packed $zip"

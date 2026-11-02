@@ -1,11 +1,13 @@
-# Installs DittoSR into a folder: a game's (next to its FidelityFX DLL) or OptiScaler's.
+# Installs DittoSR into a folder: a game's (next to its FidelityFX DLL) or OptiScaler's. DittoSRLoader.exe does the
+# same in a window.
 #   install.ps1 -Dir <folder> [-Build <build folder>] [-Name amd_fidelityfx_dx12.dll | amd_fidelityfx_loader_dx12.dll | amd_fidelityfx_vk.dll]
-# For each of amd_fidelityfx_dx12.dll (FidelityFX SDK 1.1, FSR 3.1), amd_fidelityfx_loader_dx12.dll (SDK 2.x) and
-# amd_fidelityfx_vk.dll (FSR 3.1 on Vulkan) found in the folder, AMD's file is backed up to <folder>\dittosr-backup\
-# (with its SHA-256), copied to <name>.orig.dll (what DittoSR hands frame generation and the FSR toggle to) and replaced
-# by DittoSR - the same DLL serves D3D12 and Vulkan. With none of them there, DittoSR goes in as
-# -Name alone (OptiScaler, a game that loads it optionally). dittosr.ini goes next to it (kept if already there). Run it
-# again after a rebuild: the backups and the originals' copies are left as they are.
+# For each of amd_fidelityfx_dx12.dll (FidelityFX SDK 1.1, FSR 3.1), amd_fidelityfx_loader_dx12.dll (SDK 2.x),
+# amd_fidelityfx_vk.dll (FSR 3.1 on Vulkan) and amd_fidelityfx_upscaler_dx12.dll where the folder has neither of the
+# first two (an SDK 2.x game with the loader built into its executable) found in the folder, AMD's file is backed up
+# to <folder>\dittosr-backup\ (with its SHA-256), copied to <name>.orig.dll (what DittoSR hands frame generation and the
+# FSR toggle to) and replaced by DittoSR - the same DLL serves D3D12 and Vulkan. With none of them there, DittoSR goes
+# in as -Name alone (OptiScaler, a game that loads it optionally). dittosr.ini goes next to it (kept if already
+# there). Run it again after a rebuild: the backups and the originals' copies are left as they are.
 param(
     [Parameter(Mandatory = $true)][string]$Dir,
     [string]$Build = "",
@@ -19,6 +21,9 @@ if (-not (Test-Path $dll)) { throw "build DittoSR first (build.bat): $dll" }
 if (-not (Test-Path $Dir)) { throw "not found: $Dir" }
 $backup = Join-Path $Dir "dittosr-backup"
 $names = @("amd_fidelityfx_dx12.dll", "amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_vk.dll") | Where-Object { Test-Path (Join-Path $Dir $_) }
+if (-not ($names -match "_dx12\.dll$") -and (Test-Path (Join-Path $Dir "amd_fidelityfx_upscaler_dx12.dll"))) {
+    $names = @($names) + "amd_fidelityfx_upscaler_dx12.dll"  # (the game loads the upscaler itself)
+}
 if (-not $names) { $names = @($Name); Write-Host "no FidelityFX DLL in $Dir`: DittoSR alone as $Name" }
 foreach ($n in $names) {
     $target = Join-Path $Dir $n

@@ -6,8 +6,8 @@ dense foliage, fast camera turns) while staying lighter than the usual alternati
 
 It ships as a drop-in **FidelityFX API** provider for **DirectX 12 and Vulkan**: a game that offers FSR 3.1 (or a
 tool that loads FSR 3.1, such as OptiScaler) upscales through DittoSR instead, with no change to the game. One DLL
-serves both APIs, under the names games load: `amd_fidelityfx_dx12.dll`, `amd_fidelityfx_loader_dx12.dll` and
-`amd_fidelityfx_vk.dll`.
+serves both APIs, under the names games load: `amd_fidelityfx_dx12.dll`, `amd_fidelityfx_loader_dx12.dll`,
+`amd_fidelityfx_vk.dll` and `amd_fidelityfx_upscaler_dx12.dll`.
 
 You can expect a perceived quality between FSR3.1 and FSR4.1 while being lighter than both. Also, a little .ini is next to the .dll on every game so you can configure the sharpness and frame blending with hot reloading (F9).
 
@@ -15,16 +15,28 @@ You can expect a perceived quality between FSR3.1 and FSR4.1 while being lighter
 
 ## Install
 
-Build it (below), then run, in PowerShell:
+Extract `DittoSR.zip` and run **`DittoSRLoader.exe`**:
+
+1. Pick the game in the **Steam game** list, or **Browse...** to its folder. The game's install folder is enough: the loader looks in every folder below it.
+2. It lists the FidelityFX DLLs it finds and what each one is now: AMD's (with its FSR version) or DittoSR's. The ones to replace are already checked.
+3. **Install DittoSR**, then choose **FSR** (FSR 3.1 or later) in the game's settings.
+
+**Restore AMD's files** puts the game's DLLs back. **Settings** opens the folder's `dittosr.ini`, and **Log** opens `dittosr.log`. For a folder Windows protects (under `Program Files`), the loader offers to restart as administrator.
+
+The loader looks for these DLLs:
+
+- `amd_fidelityfx_dx12.dll` (FidelityFX SDK 1.1, FSR 3.1).
+- `amd_fidelityfx_loader_dx12.dll` (SDK 2.x).
+- `amd_fidelityfx_vk.dll` (FSR 3.1 on Vulkan).
+- `amd_fidelityfx_upscaler_dx12.dll`, when the folder has neither of the first two. That is an SDK 2.x game with the loader built into its executable, which loads the upscaler by name.
+
+Each one is checked for AMD's signature, backed up to `dittosr-backup\` with its SHA-256, kept as `<name>.orig.dll`, and replaced by DittoSR. `dittosr.ini` goes next to it.
+
+The same, in PowerShell (the loader and the scripts are interchangeable):
 
 ```powershell
 scripts\install.ps1 -Dir "<the folder with the game's amd_fidelityfx_*.dll>"
 ```
-
-- The script looks for `amd_fidelityfx_dx12.dll` (FidelityFX SDK 1.1, FSR 3.1), `amd_fidelityfx_loader_dx12.dll` (SDK 2.x) and `amd_fidelityfx_vk.dll` (FSR 3.1 on Vulkan).
-- Each one it finds is checked for AMD's signature, backed up to `dittosr-backup\` with its SHA-256, kept as `<name>.orig.dll`, and replaced by DittoSR.
-- `dittosr.ini` goes next to it.
-- Then choose **FSR 3.1** (or FSR) in the game's settings.
 
 AMD's DLL, kept as `.orig.dll`, is optional. With it, frame generation keeps working, and with `[debug] enabled=1` **F10** switches between DittoSR and AMD's FSR live. Without it, DittoSR is the only provider, and frame generation is not available.
 
@@ -34,9 +46,19 @@ To restore the game's files:
 scripts\uninstall.ps1 -Dir "<the same folder>"
 ```
 
-**OptiScaler** (not yet tested): OptiScaler's FSR 3.1 option loads `amd_fidelityfx_dx12.dll`. Install DittoSR in the folder OptiScaler loads it from and choose FSR 3.1 as OptiScaler's upscaler. With no FidelityFX DLL there, the script installs DittoSR alone, as `amd_fidelityfx_dx12.dll`.
+**OptiScaler** (not yet tested): OptiScaler's FSR 3.1 option loads `amd_fidelityfx_dx12.dll`. Install DittoSR in the folder OptiScaler loads it from and choose FSR 3.1 as OptiScaler's upscaler. With no FidelityFX DLL there, the script installs DittoSR alone, as `amd_fidelityfx_dx12.dll`. The loader finds OptiScaler's folder by its `OptiScaler.ini`. If that folder has no `amd_fidelityfx_dx12.dll`, the loader lists one there, already checked, so DittoSR goes in alone. In OptiScaler's FSR version list, DittoSR comes first.
 
-**Linux (Proton)** (not yet tested): the same DLL should work under vkd3d-proton (DirectX 12) and with Vulkan games run through Proton.
+**SteamOS and Linux (Proton)** (not yet tested): the same DLL should work under vkd3d-proton (DirectX 12) and with Vulkan games run through Proton. Extract `DittoSR.zip` (in Desktop Mode on a Steam Deck) and run, in a terminal:
+
+```bash
+bash scripts/install.sh <the game's Steam app id, or its folder>
+```
+
+- The app id is the number in the game's Steam store address. The script finds the game's install folder in Steam's libraries.
+- A folder can be the game's install folder: the script looks below it for the FidelityFX DLL. If it finds one in more than one folder, it lists them, and you run it again with the one the game loads.
+- It does the same as `install.ps1`. Linux has no Authenticode check, so it only checks that the file names AMD and isn't DittoSR already.
+- Proton loads the DLL from the game's folder by itself, with no `WINEDLLOVERRIDES`. Leave `PROTON_FSR4_UPGRADE` off: it puts its own `amd_fidelityfx_dx12.dll` there.
+- To restore the game's files: `bash scripts/uninstall.sh "<the folder install.sh printed>"`.
 
 **Online games:** don't. Replacing a game's DLLs can trigger anti-cheat systems.
 
@@ -193,9 +215,10 @@ build.bat
 The output goes to `build\`:
 
 - `amd_fidelityfx_dx12.dll`, `amd_fidelityfx_loader_dx12.dll` and `amd_fidelityfx_vk.dll`: the same DLL under the three names games load;
-- `harness.exe`: the offline test.
+- `harness.exe`: the offline test;
+- `DittoSRLoader.exe`: the loader, from `loader\`. It's a small WinForms app that `loader\build.bat` compiles with the `csc.exe` of .NET Framework 4.x, which comes with Windows: it needs no SDK, and runs on Windows 10 and 11 as it is.
 
-`scripts\package.ps1` packs these with the scripts, the ini and the documents into `build\DittoSR.zip`.
+`scripts\package.ps1` packs these with the scripts, the ini and the documents into `build\DittoSR.zip`, with the loader at its top.
 
 ## Offline test
 

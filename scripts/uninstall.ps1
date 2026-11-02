@@ -4,7 +4,7 @@
 param([Parameter(Mandatory = $true)][string]$Dir)
 $ErrorActionPreference = "Stop"
 $backup = Join-Path $Dir "dittosr-backup"
-foreach ($n in "amd_fidelityfx_dx12.dll", "amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_vk.dll") {
+foreach ($n in "amd_fidelityfx_dx12.dll", "amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_vk.dll", "amd_fidelityfx_upscaler_dx12.dll") {
     $target = Join-Path $Dir $n
     $saved = Join-Path $backup $n
     $orig = Join-Path $Dir ([IO.Path]::GetFileNameWithoutExtension($n) + ".orig.dll")

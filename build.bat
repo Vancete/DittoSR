@@ -1,6 +1,7 @@
 @echo off
 rem Builds build\amd_fidelityfx_dx12.dll, build\amd_fidelityfx_loader_dx12.dll and build\amd_fidelityfx_vk.dll (DittoSR:
-rem one DLL, D3D12 and Vulkan, under the three names games load) and build\harness.exe (the offline test).
+rem one DLL, D3D12 and Vulkan, under the three names games load), build\harness.exe (the offline test) and
+rem build\DittoSRLoader.exe (the loader, by loader\build.bat).
 rem Needs Visual Studio's C++ tools, the Windows SDK's dxc (DXIL) and a dxc with SPIR-V (the Vulkan shaders): the
 rem DirectXShaderCompiler release in tools\dxc\ (bin\x64\dxc.exe) or the Vulkan SDK's (%VULKAN_SDK%\Bin\dxc.exe).
 setlocal
@@ -46,4 +47,5 @@ copy /y "%OUT%\amd_fidelityfx_dx12.dll" "%OUT%\amd_fidelityfx_vk.dll" >nul || ex
 
 cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /I"%ROOT%src" /I"%ROOT%test" "%ROOT%test\harness.cpp" ^
    /Fo"%OUT%\obj\\" /Fe"%OUT%\harness.exe" /link d3d12.lib dxgi.lib || exit /b 1
+call "%ROOT%loader\build.bat" || exit /b 1
 echo built %OUT%\amd_fidelityfx_dx12.dll, amd_fidelityfx_loader_dx12.dll, amd_fidelityfx_vk.dll, harness.exe
