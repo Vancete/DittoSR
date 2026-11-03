@@ -253,7 +253,7 @@ static const char *opt(int argc, char **argv, const char *key, const char *def) 
 }
 
 int main(int argc, char **argv) {
-    if (argc < 3) return printf("harness.exe <dir> <png prefix> [dll=] [scene=tiles|grass] [frames=] [out=WxH] [ratio=] [vel=] [dense=] [wobble=] [blur=] [sharpen=] [psnr=1]\n"), 1;
+    if (argc < 3) return printf("harness.exe <dir> <png prefix> [dll=] [scene=tiles|grass] [frames=] [out=WxH] [ratio=] [vel=] [dense=] [wobble=] [blur=] [sharpen=] [psnr=1] [gpu=index]\n"), 1;
     const char *dir = argv[1], *prefix = argv[2];
     const char *dll = opt(argc, argv, "dll", "amd_fidelityfx_dx12.dll");
     int frames = atoi(opt(argc, argv, "frames", "64"));
@@ -272,7 +272,8 @@ int main(int argc, char **argv) {
     bool shimmer = g_grass && (float)ivel == g_vel;  // (an integer pan: frame t = frame t - 1 shifted, for a perfect upscaler)
 
     Gpu g = {};
-    // the GPU with the most memory (not the integrated one)
+    // the GPU with the most memory (not the integrated one), or gpu=: DXGI's adapter index
+    int gpu = atoi(opt(argc, argv, "gpu", "-1"));
     IDXGIFactory6 *fac;
     CHECK(CreateDXGIFactory2(0, IID_PPV_ARGS(&fac)));
     IDXGIAdapter1 *best = nullptr, *a;
@@ -280,7 +281,8 @@ int main(int argc, char **argv) {
     for (UINT i = 0; fac->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; i++) {
         DXGI_ADAPTER_DESC1 d;
         a->GetDesc1(&d);
-        if (!(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) && d.DedicatedVideoMemory > bestMem) best = a, bestMem = d.DedicatedVideoMemory;
+        if (gpu >= 0 ? (int)i == gpu : !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) && d.DedicatedVideoMemory > bestMem)
+            best = a, bestMem = d.DedicatedVideoMemory;
     }
     DXGI_ADAPTER_DESC1 ad;
     best->GetDesc1(&ad);
