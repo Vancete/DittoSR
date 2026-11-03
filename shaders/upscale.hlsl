@@ -48,10 +48,44 @@ void put(uint2 id, float3 g, float stab, float e) {
 #endif
 }
 
+// The group's render samples: an 8 x 8 output tile reads at most 10 x 10 of them (8 / ratio and its 3x3's margin, at
+// ratio 1 and above), each loaded and encoded once into groupshared memory - not by each of the 9 x ratio^2 output
+// pixels around it (~20 at 1.5x, ~80 at 3x). One sample more on each side: the tile's bounds and a pixel's own 3x3
+// round the same floor apart and can land a sample apart (seen at 3x, where q + jitter falls on whole samples). A
+// pixel whose 3x3 still falls outside, or below ratio 1, its own loads.
+#define TILE 12
+#if DITTO_FP16
+typedef float16_t4 hf4;
+#else
+typedef float4 hf4;
+#endif
+groupshared hf4 gsTile[TILE * TILE];  // rgb: the sample encoded; a: its luma
+
+int2 sampleBase(uint2 p) {  // (the 3x3's centre sample, as main computes it)
+    float2 uv = (float2(p) + 0.5) * osRcp, q = uv * rs;
+    return int2(floor(q + jit));
+}
+
+hf4 sampleAt(int2 p, int2 cs, float e) {
+    hf3 c = ench(InputColor.Load(int3(clamp(p, int2(0, 0), cs), 0)).rgb, e);
+    return hf4(c, dot(c, hf3(0.25, 0.5, 0.25)));
+}
+
 [numthreads(8, 8, 1)]
-void main(uint2 id : SV_DispatchThreadID) {
-    if (any(id >= (uint2)os)) return;
+void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_GroupIndex) {
     float e = encExposure();
+    int2 cs = int2(rs) - 1;
+    uint2 g0 = gid * 8;
+    int2 t0 = sampleBase(g0) - 2, tw = sampleBase(min(g0 + 7, (uint2)os - 1)) + 3 - t0;
+    bool tiled = all(tw <= TILE);
+    if (tiled) {
+        for (int i = (int)li; i < tw.x * tw.y; i += 64) {
+            int2 o = int2(i % tw.x, i / tw.x);
+            gsTile[o.y * TILE + o.x] = sampleAt(t0 + o, cs, e);
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (any(id >= (uint2)os)) return;
     float2 uv = (float2(id) + 0.5) * osRcp, q = uv * rs;
     float4 mda4 = MotionDepthClip.SampleLevel(linearClamp, uv, 0.0);
     float mlen = length(0.5 * mda4.xy * os);
@@ -60,12 +94,16 @@ void main(uint2 id : SV_DispatchThreadID) {
     // samples' confidence - the new frame's share - stays the narrow one's)
     float mf = saturate((mlen - 0.5) / 3.5), wd = width > 0.0 ? width : 1.0;
     float ks = max(ratio, 1.0) / wd, km = max(ratio, 1.0) / (motionWidth > 0.0 ? motionWidth : wd);
-    int2 b0 = int2(floor(q + jit)), cs = int2(rs) - 1;
+    int2 b0 = sampleBase(id);
+    bool inTile = tiled && all(b0 - t0 >= 1) && all(b0 - t0 <= tw - 2);
     // (the samples' colour work at hf precision - half in the FP16 variant; positions, weights and moments in float)
     hf3 cc[9]; hf l[9];
     [unroll] for (int i = 0; i < 9; i++) {
-        cc[i] = ench(InputColor.Load(int3(clamp(b0 + int2(i % 3 - 1, i / 3 - 1), int2(0, 0), cs), 0)).rgb, e);
-        l[i] = dot(cc[i], hf3(0.25, 0.5, 0.25));
+        int2 p = b0 + int2(i % 3 - 1, i / 3 - 1), o = p - t0;
+        hf4 s4;
+        [branch] if (inTile) s4 = gsTile[o.y * TILE + o.x];
+        else s4 = sampleAt(p, cs, e);
+        cc[i] = s4.rgb; l[i] = s4.a;
     }
     // the edge: the samples' luma gradient (Sobel); the Gaussian stretched along it, narrow across it
     hf gx = (l[2] + (hf)2.0 * l[5] + l[8]) - (l[0] + (hf)2.0 * l[3] + l[6]);
@@ -83,14 +121,29 @@ void main(uint2 id : SV_DispatchThreadID) {
     hf3 sg = 0.0, sm = 0.0, ss = 0.0, ymn = 1e4, ymx = -1e4;
     float3 m1 = 0.0, m2 = 0.0;
     float wg = 0.0, wm = 0.0, wsum = 0.0;
+    // (the Gaussians as exp2 with their constants folded once; the smooth one, round, separable: 3 + 3 exp2 for the 9;
+    // the wide moving one only while moving - at rest its estimate is weighted 0)
+    const float L2E = 1.44269504;
+    float kn = -2.26 * L2E * ks * ks, kw = -2.26 * L2E * km * km;
+    float2 d0 = float2(b0) + 0.5 - jit - q;
+    float3 ex = exp2(-1.4 * L2E * (d0.x + float3(-1.0, 0.0, 1.0)) * (d0.x + float3(-1.0, 0.0, 1.0)));
+    float3 ey = exp2(-1.4 * L2E * (d0.y + float3(-1.0, 0.0, 1.0)) * (d0.y + float3(-1.0, 0.0, 1.0)));
+    float r2s[9];
     [unroll] for (int i = 0; i < 9; i++) {
-        float2 d = float2(b0 + int2(i % 3 - 1, i / 3 - 1)) + 0.5 - jit - q;
+        float2 d = d0 + float2(i % 3 - 1, i / 3 - 1);
         float dn = dot(d, nrm), dt = dot(d, float2(-nrm.y, nrm.x));
         float r2 = dn * dn + dt * dt * along;
-        float w = exp(-2.26 * r2 * ks * ks), w2 = exp(-1.4 * dot(d, d)), w3 = exp(-2.26 * r2 * km * km);
-        sg += cc[i] * (hf)w; wg += w; ss += cc[i] * (hf)w2; wsum += w2; sm += cc[i] * (hf)w3; wm += w3;
+        r2s[i] = r2;
+        float w = exp2(r2 * kn), w2 = ex[i % 3] * ey[i / 3];
+        sg += cc[i] * (hf)w; wg += w; ss += cc[i] * (hf)w2; wsum += w2;
         hf3 yc = ycch(cc[i]); ymn = min(ymn, yc); ymx = max(ymx, yc);
         float3 ycf = yc; m1 += ycf; m2 += ycf * ycf;
+    }
+    [branch] if (mf > 0.0) {
+        [unroll] for (int i = 0; i < 9; i++) {
+            float w3 = exp2(r2s[i] * kw);
+            sm += cc[i] * (hf)w3; wm += w3;
+        }
     }
     m1 /= 9.0; float3 sig = sqrt(max(m2 / 9.0 - m1 * m1, 0.0));
     float3 cg = lerp((float3)sg / max(wg, 1e-6), (float3)sm / max(wm, 1e-6), mf), cs2 = (float3)ss / max(wsum, 1e-6);
