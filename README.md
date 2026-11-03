@@ -25,7 +25,7 @@ Extract `DittoSR.zip` and run **`DittoSRLoader.exe`**:
 3. It lists the DLLs it finds and what each one is now: AMD's or Intel's (with its version) or DittoSR's. The ones to replace are already checked.
 4. **Install DittoSR**, then choose **FSR** (FSR 3.1 or later) or **XeSS** in the game's settings.
 
-**Restore game's files** puts the game's DLLs back. **Settings** opens the folder's `dittosr.ini`, and **Log** opens `dittosr.log` (`dittosr-xess.log` on XeSS). For a folder Windows protects (under `Program Files`), the loader offers to restart as administrator.
+**Restore game's files** puts the game's DLLs back. **Settings** sets the sharpness (Soft to Sharp) and the frame weight (Stable to Responsive) on five-step sliders, the middle step the default, with a button to open the folder's `dittosr.ini` for the rest; and **Log** opens `dittosr.log` (`dittosr-xess.log` on XeSS). For a folder Windows protects (under `Program Files`), the loader offers to restart as administrator.
 
 The loader looks for these DLLs:
 

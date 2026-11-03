@@ -32,8 +32,8 @@ using Microsoft.Win32;
 
 [assembly: AssemblyTitle("DittoSR Loader")]
 [assembly: AssemblyProduct("DittoSR")]
-[assembly: AssemblyVersion("0.2.2.0")]
-[assembly: AssemblyFileVersion("0.2.2.0")]
+[assembly: AssemblyVersion("0.2.4.0")]
+[assembly: AssemblyFileVersion("0.2.4.0")]
 
 namespace DittoSR {
 
@@ -103,7 +103,7 @@ static class Files {
         }
     }
 
-    // DittoSR's version name in a DLL ("DittoSR 0.2.2"), or null: not DittoSR's (AMD's DLLs are tens of MB: not read)
+    // DittoSR's version name in a DLL ("DittoSR 0.2.4"), or null: not DittoSR's (AMD's DLLs are tens of MB: not read)
     public static string DittoVersion(string path) {
         try {
             var fi = new FileInfo(path);
@@ -460,6 +460,193 @@ class RoundButton : Button {
     }
 }
 
+// A slider of a few fixed steps: a track, a dot per step, a round thumb; a click or a drag snaps to the nearest step,
+// the arrow keys move it one.
+class StepSlider : Control {
+    readonly int steps;
+    readonly float k;
+    int index;
+    public event Action Changed;
+    public int Index { get { return index; } set { value = Math.Max(0, Math.Min(steps - 1, value)); if (value != index) { index = value; Invalidate(); if (Changed != null) Changed(); } } }
+
+    public StepSlider(int steps, int index, float k) {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+                 ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+        this.steps = steps;
+        this.index = index;
+        this.k = k;
+        Height = (int)(30 * k);
+        TabStop = true;
+        Cursor = Cursors.Hand;
+    }
+
+    float Pad { get { return 11 * k; } }
+    float X(int i) { return Pad + (Width - 2 * Pad) * i / (steps - 1); }
+
+    protected override void OnPaint(PaintEventArgs e) {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.Clear(Parent != null ? Parent.BackColor : Theme.Back);
+        float y = Height / 2f, x = X(index);
+        using (var pen = new Pen(Theme.Border, 4 * k) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(pen, Pad, y, Width - Pad, y);
+        if (index > 0)
+            using (var pen = new Pen(Theme.Accent, 4 * k) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(pen, Pad, y, x, y);
+        for (int i = 0; i < steps; i++) {
+            float r = 3.5f * k;
+            using (var b = new SolidBrush(i <= index ? Theme.AccentHover : Theme.Faint)) g.FillEllipse(b, X(i) - r, y - r, 2 * r, 2 * r);
+        }
+        float t = 9 * k;
+        using (var b = new SolidBrush(Color.White)) g.FillEllipse(b, x - t, y - t, 2 * t, 2 * t);
+        using (var pen = new Pen(Theme.Accent, 3 * k)) g.DrawEllipse(pen, x - t + 1.5f * k, y - t + 1.5f * k, 2 * t - 3 * k, 2 * t - 3 * k);
+        if (Focused && ShowFocusCues)
+            using (var pen = new Pen(Color.FromArgb(120, 255, 255, 255))) g.DrawEllipse(pen, x - t - 3 * k, y - t - 3 * k, 2 * t + 6 * k, 2 * t + 6 * k);
+    }
+
+    void Snap(int px) { Index = (int)Math.Round((px - Pad) / (Width - 2 * Pad) * (steps - 1)); }
+    protected override void OnMouseDown(MouseEventArgs e) { Focus(); if (e.Button == MouseButtons.Left) Snap(e.X); base.OnMouseDown(e); }
+    protected override void OnMouseMove(MouseEventArgs e) { if (e.Button == MouseButtons.Left) Snap(e.X); base.OnMouseMove(e); }
+    protected override bool IsInputKey(Keys key) { return key == Keys.Left || key == Keys.Right || base.IsInputKey(key); }
+    protected override void OnKeyDown(KeyEventArgs e) {
+        if (e.KeyCode == Keys.Left) Index--;
+        else if (e.KeyCode == Keys.Right) Index++;
+        base.OnKeyDown(e);
+    }
+    protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+    protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+}
+
+// dittosr.ini's [dittosr] keys: read, and written in place (the line replaced, or added under the section), every other
+// line kept as it was.
+static class IniKeys {
+    const string Section = "dittosr";
+
+    public static float? Get(string ini, string key) {
+        bool inside = false;
+        foreach (string raw in File.ReadAllLines(ini)) {
+            string line = raw.Trim();
+            if (line.StartsWith("[")) { if (inside) break; inside = string.Equals(line, "[" + Section + "]", StringComparison.OrdinalIgnoreCase); continue; }
+            if (!inside) continue;
+            int eq = line.IndexOf('=');
+            float v;
+            if (eq > 0 && string.Equals(line.Substring(0, eq).Trim(), key, StringComparison.OrdinalIgnoreCase) &&
+                float.TryParse(line.Substring(eq + 1).Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out v))
+                return v;
+        }
+        return null;
+    }
+
+    public static void Set(string ini, string key, float value) {
+        var lines = File.ReadAllLines(ini).ToList();
+        string text = key + "=" + value.ToString("0.0##", System.Globalization.CultureInfo.InvariantCulture);
+        int section = -1, last = -1;
+        for (int i = 0; i < lines.Count; i++) {
+            string line = lines[i].Trim();
+            if (line.StartsWith("[")) {
+                if (section >= 0) break;
+                if (string.Equals(line, "[" + Section + "]", StringComparison.OrdinalIgnoreCase)) section = last = i;
+                continue;
+            }
+            if (section < 0) continue;
+            if (line.Length > 0 && !line.StartsWith(";")) last = i;
+            int eq = line.IndexOf('=');
+            if (eq > 0 && string.Equals(line.Substring(0, eq).Trim(), key, StringComparison.OrdinalIgnoreCase)) {
+                lines[i] = text;
+                File.WriteAllLines(ini, lines);
+                return;
+            }
+        }
+        if (section < 0) { lines.Insert(0, ""); lines.Insert(0, text); lines.Insert(0, "[" + Section + "]"); }
+        else lines.Insert(last + 1, text);
+        File.WriteAllLines(ini, lines);
+    }
+}
+
+// Settings: dittosr.ini's sharpness and frame_weight as two sliders of five steps (the middle one the default); a value
+// set by hand between the steps is kept unless its slider is moved.
+class SettingsForm : Form {
+    public static readonly float[] Sharpness = { 0.2f, 0.4f, 0.6f, 0.8f, 1.0f }, FrameWeight = { 1.0f, 1.5f, 2.0f, 2.5f, 3.0f };
+    readonly float k;
+    readonly string ini;
+    readonly StepSlider sharp, weight;
+    bool sharpMoved, weightMoved;
+
+    public SettingsForm(string ini, float k) {
+        this.ini = ini;
+        this.k = k;
+        Text = "DittoSR settings";
+        Font = new Font("Segoe UI", 9.75F);
+        BackColor = Theme.Back;
+        ForeColor = Theme.Text;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = MinimizeBox = ShowInTaskbar = false;
+        StartPosition = FormStartPosition.CenterParent;
+        try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { }
+        int pad = (int)(20 * k), w = (int)(440 * k), y = (int)(16 * k);
+
+        sharp = Setting(ref y, pad, w, "Sharpness", "How crisp the image looks: Soft smooths fine detail, Sharp adds contrast to it - more at high " +
+                        "upscaling ratios and on small screens.", "Soft", "Sharp", Sharpness, IniKeys.Get(ini, "sharpness"), () => sharpMoved = true);
+        y += (int)(10 * k);
+        weight = Setting(ref y, pad, w, "Frame weight", "How much each new frame counts: Stable is steadier and smoother, with a little more " +
+                         "trailing in motion; Responsive is crisper in motion, with more shimmer.", "Stable", "Responsive", FrameWeight,
+                         IniKeys.Get(ini, "frame_weight"), () => weightMoved = true);
+
+        y += (int)(6 * k);
+        Controls.Add(new Label { Text = "In the game, F9 applies the change live.", ForeColor = Theme.Faint, AutoSize = true, Location = new Point(pad, y) });
+        y += (int)(30 * k);
+        var save = new RoundButton("Save", k);
+        var cancel = new RoundButton("Cancel", k) { Toggle = true };
+        var raw = new RoundButton("Open dittosr.ini", k) { Toggle = true };
+        foreach (var b in new[] { save, cancel, raw }) { b.AutoSize = false; b.Size = new Size(b.PreferredSize.Width, (int)(34 * k)); }
+        save.Location = new Point(pad + w - save.Width, y);
+        cancel.Location = new Point(save.Left - cancel.Width - (int)(8 * k), y);
+        raw.Location = new Point(pad, y);
+        Controls.AddRange(new Control[] { save, cancel, raw });
+        AcceptButton = save;
+        CancelButton = cancel;
+        save.Click += (s, e) => { Save(); DialogResult = DialogResult.OK; };
+        cancel.Click += (s, e) => DialogResult = DialogResult.Cancel;
+        raw.Click += (s, e) => { Process.Start("notepad.exe", "\"" + ini + "\""); DialogResult = DialogResult.Cancel; };
+        ClientSize = new Size(w + 2 * pad, y + save.Height + pad);
+    }
+
+    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); Theme.DarkTitleBar(Handle); }
+
+    StepSlider Setting(ref int y, int pad, int w, string title, string about, string left, string right, float[] steps, float? now, Action moved) {
+        int at = 2;  // (the default: the middle step)
+        bool custom = false;
+        if (now.HasValue) {
+            at = Enumerable.Range(0, steps.Length).OrderBy(i => Math.Abs(steps[i] - now.Value)).First();
+            custom = Math.Abs(steps[at] - now.Value) > 0.001f;
+        }
+        var head = new Label { Text = title, Font = new Font("Segoe UI Semibold", 10.5F), ForeColor = Theme.Text, AutoSize = true, Location = new Point(pad, y) };
+        var value = new Label { ForeColor = Theme.Muted, AutoSize = false, TextAlign = ContentAlignment.MiddleRight, Size = new Size((int)(220 * k), head.PreferredHeight),
+                                Location = new Point(pad + w - (int)(220 * k), y) };
+        y += head.PreferredHeight + (int)(4 * k);
+        var text = new Label { Text = about, ForeColor = Theme.Muted, AutoSize = false, Location = new Point(pad, y) };
+        text.Size = new Size(w, TextRenderer.MeasureText(about, Font, new Size(w, 0), TextFormatFlags.WordBreak).Height);
+        y += text.Height + (int)(6 * k);
+        var slider = new StepSlider(steps.Length, at, k) { Location = new Point(pad, y), Width = w };
+        y += slider.Height;
+        var l = new Label { Text = left, ForeColor = Theme.Muted, AutoSize = true, Location = new Point(pad, y) };
+        var r = new Label { Text = right, ForeColor = Theme.Muted, AutoSize = false, TextAlign = ContentAlignment.TopRight, Size = new Size((int)(160 * k), l.PreferredHeight),
+                            Location = new Point(pad + w - (int)(160 * k), y) };
+        y += l.PreferredHeight + (int)(8 * k);
+        Action show = () => {
+            value.Text = custom ? now.Value.ToString("0.0##", System.Globalization.CultureInfo.InvariantCulture) + " (set by hand)"
+                                : steps[slider.Index].ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + (slider.Index == 2 ? " - default" : "");
+        };
+        slider.Changed += () => { custom = false; moved(); show(); };
+        show();
+        Controls.AddRange(new Control[] { head, value, text, slider, l, r });
+        return slider;
+    }
+
+    void Save() {
+        if (sharpMoved) IniKeys.Set(ini, "sharpness", Sharpness[sharp.Index]);
+        if (weightMoved) IniKeys.Set(ini, "frame_weight", FrameWeight[weight.Index]);
+    }
+}
+
 class LoaderForm : Form {
     readonly string dll, xessDll, ini, version;
     readonly float k;
@@ -600,7 +787,7 @@ class LoaderForm : Form {
         folder.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; StartScan(); } };
         install.Click += (s, e) => Install();
         restore.Click += (s, e) => Restore();
-        settings.Click += (s, e) => OpenFile(Files.Ini, "no dittosr.ini there yet: install DittoSR first");
+        settings.Click += (s, e) => ShowSettings();
         logButton.Click += (s, e) => OpenFile(xessMode ? Files.XessLog : Files.Log, "no log yet: it appears once the game loads DittoSR");
         fsrButton.Click += (s, e) => SetMode(false);
         xessButton.Click += (s, e) => SetMode(true);
@@ -839,6 +1026,25 @@ class LoaderForm : Form {
             Close();
         } catch (Exception) {
             Log("not restarted as administrator");
+        }
+    }
+
+    void ShowSettings() {
+        string f = SelectedFolder();
+        if (f == null) return;
+        string p = Path.Combine(f, Files.Ini);
+        if (!File.Exists(p)) { Log("no dittosr.ini there yet: install DittoSR first (" + p + ")"); return; }
+        try {
+            using (var d = new SettingsForm(p, k))
+                if (d.ShowDialog(this) == DialogResult.OK) {
+                    float? sh = IniKeys.Get(p, "sharpness"), fw = IniKeys.Get(p, "frame_weight");
+                    Log("settings saved in " + p + ": sharpness " + (sh.HasValue ? sh.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "-") +
+                        ", frame_weight " + (fw.HasValue ? fw.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "-") + " (F9 in the game applies them live)");
+                }
+        } catch (UnauthorizedAccessException) {
+            Log("settings: no permission to write " + p + " - restart the loader as administrator");
+        } catch (IOException ex) {
+            Log("settings failed: " + ex.Message);
         }
     }
 
