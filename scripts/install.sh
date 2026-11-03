@@ -90,5 +90,11 @@ for n in "${targets[@]}"; do
     echo "installed DittoSR as $target"
 done
 ini="$dir/dittosr.ini"
-[ -f "$ini" ] || cp "$here/../dittosr.ini" "$ini"
+if [ ! -f "$ini" ]; then
+    cp "$here/../dittosr.ini" "$ini"
+elif grep -qE '^[[:space:]]*sharpness[[:space:]]*=[[:space:]]*0\.2[[:space:]]*$' "$ini"; then
+    # (an ini from before 0.2.2 with the then default sharpness=0.2, a soft blur at rest: the new default, 0.6)
+    sed -E -i 's/^[[:space:]]*sharpness[[:space:]]*=[[:space:]]*0\.2([[:space:]]*)$/sharpness=0.6\1/' "$ini"
+    echo "settings: sharpness 0.2 (the old default) set to 0.6 (the new default)"
+fi
 echo "settings: $ini; log: $dir/dittosr.log"

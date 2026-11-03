@@ -45,4 +45,12 @@ foreach ($n in $names) {
 }
 $ini = Join-Path $Dir "dittosr.ini"
 if (-not (Test-Path $ini)) { Copy-Item (Join-Path $PSScriptRoot "..\dittosr.ini") $ini }
+else {
+    # (an ini from before 0.2.2 with the then default sharpness=0.2, a soft blur at rest: the new default, 0.6)
+    $lines = Get-Content $ini
+    if ($lines -match '^\s*sharpness\s*=\s*0\.2\s*$') {
+        $lines -replace '^\s*sharpness\s*=\s*0\.2\s*$', 'sharpness=0.6' | Set-Content $ini -Encoding ascii
+        Write-Host "settings: sharpness 0.2 (the old default) set to 0.6 (the new default)"
+    }
+}
 Write-Host "settings: $ini; log: $(Join-Path $Dir 'dittosr.log')"

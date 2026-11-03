@@ -1,3 +1,5 @@
+<p align="center"><img src="loader/dittosr-256.png" width="128" alt="DittoSR"></p>
+
 # DittoSR
 
 DittoSR is a temporal upscaler for PC games. It started from Qualcomm's **Snapdragon Game Super Resolution 2** (GSR 2),
@@ -182,7 +184,7 @@ The shipped file has five keys. **F9** reads the file again while playing, so `s
 | Section     | Key            | Meaning                                                                                                                                                                                                           |
 | ----------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `[dittosr]` | `enabled`      | `1` DittoSR; `0` AMD's FSR instead (needs AMD's DLL alongside as `.orig.dll`)                                                                                                                                     |
-| `[dittosr]` | `sharpness`    | at rest `0` soft, `0.6` the image as reconstructed, `1` sharpened; moving, sharpened more the higher; 0.2                                                                                                         |
+| `[dittosr]` | `sharpness`    | at rest `0` soft, `0.6` the image as reconstructed, `1` sharpened (more at higher ratios and lower output resolutions); moving, sharpened more the higher; 0.6                                                                                                         |
 | `[dittosr]` | `frame_weight` | the weight of each new frame against the accumulated image, 0.25 to 4; 2. Lower: more persistence (steadier, smoother, more motion blur and trailing). Higher: more responsive (crisper in motion, more shimmer). |
 | `[debug]`   | `enabled`      | `1`: F10 switches DittoSR ↔ AMD's FSR live, and the log describes the first upscales in full                                                                                                                      |
 | `[debug]`   | `indicator`    | `1`: a small green square in the top-left corner while DittoSR upscales                                                                                                                                           |

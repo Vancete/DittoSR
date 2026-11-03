@@ -32,8 +32,8 @@ using Microsoft.Win32;
 
 [assembly: AssemblyTitle("DittoSR Loader")]
 [assembly: AssemblyProduct("DittoSR")]
-[assembly: AssemblyVersion("0.2.1.0")]
-[assembly: AssemblyFileVersion("0.2.1.0")]
+[assembly: AssemblyVersion("0.2.2.0")]
+[assembly: AssemblyFileVersion("0.2.2.0")]
 
 namespace DittoSR {
 
@@ -103,7 +103,7 @@ static class Files {
         }
     }
 
-    // DittoSR's version name in a DLL ("DittoSR 0.2.1"), or null: not DittoSR's (AMD's DLLs are tens of MB: not read)
+    // DittoSR's version name in a DLL ("DittoSR 0.2.2"), or null: not DittoSR's (AMD's DLLs are tens of MB: not read)
     public static string DittoVersion(string path) {
         try {
             var fi = new FileInfo(path);
@@ -266,7 +266,25 @@ static class Installer {
         if (!File.Exists(iniTarget) && ini != null) {
             File.Copy(ini, iniTarget);
             log("settings: " + iniTarget);
+        } else if (File.Exists(iniTarget) && MigrateSharpness(iniTarget)) {
+            log("settings: sharpness 0.2 (the old default, a soft blur at rest) set to 0.6 (the new default) in " + iniTarget);
         }
+    }
+
+    // An ini kept from before 0.2.2 with the then default sharpness=0.2: the new default, 0.6 (the image as
+    // reconstructed). Any other value is the user's own and stays.
+    static bool MigrateSharpness(string ini) {
+        string[] lines = File.ReadAllLines(ini);
+        bool changed = false;
+        for (int i = 0; i < lines.Length; i++) {
+            string[] kv = lines[i].Split('=');
+            if (kv.Length == 2 && kv[0].Trim().ToLowerInvariant() == "sharpness" && kv[1].Trim() == "0.2") {
+                lines[i] = "sharpness=0.6";
+                changed = true;
+            }
+        }
+        if (changed) File.WriteAllLines(ini, lines);
+        return changed;
     }
 
     public static void Restore(string folder, Action<string> log) {

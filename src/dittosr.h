@@ -7,7 +7,7 @@
 #include "ffx_api/ffx_upscale.h"
 
 // the version both front ends report (the FidelityFX API provider, the libxess.dll proxy)
-#define DITTOSR_VERSION_NAME "DittoSR 0.2.1"
+#define DITTOSR_VERSION_NAME "DittoSR 0.2.2"
 
 struct DittoSettings {
     float alphaRest = 0.035f;  // a stable pixel's share of each new frame at rest
@@ -26,7 +26,7 @@ struct DittoSettings {
     float motionShare = 0.15f;  // the new frame's base share while moving (originally 0.3)
     float motionMinMax = 1.0f; // how far the box is held within the samples' min / max while moving
     int depthMode = 0;         // 0: disocclusion by the previous frame's depth; 1: GSR 2's depth clip
-    float sharpness = 0.2f;    // at rest 0 soft, 0.6 as reconstructed, 1 sharpened; moving, sharpened by it (sharpen.hlsl)
+    float sharpness = 0.6f;    // at rest 0 soft, 0.6 as reconstructed, 1 sharpened; moving, sharpened by it (sharpen.hlsl)
     float frameWeight = 2.0f;  // x the new frame's share, 0.25 - 4: lower, more persistence (smoother, blurrier in motion)
     float changeScale = 1.0f;  // how far the share of the image that changed drives the reaction
     // the new frame's share x shareFar where no jittered sample landed close to the pixel, x shareNear where one did
