@@ -1,13 +1,13 @@
 // DittoSR's sharpening (output size): a contrast-adaptive sharpen of the history just written - in its perceptual
 // domain - into the game's output. Each channel: the centre against its 4 neighbours, by as much as the neighbourhood
 // leaves room before black or white (the room to the clip over the peak, square-rooted, as AMD's CAS): flat areas and
-// strong edges are left almost alone, fine detail gains contrast without halos. The scale: at rest 0.25 x (sharpness -
-// 0.6) - below 0.6 a soft blur instead (the reconstruction alone looked oversharpened: 0 soft, 0.6 as it is), above it
-// the sharpening x 0.5 - 1 by the stability level (a pixel just cut still holds the jittered samples' noise it would
-// amplify); moving - from 2 output pixels a frame - 0.1 x sharpness: the wider reconstruction there softens the image
-// (0.2 doubled the shimmer of an uneven pan). Above 2x the moving term grows with the ratio (x 2.25 at 3x): a moving
-// object's detail is softer there - at 3x it was 12 % below 2x's against the reference, now level - while at rest the
-// ratio left the sharpness as it was (the sharpness value means the same at 2x and 3x).
+// strong edges are left almost alone, fine detail gains contrast without halos. The scale: at rest below 0.6 a soft
+// blur, 0.25 x (sharpness - 0.6) (the reconstruction alone looked oversharpened: 0 soft, 0.6 as it is); above it a
+// sharpening up to 0.125 at 1, more at higher ratios and lower output resolutions (below), x 0.5 - 1 by the stability
+// level (a pixel just cut still holds the jittered samples' noise it would amplify); moving - from 2 output pixels a
+// frame - 0.1 x sharpness: the wider reconstruction there softens the image (0.2 doubled the shimmer of an uneven pan).
+// Above 2x the moving term grows with the ratio (x 2.25 at 3x): a moving object's detail is softer there - at 3x it was
+// 12 % below 2x's against the reference, now level.
 // t0 = the history (u0 of the upscale; a = the stability level), t1 = the convert pass's (motion), u1 = the game's output.
 #include "common.hlsli"
 
@@ -24,7 +24,12 @@ void main(uint2 id : SV_DispatchThreadID) {
     float3 c = c4.rgb;
     float2 uv = (float2(id) + 0.5) * osRcp;
     float mlen = length(0.5 * MotionDepthClip.SampleLevel(linearClamp, uv, 0.0).xy * os);
-    float sh = saturate(sharpness), kr = 0.25 * (sh - 0.6);
+    // (above 0.6 at rest, up to 0.125 - CAS's weakest - at 1, x up to 1.6 from 1.5x to 3x and from a 2160 to a 1080
+    // line output: there each output pixel covers more of the scene and the reconstruction's softness shows more; 0.2
+    // at most - CAS's strongest)
+    float sh = saturate(sharpness);
+    float boost = 1.0 + 0.3 * saturate((ratio - 1.5) / 1.5) + 0.3 * saturate((2160.0 - os.y) / 1080.0);
+    float kr = sh < 0.6 ? 0.25 * (sh - 0.6) : min(0.125 * boost, 0.2) * (sh - 0.6) / 0.4;
     float km = 0.1 * sh * (1.0 + 1.25 * saturate(ratio - 2.0));
     float k = lerp(kr > 0.0 ? kr * (0.5 + 0.5 * c4.a) : kr, km, saturate(mlen * 0.5));  // (1: CAS's strongest)
     // (the filter at hf precision - half in the FP16 variant)
