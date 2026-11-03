@@ -31,7 +31,8 @@ void main(uint2 id : SV_DispatchThreadID) {
     float boost = 1.0 + 0.3 * saturate((ratio - 1.5) / 1.5) + 0.3 * saturate((2160.0 - os.y) / 1080.0);
     float kr = sh < 0.6 ? 0.25 * (sh - 0.6) : min(0.125 * boost, 0.2) * (sh - 0.6) / 0.4;
     float km = 0.1 * sh * (1.0 + 1.25 * saturate(ratio - 2.0));
-    float k = lerp(kr > 0.0 ? kr * (0.5 + 0.5 * c4.a) : kr, km, saturate(mlen * 0.5));  // (1: CAS's strongest)
+    float mv = saturate(mlen * 0.5);
+    float k = min(lerp(kr > 0.0 ? kr * (0.5 + 0.5 * c4.a) : kr, km, mv), 0.2);  // (0.2: CAS's strongest)
     // (the filter at hf precision - half in the FP16 variant)
     hf3 ch = (hf3)c;
     hf3 n = (hf3)History.Load(int3(clamp(p + int2(0, -1), int2(0, 0), m), 0)).rgb;
@@ -42,6 +43,12 @@ void main(uint2 id : SV_DispatchThreadID) {
     hf3 amp = sqrt(saturate(min(mn, (hf)1.0 - mx) / max(mx, (hf)1e-4)));
     hf3 wgt = k >= 0.0 ? -amp * (hf)k : (hf3)(hf)(-k);
     hf3 r = saturate((ch + wgt * (n + s + w + ea)) / ((hf)1.0 + (hf)4.0 * wgt));
+    // (moving, within its neighbourhood's range: a pixel the reconstruction left a little brighter or darker than its
+    // neighbours - the new frame's jittered samples, more of them above 2x - is not pushed further out, a sparkle that
+    // moves with the image; detail between its neighbours still gains contrast. A quarter of the range beyond it up to
+    // 2x - its moving sharpness as before - none at 3x: there, at sharpness 1, the shimmer of a pan 7.9 -> 3.3)
+    hf3 mrg = (hf)(0.25 * (1.0 - saturate(ratio - 2.0))) * (mx - mn);
+    r = lerp(r, clamp(r, mn - mrg, mx + mrg), (hf)mv);
     float3 o = dec((float3)r, e);
     if (indicator > 0.5 && id.x < 12 && id.y < 12) o = float3(0.0, 1.0, 0.0) / e;
     Output[id] = float4(o, 1.0);
