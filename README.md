@@ -1,4 +1,5 @@
 <p align="center"><img src="loader/dittosr-256.png" width="128" alt="DittoSR"></p>
+<p align="center"><a href="https://buymeacoffee.com/vancete"><img src="https://raw.githubusercontent.com/pachadotdev/buymeacoffee-badges/main/bmc-yellow.svg" alt="Buy Me a Coffee"></a></p>
 
 # DittoSR
 
