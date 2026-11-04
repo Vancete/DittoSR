@@ -9,17 +9,17 @@ struct DittoConstants {
     float rs[2], os[2], rsRcp[2], osRcp[2];
     float jit[2], ratio, width;
     float alphaRest, conf, reset, gammaRest;
-    float react, reactiveScale, tanHalfFovH, depthInverted;
+    float react, reactiveScale, stabStep, depthInverted;
     float mvScale[2], mvSize[2];
     float jitCancel[2], preExposure, hdr;
     float exposureScale, hasExposure, hasReactive, debugView;
     float indicator, motionGamma, motionShare, motionMinMax;
-    float depthMode, sharpness, changeScale, shareFar;
+    float antiShimmer, sharpness, changeScale, shareFar;
     float shareNear, encodePower, motionNear, splitClip;
     float history10, frameWeight, splitX, autoReactive;
-    float stabStep, antiShimmer, autoExposure, pad;
+    float autoExposure, pad;
 };
-static_assert(sizeof(DittoConstants) == 52 * 4, "the root constants");
+static_assert(sizeof(DittoConstants) == 50 * 4, "the root constants");
 
 // One upscale's constants from the settings and the frame (DittoFrame or DittoFrameVk: the same numeric fields).
 // prevJit: the previous frame's jitter, updated (the vectors' jitter cancellation).
@@ -43,9 +43,6 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
     k.mvSize[0] = fr.mvRes[0], k.mvSize[1] = fr.mvRes[1];
     if (fr.jitteredMv) k.jitCancel[0] = (prevJit[0] - k.jit[0]) / rw, k.jitCancel[1] = (prevJit[1] - k.jit[1]) / rh;
     prevJit[0] = k.jit[0], prevJit[1] = k.jit[1];
-    // (no field of view from the API: the ini's horizontal one)
-    k.tanHalfFovH = fr.fovV > 0.01f && fr.fovV < 3.1f ? tanf(0.5f * fr.fovV) * (float)rw / (float)rh
-                                                      : tanf(0.5f * s.fovHDeg * 3.14159265f / 180.0f);
     k.depthInverted = fr.depthInverted ? 1.0f : 0.0f;
     k.preExposure = fr.preExposure > 0.0f ? fr.preExposure : 1.0f;
     k.hdr = fr.hdr ? 1.0f : 0.0f;
@@ -53,7 +50,7 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
     k.hasReactive = hasReactive ? 1.0f : 0.0f;
     k.debugView = (float)s.debugView, k.indicator = s.indicator ? 1.0f : 0.0f;
     k.motionGamma = s.motionGamma, k.motionShare = s.motionShare, k.motionMinMax = s.motionMinMax;
-    k.depthMode = (float)s.depthMode, k.sharpness = s.sharpness, k.changeScale = s.changeScale;
+    k.sharpness = s.sharpness, k.changeScale = s.changeScale;
     k.shareFar = s.shareFar, k.shareNear = s.shareNear, k.encodePower = s.encodePower;
     k.motionNear = s.motionNear, k.splitClip = s.splitClip;
     k.history10 = history10 ? 1.0f : 0.0f;

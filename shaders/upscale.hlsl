@@ -1,5 +1,5 @@
 // DittoSR's upscale. Output size.
-// t0 = the previous history, t1 = the convert pass's (xy motion in NDC, z depth clip), t2 = the colour, t3 = the motion
+// t0 = the previous history, t1 = the convert pass's (xy motion in NDC), t2 = the colour, t3 = the motion
 // pass's (the motion checks, the derived reactive mask), t4 = the change's 1 x 1, t6 = the game's reactive mask
 // (optional), t7 = the previous stability levels (D3D12).
 // u0 = the history (rgb in DittoSR's encoded domain; a = the stability level on Vulkan, its RGBA16F alpha), u1 = the
@@ -179,11 +179,8 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     float3 cg = (float3)sg / max(wg, 1e-6), cs2 = (float3)ss / max(wsum, 1e-6);
     float cf = saturate(wg);
     float3 cur = lerp(cs2, cg, smoothstep(0.05, conf > 0.0 ? conf : 0.6, cf));
-    float3 mda = mda4.xyz;
-    float2 puv = uv - 0.5 * mda.xy;
-    // (GSR 2's depth clip only as far as the pixel moves: at rest a silhouette stands out every frame, alternating)
-    if (depthMode > 0.5) mda.z *= saturate(mlen * 0.5);
-    if (debugView > 0.5 && debugView < 1.5) { put(id, float3(saturate(abs(0.5 * mda.xy * os) * 64.0), 0.0), float2(0.0, 0.5), 1.0); return; }
+    float2 puv = uv - 0.5 * mda4.xy;
+    if (debugView > 0.5 && debugView < 1.5) { put(id, float3(saturate(abs(0.5 * mda4.xy * os) * 64.0), 0.0), float2(0.0, 0.5), 1.0); return; }
     bool off = any(puv < 0.0) || any(puv > 1.0);
     if (reset > 0.5 || off) {  // (no history: the disocclusion's fill, else the smooth estimate)
         float3 fill;
@@ -191,13 +188,12 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
         return;
     }
     // the motion pass's, at render size: x = the motion's change against its neighbours' (rj), y = the disocclusion
-    // (depth_mode 0), z = the derived reactive mask
+    // (dz), z = the derived reactive mask
     float4 ax = Motion.SampleLevel(linearClamp, uv, 0.0);
-    float rj = ax.x;
-    if (depthMode < 0.5) mda.z = ax.y;
+    float rj = ax.x, dz = ax.y;
     // (where the history is lost - something revealed, another object's edge - the fill takes the place of the
     // Gaussians' estimate: sharp from the first frame)
-    float lost = saturate(max(rj, mda.z) * 1.5 - 0.25);
+    float lost = saturate(max(rj, dz) * 1.5 - 0.25);
     [branch] if (lost > 0.0 && inTile) {
         float3 fill;
         if (spatial(q, t0, tw, fill)) cur = lerp(cur, fill, lost);
@@ -218,7 +214,7 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     // (the share of the image that changed against its history - the change pass's one pixel)
     float gch = changeScale * smoothstep(0.2, 0.5, Change.Load(int3(0, 0, 0)));
     float rest = gammaRest > 0.0 ? gammaRest : 1.5;
-    float gam = lerp(rest, motionGamma, saturate(mlen * 0.25)) * (1.0 - 0.5 * mda.z);
+    float gam = lerp(rest, motionGamma, saturate(mlen * 0.25)) * (1.0 - 0.5 * dz);
     gam *= 1.0 - 0.6 * rj;
     // (stable and at rest, a wider box - the jittered samples' own spread no longer cuts the history)
     gam *= 1.0 + 0.35 * sp * (1.0 - saturate(mlen));
@@ -267,7 +263,7 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     float un = lerp(up, sIn, 0.5 * landw);
     a *= 1.0 - antiShimmer * (1.0 - abs(un)) * sp * saturate(2.0 - 2.0 * t);
 #endif
-    a = lerp(a, 0.6, mda.z);
+    a = lerp(a, 0.6, dz);
     // the reaction: the history outside the samples' range by t - something changed - the new frame by it
     // (with much of the image changed the reaction goes further: the new frame up to 0.95)
     a = lerp(a, lerp(0.5, 0.95, gch), saturate((t - 1.0) * react));
@@ -283,7 +279,7 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     // when a sample landed near the pixel: at 3x one does every ~9 frames, and a step each frame had the pixel stable -
     // taking little of each new sample - before its first ones came; 30.8 to 31.9 dB on still grass at 3x, as a pixel
     // after a cut converges)
-    bool cut = t > 1.25 || rj > 0.5 || mda.z > 0.5 || gch > 0.5 || rv > 0.5;
+    bool cut = t > 1.25 || rj > 0.5 || dz > 0.5 || gch > 0.5 || rv > 0.5;
     float3 res = rgb(lerp(hy, cur, saturate(a)));
     bool landed = hr <= 0.0 || cf > 0.15 * hr || mlen > 1.0;
     float stab = cut ? 0.0 : min(sp + (landed ? stabStep : 0.0), 1.0);

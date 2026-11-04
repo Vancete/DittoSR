@@ -1,8 +1,8 @@
-// DittoSR's convert pass: Snapdragon GSR 2's (BSD 3-Clause, licenses/LICENSE-snapdragon-gsr.txt) depth
-// clip and the motion of the nearest of the 3x3. Render size. u0 (RGBA16F): xy = the motion in NDC (2 x (uv - the
-// previous uv)), z = depth clip (how far this pixel's depth stands out from its 4x4 neighbourhood's), w = the nearest
-// of the 3x3's nearness (1 - depth: reversed-Z's own value, ~ 1 / distance, precise in half floats where it is small) -
-// the next frame's disocclusion test reads it where the pixel went.
+// DittoSR's convert pass, from Snapdragon GSR 2's (BSD 3-Clause, licenses/LICENSE-snapdragon-gsr.txt): the motion of
+// the nearest of the 3x3. Render size. u0 (RGBA16F): xy = the motion in NDC (2 x (uv - the previous uv)), z unused,
+// w = the nearest of the 3x3's nearness (1 - depth: reversed-Z's own value, ~ 1 / distance, precise in half floats where
+// it is small) - the next frame's disocclusion test reads it where the pixel went. (GSR 2's depth clip, which once took
+// z, gave way to the motion pass's disocclusion test.)
 //   One group more, below the image's (the dispatch's last row, its first group): the fast settling - how much of the
 // image changed against the history. 16 x 16 points of a grid over the render image, in a 4 x 4 of cells; at each,
 // whether this frame's colour differs from the history where the point was by over 0.1 in luma; each cell's share, then
@@ -130,21 +130,6 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     float4 topLeft = InputDepth.GatherRed(linearClamp, gatherCoord + float2(0.0, step2.y));
     float4 topRight = InputDepth.GatherRed(linearClamp, gatherCoord + step2);
     if (depthInverted > 0.5) btmLeft = 1.0 - btmLeft, btmRight = 1.0 - btmRight, topLeft = 1.0 - topLeft, topRight = 1.0 - topRight;
-    float maxC = min(min(min(btmLeft.z, btmRight.w), topLeft.y), topRight.x);
-    float btmLeft4 = min(min(min(btmLeft.y, btmLeft.x), btmLeft.z), btmLeft.w);
-    float depthclip = 0.0;
-    if (maxC < 1.0 - 1.0e-05) {
-        float btmRight4 = min(min(min(btmRight.y, btmRight.x), btmRight.z), btmRight.w);
-        float topLeft4 = min(min(min(topLeft.y, topLeft.x), topLeft.z), topLeft.w);
-        float topRight4 = min(min(min(topRight.y, topRight.x), topRight.z), topRight.w);
-        float Ksep_Kfov_diagonal = 1.37e-05 * tanHalfFovH * length(rs);
-        float Depthsep = Ksep_Kfov_diagonal * (1.0 - maxC);
-        float Wdepth = saturate(Depthsep / (abs(maxC - btmLeft4) + 1.19e-07))
-                     + saturate(Depthsep / (abs(maxC - btmRight4) + 1.19e-07))
-                     + saturate(Depthsep / (abs(maxC - topLeft4) + 1.19e-07))
-                     + saturate(Depthsep / (abs(maxC - topRight4) + 1.19e-07));
-        depthclip = saturate(1.0 - Wdepth * 0.25);
-    }
     // (the nearest of the 3x3: a moving silhouette's own motion over the background around it - its depths from the
     // gathers above, which cover the 4 x 4 from id - 1 (a gather's x, y, z, w: (0, 1), (1, 1), (1, 0), (0, 0)); at the
     // image's edges, where the gathers clamp to the depth texture's own size, its own loads as before)
@@ -160,5 +145,5 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     } else {
         v = motionAt(int2(id), dmin);
     }
-    Out[id] = float4(2.0 * v, depthclip, 1.0 - dmin);
+    Out[id] = float4(2.0 * v, 0.0, 1.0 - dmin);
 }

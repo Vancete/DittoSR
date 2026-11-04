@@ -29,7 +29,6 @@ struct DittoFrameVk {
     float exposureMul = 1.0f;
     float preExposure = 1.0f;
     float reactiveMul = 1.0f;
-    float fovV = 0.0f;
     bool reset = false;
 };
 
@@ -62,7 +61,7 @@ private:
     bool init();
     bool makeImage(Img &t, uint32_t w, uint32_t h, VkFormat f);
     void dropImage(Img &t);
-    bool ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh);
+    bool ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, bool *made);  // (*made: a new set)
     VkImageView gameView(const DittoImageVk &i);
     uint32_t memoryType(uint32_t bits, VkMemoryPropertyFlags want);
     void collect(bool all);

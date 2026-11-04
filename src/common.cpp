@@ -66,11 +66,9 @@ static void load_config() {
     s.jitterSignX = ini_float(ini, "jitter_sign_x", s.jitterSignX);
     s.jitterSignY = ini_float(ini, "jitter_sign_y", s.jitterSignY);
     s.mvSign = ini_float(ini, "mv_sign", s.mvSign);
-    s.fovHDeg = ini_float(ini, "fov_h_deg", s.fovHDeg);
     s.motionGamma = ini_float(ini, "motion_gamma", s.motionGamma);
     s.motionShare = ini_float(ini, "motion_share", s.motionShare);
     s.motionMinMax = ini_float(ini, "motion_minmax", s.motionMinMax);
-    s.depthMode = GetPrivateProfileIntA("dittosr", "depth_mode", s.depthMode, ini);
     s.sharpness = ini_float(ini, "sharpness", s.sharpness);
     s.changeScale = ini_float(ini, "change_scale", s.changeScale);
     s.shareFar = ini_float(ini, "share_far", s.shareFar);
@@ -93,18 +91,17 @@ static void load_config() {
     c.compare = GetPrivateProfileIntA("dittosr", "compare", 0, ini) != 0;
     c.gameSharpness = GetPrivateProfileIntA("dittosr", "game_sharpness", -1, ini);
     s.indicator = GetPrivateProfileIntA("debug", "indicator", GetPrivateProfileIntA("dittosr", "indicator", 0, ini), ini) != 0;
-    // (debug_view: 1 the motion, 2 the new frame's share, 3 the stability level, 4 clip / cut / confidence; debug_motion=1
-    // is debug_view=1)
-    s.debugView = GetPrivateProfileIntA("dittosr", "debug_view", GetPrivateProfileIntA("dittosr", "debug_motion", 0, ini), ini);
+    // (debug_view: 1 the motion, 2 the new frame's share, 3 the stability level, 4 clip / cut / confidence)
+    s.debugView = GetPrivateProfileIntA("dittosr", "debug_view", 0, ini);
     ditto_log("config: enabled %d, debug %d, sharpness %g, frame_weight %g, auto_reactive %g, ratios %g %g %g %g\n", c.enabled,
               c.debug, s.sharpness, s.frameWeight, s.autoReactive, c.ratio[0], c.ratio[1], c.ratio[2], c.ratio[3]);
     if (!c.debug) return;
     ditto_log("config: toggle key 0x%02x, indicator %d, debug_view %d, exposure_scale %g, reactive_scale %g, "
-              "alpha_rest %g, conf %g, width %g, react %g, jitter sign %g %g, mv_sign %g, fov_h_deg %g, "
-              "motion gamma %g share %g minmax %g, depth_mode %d, sharpness %g\n",
+              "alpha_rest %g, conf %g, width %g, react %g, jitter sign %g %g, mv_sign %g, "
+              "motion gamma %g share %g minmax %g, sharpness %g\n",
               c.toggleKey, s.indicator, s.debugView, s.exposureScale, s.reactiveScale, s.alphaRest, s.conf, s.width,
-              s.react, s.jitterSignX, s.jitterSignY, s.mvSign, s.fovHDeg, s.motionGamma, s.motionShare,
-              s.motionMinMax, s.depthMode, s.sharpness);
+              s.react, s.jitterSignX, s.jitterSignY, s.mvSign, s.motionGamma, s.motionShare,
+              s.motionMinMax, s.sharpness);
 }
 
 bool ditto_poll_reload() {

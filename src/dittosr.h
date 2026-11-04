@@ -20,11 +20,9 @@ struct DittoSettings {
     float exposureScale = 1.0f;
     float jitterSignX = 1.0f, jitterSignY = 1.0f;
     float mvSign = 1.0f;
-    float fovHDeg = 80.0f;     // the horizontal field of view when the API gives none, for the depth clip
     float motionGamma = 1.5f;  // the history clip width while moving (originally 0.9)
     float motionShare = 0.15f;  // the new frame's base share while moving (originally 0.3)
     float motionMinMax = 1.0f; // how far the box is held within the samples' min / max while moving
-    int depthMode = 0;         // 0: disocclusion by the previous frame's depth; 1: GSR 2's depth clip
     float sharpness = 0.6f;    // at rest 0 soft, 0.6 as reconstructed, 1 sharpened; moving, sharpened by it (sharpen.hlsl)
     float frameWeight = 2.0f;  // x the new frame's share, 0.25 - 4: lower, more persistence (smoother, blurrier in motion)
     float changeScale = 1.0f;  // how far the share of the image that changed drives the reaction
@@ -80,7 +78,6 @@ struct DittoFrame {
     float exposureMul = 1.0f;  // x the exposure texture (or alone), for the encoding
     float preExposure = 1.0f;
     float reactiveMul = 1.0f;  // x the reactive mask
-    float fovV = 0.0f;         // vertical field of view (radians), 0: unknown
     bool reset = false;
 };
 
@@ -104,7 +101,8 @@ private:
         uint32_t w = 0, h = 0;
     };
     bool createPipelines();
-    bool ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, DXGI_FORMAT historyFormat);
+    // (false: they could not be made; *made: a new set - the history starts again)
+    bool ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, DXGI_FORMAT historyFormat, DXGI_FORMAT stabFormat, bool *made);
     void releaseTextures();
     bool makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f);
     void transition(ID3D12GraphicsCommandList *cl, Tex &t, D3D12_RESOURCE_STATES to);

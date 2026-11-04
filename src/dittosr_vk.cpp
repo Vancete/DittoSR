@@ -309,8 +309,10 @@ void DittoSRVk::collect(bool all) {
     garbage_.resize(keep);
 }
 
-bool DittoSRVk::ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh) {
+bool DittoSRVk::ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, bool *made) {
+    *made = false;
     if (texValid_ && mda_[0].w == rw && mda_[0].h == rh && hist_[0].w == ow && hist_[0].h == oh) return true;
+    *made = true;
     for (Img *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &change1_}) dropImage(*t);
     texValid_ = makeImage(mda_[0], rw, rh, VK_FORMAT_R16G16B16A16_SFLOAT) && makeImage(mda_[1], rw, rh, VK_FORMAT_R16G16B16A16_SFLOAT) &&
                 makeImage(hist_[0], ow, oh, VK_FORMAT_R16G16B16A16_SFLOAT) && makeImage(hist_[1], ow, oh, VK_FORMAT_R16G16B16A16_SFLOAT) &&
@@ -356,7 +358,6 @@ bool ditto_frame_from_ffx_vk(const ffxDispatchDescUpscale *d, const DittoCreateI
     f->depthInverted = (ci.flags & FFX_UPSCALE_ENABLE_DEPTH_INVERTED) != 0;
     f->hdr = (ci.flags & FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE) != 0;
     f->preExposure = d->preExposure > 0.0f ? d->preExposure : 1.0f;
-    f->fovV = d->cameraFovAngleVertical;
     f->reset = d->reset;
     return true;
 }
@@ -371,8 +372,8 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
     }
     collect(false);
     uint32_t rw = fr.rw, rh = fr.rh, ow = fr.ow, oh = fr.oh;
-    bool resized = !texValid_ || mda_[0].w != rw || mda_[0].h != rh || hist_[0].w != ow || hist_[0].h != oh;
-    if (!ensureTextures(rw, rh, ow, oh)) return false;
+    bool resized;
+    if (!ensureTextures(rw, rh, ow, oh, &resized)) return false;
     bool reset = fr.reset || forceReset || resized;
     VkCommandBuffer cb = fr.cb;
 

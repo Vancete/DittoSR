@@ -1,6 +1,6 @@
 // DittoSR's motion pass: the motion checks and the derived reactive mask. Render size - once per render pixel, not per output pixel
 // (the upscale did them per output pixel: 8 reads of the motion at each, ratio^2 times over the same render pixels).
-// u0 (RGBA8): x = the motion's change against its neighbours' (rj), y = the disocclusion (depth_mode 0), z = the
+// u0 (RGBA8): x = the motion's change against its neighbours' (rj), y = the disocclusion, z = the
 // derived reactive mask, w = this pixel's encoded luma - the next frame's reactive test reads it where the pixel went.
 // t0 = the previous frame's motion pass, t1 = the convert pass's (this frame), t2 = the colour, t3 = the previous convert pass's.
 #include "common.hlsli"
@@ -55,7 +55,7 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
         pdif = max(pdif, length(dlt - 0.5 * (nm - npm) * os));
     }
     float rj = smoothstep(0.5, 2.0, pdif);
-    // (the disocclusion, depthMode 0: where the pixel was, the previous frame's surfaces - even the farthest of the four
+    // (the disocclusion: where the pixel was, the previous frame's surfaces - even the farthest of the four
     // around it - nearer than this one, and moving otherwise than it (their motion: the previous frame's convert pass
     // took the nearest's): it was hidden behind something that moved away. A turn of the camera, a still scene, or a
     // thin blade the jitter hits one frame and misses the next keep the history - GSR 2's depth clip cut it at every

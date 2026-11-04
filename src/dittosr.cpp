@@ -242,10 +242,10 @@ void DittoSR::releaseTextures() {
     texValid_ = false;
 }
 
-bool DittoSR::ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, DXGI_FORMAT hf) {
-    // (the stability levels R8, or R8G8 with the anti-shimmer's state)
-    DXGI_FORMAT sf = s_.antiShimmer > 0.0f ? DXGI_FORMAT_R8G8_UNORM : DXGI_FORMAT_R8_UNORM;
+bool DittoSR::ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, DXGI_FORMAT hf, DXGI_FORMAT sf, bool *made) {
+    *made = false;
     if (texValid_ && mda_[0].w == rw && mda_[0].h == rh && hist_[0].w == ow && hist_[0].h == oh && hist_[0].fmt == hf && stab_[0].fmt == sf) return true;
+    *made = true;
     // (a new size: the game waits for the GPU before it changes its resolution, as FSR requires; a new history format:
     // the reload key - a frame's hitch)
     releaseTextures();
@@ -324,7 +324,6 @@ bool ditto_frame_from_ffx(const ffxDispatchDescUpscale *d, const DittoCreateInfo
     f->depthInverted = (ci.flags & FFX_UPSCALE_ENABLE_DEPTH_INVERTED) != 0;
     f->hdr = (ci.flags & FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE) != 0;
     f->preExposure = d->preExposure > 0.0f ? d->preExposure : 1.0f;
-    f->fovV = d->cameraFovAngleVertical;
     f->reset = d->reset;
     return true;
 }
@@ -333,14 +332,14 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     if (!ok_ || !fr.cl || !fr.color || !fr.mv || !fr.output || !fr.rw || !fr.rh || !fr.ow || !fr.oh) return false;
     ID3D12GraphicsCommandList *cl = fr.cl;
     ID3D12Resource *color = fr.color, *depth = fr.depth, *mv = fr.mv, *out = fr.output, *expo = fr.exposure, *reac = fr.reactive;
-    // (no depth - an API that leaves it out: the convert pass reads 0 everywhere, no depth clip, the centre's motion)
+    // (no depth - an API that leaves it out: the convert pass reads 0 everywhere: the centre's motion, no disocclusion)
     D3D12_RESOURCE_DESC cd = color->GetDesc(), dd = depth ? depth->GetDesc() : D3D12_RESOURCE_DESC{}, md = mv->GetDesc(), od = out->GetDesc();
     uint32_t rw = fr.rw, rh = fr.rh, ow = fr.ow, oh = fr.oh;
     DXGI_FORMAT hfmt = s_.history10 ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R16G16B16A16_FLOAT;
+    // (the stability levels R8, or R8G8 with the anti-shimmer's state)
     DXGI_FORMAT sfmt = s_.antiShimmer > 0.0f ? DXGI_FORMAT_R8G8_UNORM : DXGI_FORMAT_R8_UNORM;
-    bool resized = !texValid_ || mda_[0].w != rw || mda_[0].h != rh || hist_[0].w != ow || hist_[0].h != oh || hist_[0].fmt != hfmt ||
-                   stab_[0].fmt != sfmt;
-    if (!ensureTextures(rw, rh, ow, oh, hfmt)) return false;
+    bool resized;
+    if (!ensureTextures(rw, rh, ow, oh, hfmt, sfmt, &resized)) return false;
     bool reset = fr.reset || forceReset || resized;
 
     // the game's resources: read as shader resources, the output as a UAV, then back to the states they came in

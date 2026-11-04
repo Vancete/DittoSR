@@ -15,7 +15,7 @@ cbuffer C : register(b0) {
     float gammaRest;      // the history clip width at rest (1.5)
     float react;          // the reaction to changes (1)
     float reactiveScale;  // the game's reactive mask: how far it raises the new frame's share (1)
-    float tanHalfFovH;    // tan(horizontal fov / 2) for the depth clip
+    float stabStep;       // the stability level's step up each frame a sample lands near the pixel (0.34)
     float depthInverted;  // 1: depth 1 = near (reversed-Z)
     float2 mvScale;       // FSR motion vector -> this frame's uv - the previous one's (sign and size folded in)
     float2 mvSize;        // the motion vectors' resolution (render, or output with display-resolution vectors)
@@ -30,7 +30,7 @@ cbuffer C : register(b0) {
     float motionGamma;    // the history clip width while moving (0.9 originally)
     float motionShare;    // the new frame's base share while moving (0.3)
     float motionMinMax;   // how far the box is held within the samples' min / max while moving (1)
-    float depthMode;      // 0: disocclusion by the previous frame's depth where the pixel was; 1: GSR 2's depth clip
+    float antiShimmer;    // the anti-shimmer's strength (0: off; D3D12)
     float sharpness;      // 0 - 1: at rest soft below 0.6, sharpened above; moving, sharpened by it (sharpen.hlsl)
     float changeScale;    // how far the share of the image that changed drives the reaction (1)
     float shareFar;       // the new frame's share x this where no sample landed close (0.6 originally)
@@ -44,8 +44,6 @@ cbuffer C : register(b0) {
     float splitX;         // > 0: the comparison - the sharpening writes the output left of this column only (the game's
                           // own upscaler's on the right), a line between
     float autoReactive;   // the reactive mask DittoSR derives when the game gives none: its strength (0: off)
-    float stabStep;       // the stability level's step up each frame a sample lands near the pixel (0.34)
-    float antiShimmer;    // the anti-shimmer's strength (0: off; D3D12)
     float autoExposure;   // 1: the convert pass measures the exposure (the game asked for it, giving none): t5 the last
                           // frame's, u2 this one's
     float pad;

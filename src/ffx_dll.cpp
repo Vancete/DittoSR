@@ -72,7 +72,6 @@ struct UpscaleCtx {
     DittoSR *ditto = nullptr;      // (D3D12)
     DittoSRVk *dittoVk = nullptr;  // (Vulkan)
     DittoCreateInfo ci = {};
-    ID3D12Device *device = nullptr;
     bool useDitto = true;
     bool resetReal = false;  // (FSR's history is stale after DittoSR ran)
     bool compare = false;    // (both: AMD's FSR on the output's right half, DittoSR on the left)
@@ -95,7 +94,6 @@ static float frame_weight_of(const UpscaleCtx *c) {
 }
 
 // this DLL in OptiScaler's custom provider folder (...\custom\<name>\ffx\): its sharpness slider is the user's
-
 static bool from_optiscaler() {
     static int r = -1;
     if (r < 0) {
@@ -228,7 +226,6 @@ FFX_API_ENTRY ffxReturnCode_t ffxCreateContext(ffxContext *context, ffxCreateCon
     // (AMD's FSR as well, when its DLL is here: the toggle, the reactive mask generation)
     if (amd && o_create(&c->real, desc, memCb) != FFX_API_RETURN_OK) ditto_log("AMD's upscale context failed (DittoSR only)\n"), c->real = nullptr;
     if (be && be->device) {
-        c->device = be->device;
         c->ditto = new DittoSR(be->device, c->ci, g_cfg.s);
         if (!c->ditto->ok()) ditto_log("DittoSR: pipelines failed%s\n", c->real ? ", AMD's FSR instead" : ""), delete c->ditto, c->ditto = nullptr;
     } else {

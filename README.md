@@ -140,7 +140,7 @@ The upscale's GPU time (`scripts\bench.ps1`, the median of 400), RTX 5070 Ti:
 - `history_10bit`, `fp16`: performance (see above).
 - `game_sharpness`: the sharpness sent with the upscale call in place of the ini's: `-1` (default) only from OptiScaler's custom folder, `1` always, `0` never.
 - `toggle_key`, `reload_key`, `debug_view`, `log_dispatches`: diagnosis.
-- The reconstruction's knobs: `width`, `conf`, `share_far`, `share_near`, `alpha_rest`, `gamma_rest`, `motion_gamma`, `motion_share`, `motion_minmax`, `motion_near`, `split_clip`, `depth_mode`, `react`, `change_scale`, `fov_h_deg`, `exposure_scale`, `encode_power`, `reactive_scale`, `jitter_sign_x`, `jitter_sign_y`, `mv_sign`.
+- The reconstruction's knobs: `width`, `conf`, `share_far`, `share_near`, `alpha_rest`, `gamma_rest`, `motion_gamma`, `motion_share`, `motion_minmax`, `motion_near`, `split_clip`, `react`, `change_scale`, `exposure_scale`, `encode_power`, `reactive_scale`, `jitter_sign_x`, `jitter_sign_y`, `mv_sign`.
 
 ## Build
 
