@@ -30,7 +30,9 @@ struct ffxCreateBackendDX12Desc {
 
 // DittoSR's provider id in the version queries ("DITTO", version 1)
 static const uint64_t kVersionId = 0x00444954544f0001ull;
-static const char *const kVersionName = DITTOSR_VERSION_NAME;
+// (the name with an FSR version first: OptiScaler reads a provider's version as the first x.y.z in its name, and sends
+// FSR 3.1's settings - its Velocity Factor slider: DittoSR's frame weight - only to 3.1.1 and above)
+static const char *const kVersionName = "DittoSR (FSR 3.1.5 API) " DITTOSR_VERSION;
 
 static std::mutex g_mu;
 static HMODULE g_self;
@@ -73,8 +75,37 @@ struct UpscaleCtx {
     ID3D12Device *device = nullptr;
     bool useDitto = true;
     bool resetReal = false;  // (FSR's history is stale after DittoSR ran)
+    bool compare = false;    // (both: AMD's FSR on the output's right half, DittoSR on the left)
     uint64_t dispatches = 0;
+    // FSR 3.1's velocity factor and reactiveness scale as configured (-1: never) - OptiScaler's sliders and presets: the
+    // frame weight (frame_weight_of)
+    float velocity = -1.0f, reactiveness = -1.0f;
+    float lastSharp = -1.0f, lastWeight = -1.0f;  // (the overrides last applied, for the log)
+    uint32_t lastRw = 0, lastRh = 0, lastOw = 0, lastOh = 0, sizeLogs = 0;  // (the sizes last seen, for the log)
 };
+
+// The frame weight from FSR 3.1's settings, so OptiScaler's presets land on DittoSR's steps: both at 1 (its Default)
+// DittoSR's own (-1: the ini's, 2 by default); the velocity factor below 1 steadier (2 x it: Stability's 0.5 is 1); at 1
+// the reactiveness scale below 1 more responsive (2 + 2 x (1 - it): Motion's 0.5 is 3, 0 is 4)
+static float frame_weight_of(const UpscaleCtx *c) {
+    float v = c->velocity >= 0.0f ? c->velocity : 1.0f, r = c->reactiveness >= 0.0f ? c->reactiveness : 1.0f;
+    if (v >= 1.0f && r >= 1.0f) return -1.0f;
+    float w = v < 1.0f ? 2.0f * v : 2.0f + 2.0f * (1.0f - r);
+    return w < 0.25f ? 0.25f : w > 4.0f ? 4.0f : w;
+}
+
+// this DLL in OptiScaler's custom provider folder (...\custom\<name>\ffx\): its sharpness slider is the user's
+
+static bool from_optiscaler() {
+    static int r = -1;
+    if (r < 0) {
+        char d[260];
+        snprintf(d, sizeof d, "%s", g_dir);
+        _strlwr_s(d, sizeof d);
+        r = strstr(d, "\\custom\\") != nullptr;
+    }
+    return r == 1;
+}
 static std::set<UpscaleCtx *> g_ctx;
 
 static UpscaleCtx *ours(ffxContext *c) {
@@ -206,6 +237,8 @@ FFX_API_ENTRY ffxReturnCode_t ffxCreateContext(ffxContext *context, ffxCreateCon
     }
     if (!c->ditto && !c->dittoVk && !c->real) return delete c, FFX_API_RETURN_ERROR_RUNTIME_ERROR;
     c->useDitto = c->ditto || c->dittoVk;
+    c->compare = g_cfg.compare && c->real && c->useDitto;
+    if (g_cfg.compare) ditto_log("comparison: %s\n", c->compare ? "on (DittoSR left, AMD's FSR right)" : "needs AMD's DLL alongside, off");
     g_ctx.insert(c);
     *context = (ffxContext)c;
     ditto_log("upscale context %p: %s (AMD's FSR %p)\n", (void *)c, c->ditto ? "DittoSR (D3D12)" : c->dittoVk ? "DittoSR (Vulkan)" : "FSR", c->real);
@@ -233,7 +266,20 @@ FFX_API_ENTRY ffxReturnCode_t ffxConfigure(ffxContext *context, const ffxConfigu
     bool amd = load_original();
     UpscaleCtx *c = ours(context);
     if (!c) return amd ? o_configure(context, desc) : FFX_API_RETURN_OK;  // (the global debug configuration: nothing to do)
-    // (FSR's key-value tuning and the like: AMD's context - DittoSR has dittosr.ini)
+    // FSR 3.1's velocity factor and reactiveness scale (0 - 1, both 1 by default): DittoSR's frame weight - OptiScaler's
+    // sliders and presets (frame_weight_of). The rest of FSR's key-value tuning: AMD's context
+    if (desc && desc->type == FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE) {
+        auto *kv = (const ffxConfigureDescUpscaleKeyValue *)desc;
+        bool vel = kv->key == FFX_API_CONFIGURE_UPSCALE_KEY_FVELOCITYFACTOR, rea = kv->key == FFX_API_CONFIGURE_UPSCALE_KEY_FREACTIVENESSSCALE;
+        if ((vel || rea) && kv->ptr) {
+            float v = *(const float *)kv->ptr;
+            v = v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v;
+            (vel ? c->velocity : c->reactiveness) = v;
+            float fw = frame_weight_of(c);
+            if (fw < 0.0f) ditto_log("configure: %s %g -> frame weight: dittosr.ini's\n", vel ? "velocity factor" : "reactiveness scale", v);
+            else ditto_log("configure: %s %g -> frame weight %g\n", vel ? "velocity factor" : "reactiveness scale", v, fw);
+        }
+    }
     return c->real ? o_configure(&c->real, desc) : FFX_API_RETURN_OK;
 }
 
@@ -278,11 +324,38 @@ FFX_API_ENTRY ffxReturnCode_t ffxDispatch(ffxContext *context, const ffxDispatch
         ditto_log("toggle: %s from dispatch %llu\n", c->useDitto ? "DittoSR" : "AMD's FSR", (unsigned long long)c->dispatches);
     }
     down = now;
-    if (ditto_poll_reload()) {
-        if (c->ditto) c->ditto->set_settings(g_cfg.s);
-        if (c->dittoVk) c->dittoVk->set_settings(g_cfg.s);
+    // the comparison (a key press, or compare=1): AMD's FSR draws the whole output first, DittoSR then its left half
+    static bool cdown;
+    bool cnow = g_cfg.compareKey && (GetAsyncKeyState(g_cfg.compareKey) & 0x8000);
+    if (cnow && !cdown && (c->ditto || c->dittoVk) && c->real) {
+        c->compare = !c->compare;
+        if (c->compare) c->resetReal = true;
+        ditto_log("comparison %s from dispatch %llu (DittoSR left, AMD's FSR right)\n", c->compare ? "on" : "off", (unsigned long long)c->dispatches);
     }
-    if (c->dispatches < (uint64_t)g_cfg.logDispatches) {
+    cdown = cnow;
+    // the settings: dittosr.ini's (F9 reads it again), with the frame weight from the configured velocity factor and the
+    // sharpness from the dispatch when it enables sharpening and comes from the user (OptiScaler's slider)
+    ditto_poll_reload();
+    {
+        DittoSettings s = g_cfg.s;
+        float fw = frame_weight_of(c);
+        if (fw >= 0.0f) s.frameWeight = fw;
+        bool gs = g_cfg.gameSharpness > 0 || (g_cfg.gameSharpness < 0 && from_optiscaler());
+        if (gs && d->enableSharpening) s.sharpness = d->sharpness < 0.0f ? 0.0f : d->sharpness > 1.0f ? 1.0f : d->sharpness;
+        if (s.sharpness != c->lastSharp || s.frameWeight != c->lastWeight) {
+            ditto_log("settings: sharpness %g%s, frame weight %g%s\n", s.sharpness, gs && d->enableSharpening ? " (the dispatch's)" : "",
+                      s.frameWeight, fw >= 0.0f ? " (FSR 3.1's settings')" : "");
+            c->lastSharp = s.sharpness, c->lastWeight = s.frameWeight;
+        }
+        if (c->ditto) c->ditto->set_settings(s);
+        if (c->dittoVk) c->dittoVk->set_settings(s);
+    }
+    // (described in full: the first few, and each whose render or output size changed - a resolution change, an
+    // upscale ratio override)
+    bool sizes = d->renderSize.width != c->lastRw || d->renderSize.height != c->lastRh || d->upscaleSize.width != c->lastOw ||
+                 d->upscaleSize.height != c->lastOh;
+    c->lastRw = d->renderSize.width, c->lastRh = d->renderSize.height, c->lastOw = d->upscaleSize.width, c->lastOh = d->upscaleSize.height;
+    if (c->dispatches < (uint64_t)g_cfg.logDispatches || (sizes && c->sizeLogs++ < 32)) {
         log_chain("ffxDispatch(upscale)", desc);
         ditto_log("dispatch %llu: render %ux%u -> %ux%u, jitter %.4f %.4f, mv scale %.2f %.2f, reset %d, sharpen %d (%.2f), "
                   "dt %.2f ms, pre-exposure %g, near %g, far %g, fov %.4f, m/unit %g, flags 0x%x, cmdlist %p\n",
@@ -296,6 +369,14 @@ FFX_API_ENTRY ffxReturnCode_t ffxDispatch(ffxContext *context, const ffxDispatch
     }
     c->dispatches++;
     if (c->useDitto && (c->ditto || c->dittoVk)) {
+        bool cmp = c->compare && c->real;
+        if (cmp) {  // (AMD's FSR first, on the whole output: DittoSR's left half then goes over it)
+            ffxDispatchDescUpscale r = *d;
+            if (c->resetReal) r.reset = true, c->resetReal = false;
+            o_dispatch(&c->real, &r.header);
+        }
+        if (c->ditto) c->ditto->set_split(cmp);
+        if (c->dittoVk) c->dittoVk->set_split(cmp);
         bool ran = false;
         uint64_t n = 0;
         if (c->ditto) {

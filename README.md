@@ -4,99 +4,86 @@
 # DittoSR
 
 DittoSR is a temporal upscaler for PC games. It started from Qualcomm's **Snapdragon Game Super Resolution 2** (GSR 2),
-a light upscaler made for phones, and was reworked heavily to hold up in demanding PC games (AAA titles at 2–2.3x,
-dense foliage, fast camera turns) while staying lighter than the usual alternatives. Thought for handheld PCs while also working pretty great on high-end PCs!
+a light upscaler made for phones, and was reworked heavily to hold up in demanding PC games (dense foliage, fast camera
+turns, high ratios) while staying lighter than the usual alternatives. Thought for handheld PCs while also working pretty great on high-end PCs!
 
-It ships as a drop-in **FidelityFX API** provider for **DirectX 12 and Vulkan**: a game that offers FSR 3.1 (or a
-tool that loads FSR 3.1, such as OptiScaler) upscales through DittoSR instead, with no change to the game. One DLL
-serves both APIs, under the names games load: `amd_fidelityfx_dx12.dll`, `amd_fidelityfx_loader_dx12.dll`,
-`amd_fidelityfx_vk.dll` and `amd_fidelityfx_upscaler_dx12.dll`. For games whose FSR it can't reach, it also goes in
-place of **XeSS** on DirectX 12, as `libxess.dll`.
+It ships as a drop-in **FidelityFX API** provider for **DirectX 12 and Vulkan**: a game that offers FSR 3.1 upscales
+through DittoSR instead, with no change to the game. For games whose FSR it can't reach, it can also take **XeSS**'s
+place on DirectX 12.
 
-You can expect a perceived quality between FSR3.1 and FSR4.1 while being lighter than both. Also, a little .ini is next to the .dll on every game so you can configure the sharpness and frame blending with hot reloading (F9).
+You can expect a perceived quality between FSR 3.1 and FSR 4.1 while being lighter than both. A small `dittosr.ini`
+next to the DLL sets the sharpness and the frame blending, reloaded live with **F9**.
 
 ![FSR and DittoSR comparison](/docs/comp1.png)
 
 ## Install
 
+### With the loader (recommended)
+
 Extract `DittoSR.zip` and run **`DittoSRLoader.exe`**:
 
-1. Pick the game in the **Steam game** list, or **Browse...** to its folder. The game's install folder is enough: the loader looks in every folder below it.
-2. Under **Replace**, choose **FSR** (the default) or **XeSS** (see below).
-3. It lists the DLLs it finds and what each one is now: AMD's or Intel's (with its version) or DittoSR's. The ones to replace are already checked.
-4. **Install DittoSR**, then choose **FSR** (FSR 3.1 or later) or **XeSS** in the game's settings.
+1. Pick the game in the **Steam game** list, or **Browse...** to its folder (the install folder is enough: the loader looks below it).
+2. Under **Replace**, choose **FSR** (the default) or **XeSS**.
+3. The DLLs to replace are found and checked for you. **Install DittoSR**, then choose FSR (3.1 or later) or XeSS in the game's settings.
 
-**Restore game's files** puts the game's DLLs back. **Settings** sets the sharpness (Soft to Sharp) and the frame weight (Stable to Responsive) on five-step sliders, the middle step the default, with a button to open the folder's `dittosr.ini` for the rest; and **Log** opens `dittosr.log` (`dittosr-xess.log` on XeSS). For a folder Windows protects (under `Program Files`), the loader offers to restart as administrator.
+**Restore game's files** puts the originals back, **Settings** sets the sharpness and frame weight, and **Log** opens
+`dittosr.log`. The game's DLLs are checked for AMD's or Intel's signature and backed up to `dittosr-backup\` before
+anything is replaced.
 
-The loader looks for these DLLs:
+### With OptiScaler
 
-- `amd_fidelityfx_dx12.dll` (FidelityFX SDK 1.1, FSR 3.1).
-- `amd_fidelityfx_loader_dx12.dll` (SDK 2.x).
-- `amd_fidelityfx_vk.dll` (FSR 3.1 on Vulkan).
-- `amd_fidelityfx_upscaler_dx12.dll`, when the folder has neither of the first two. That is an SDK 2.x game with the loader built into its executable, which loads the upscaler by name.
+OptiScaler v10 (recent nightly builds) loads custom FidelityFX providers. The loader finds it (and its version) when
+scanning the game: an **OptiScaler** button appears before FSR and XeSS, and installs DittoSR as its custom provider
+(DirectX 12 and Vulkan) without touching the game's files. By hand, copy `build\amd_fidelityfx_dx12.dll` from the zip
+into OptiScaler's own folder (the `OptiScaler` folder next to the game's executable, if there is one) as:
 
-Each one is checked for AMD's signature, backed up to `dittosr-backup\` with its SHA-256, kept as `<name>.orig.dll`, and replaced by DittoSR. `dittosr.ini` goes next to it.
-
-**XeSS:** some games, such as Cyberpunk 2077, build their FSR into the executable. They only ask the FidelityFX DLL which versions there are, so DittoSR never gets an upscale to do. If the game offers XeSS, choose **XeSS** in the loader:
-
-- The game's `libxess.dll` is checked for Intel's signature, backed up the same way, and kept as `libxess_orig.dll`. DittoSR's `libxess.dll` goes in its place.
-- The game's XeSS still creates and sets up its contexts as usual. Only the upscale itself, XeSS's DirectX 12 execute, runs DittoSR. **F10** switches back to XeSS live, as it does to FSR.
-- Every other XeSS export is forwarded to the game's own, so XeSS on Vulkan and DirectX 11 stays XeSS. The forwarders cover XeSS 2.0's exports. The loader refuses a newer `libxess.dll` with exports the proxy doesn't have, because the game wouldn't start. `scripts\xess_exports.py` regenerates the forwarders from newer DLLs.
-- The cost: each frame runs DittoSR instead of XeSS, plus one extra function call. XeSS's context is still created, so its memory stays allocated and its setup at game start is unchanged.
-- The scripts don't install on XeSS, but `uninstall.ps1` and `uninstall.sh` restore it.
-
-The same, in PowerShell (the loader and the scripts are interchangeable):
-
-```powershell
-scripts\install.ps1 -Dir "<the folder with the game's amd_fidelityfx_*.dll>"
+```
+custom\DittoSR\ffx\amd_fidelityfx_dx12.dll
 ```
 
-AMD's DLL, kept as `.orig.dll`, is optional. With it, frame generation keeps working, and with `[debug] enabled=1` **F10** switches between DittoSR and AMD's FSR live. Without it, DittoSR is the only provider, and frame generation is not available.
+DittoSR then shows up in OptiScaler's upscaler list. A `dittosr.ini` in the same folder is optional (the defaults apply without it).
+OptiScaler's settings drive it:
 
-To restore the game's files:
+- **Sharpness** (with Override on): DittoSR's sharpness, the same scale as the ini's (0.6 as reconstructed). 0 means
+  "no sharpening" to OptiScaler, so DittoSR then keeps the ini's value: use 0.01 for the softest.
+- The FSR 3 **presets** set the frame weight: **Stability** 1, **Default** the ini's (2), **Motion** 3. By hand, the
+  **Velocity Factor** below 1 is steadier (weight 2 x it), and at 1 the **Reactive Scale** below 1 more responsive
+  (up to 4).
 
-```powershell
-scripts\uninstall.ps1 -Dir "<the same folder>"
-```
+### With the scripts
 
-**OptiScaler** (not yet tested): OptiScaler's FSR 3.1 option loads `amd_fidelityfx_dx12.dll`. Install DittoSR in the folder OptiScaler loads it from and choose FSR 3.1 as OptiScaler's upscaler. With no FidelityFX DLL there, the script installs DittoSR alone, as `amd_fidelityfx_dx12.dll`. The loader finds OptiScaler's folder by its `OptiScaler.ini`. If that folder has no `amd_fidelityfx_dx12.dll`, the loader lists one there, already checked, so DittoSR goes in alone. In OptiScaler's FSR version list, DittoSR comes first.
+`scripts\install.ps1 -Dir "<folder>"` and `scripts\uninstall.ps1 -Dir "<folder>"` do the same as the loader on FSR.
+On **SteamOS and Linux (Proton)**, `bash scripts/install.sh <app id or folder>` and `scripts/uninstall.sh` (not yet
+tested; leave `PROTON_FSR4_UPGRADE` off).
 
-**SteamOS and Linux (Proton)** (not yet tested): the same DLL should work under vkd3d-proton (DirectX 12) and with Vulkan games run through Proton. Extract `DittoSR.zip` (in Desktop Mode on a Steam Deck) and run, in a terminal:
+### Notes
 
-```bash
-bash scripts/install.sh <the game's Steam app id, or its folder>
-```
-
-- The app id is the number in the game's Steam store address. The script finds the game's install folder in Steam's libraries.
-- A folder can be the game's install folder: the script looks below it for the FidelityFX DLL. If it finds one in more than one folder, it lists them, and you run it again with the one the game loads.
-- It does the same as `install.ps1`. Linux has no Authenticode check, so it only checks that the file names AMD and isn't DittoSR already.
-- Proton loads the DLL from the game's folder by itself, with no `WINEDLLOVERRIDES`. Leave `PROTON_FSR4_UPGRADE` off: it puts its own `amd_fidelityfx_dx12.dll` there.
-- To restore the game's files: `bash scripts/uninstall.sh "<the folder install.sh printed>"`.
-
-**Online games:** don't. Replacing a game's DLLs can trigger anti-cheat systems.
+- **XeSS mode**: some games, such as Cyberpunk 2077, build their FSR into the executable, so DittoSR never gets an upscale to do. If the game offers XeSS on DirectX 12, install on **XeSS**: DittoSR's `libxess.dll` runs the upscale and forwards everything else to the game's own XeSS (kept as `libxess_orig.dll`).
+- **AMD's DLL**, kept as `.orig.dll`, keeps frame generation working, and with `[debug] enabled=1`, **F10** switches between DittoSR and AMD's FSR live.
+- **Online games:** don't. Replacing a game's DLLs can trigger anti-cheat systems.
 
 ## What it does
 
 Each frame, four compute passes run on the game's command list:
 
-| Pass           | Size          | What it does                                                                                                                                                            |
-| -------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `convert.hlsl` | render        | GSR 2's convert pass: the motion of the nearest of the 3x3 and its depth clip; DittoSR adds the nearness the disocclusion test reads                                    |
-| `change.hlsl`  | 4x4, then 1x1 | how much of the image changed against the history (scene cuts, menus, fades settle at once)                                                                             |
-| `upscale.hlsl` | output        | the reconstruction: the jittered render samples through an edge-directed Gaussian, blended with the history moved along the motion vectors, clipped against the samples |
-| `sharpen.hlsl` | output        | a light contrast-adaptive sharpen, at rest and moving                                                                                                                   |
+| Pass           | Size   | What it does |
+| -------------- | ------ | ------------ |
+| `convert.hlsl` | render | GSR 2's convert pass: the motion of the nearest of the 3x3, the depth for the disocclusion test, and how much of the image changed (scene cuts settle at once) |
+| `motion.hlsl`  | render | the motion checks (an object's motion against its neighbours', disocclusion) and a reactive mask when the game gives none |
+| `upscale.hlsl` | output | the jittered samples through an edge-directed Gaussian, blended with the history moved along the motion vectors and clipped against the samples |
+| `sharpen.hlsl` | output | a light contrast-adaptive sharpen |
 
-### Changes from GSR 2
+What changed from GSR 2's upscale, in short:
 
-GSR 2's convert pass is kept almost as it is. The upscale is DittoSR's own. Its main parts:
+- **A per-pixel stability level**: a pixel stable for a few frames takes less of each new frame and stops shimmering; one whose history was just cut converges as fast as before.
+- **The new frame's share follows how close its jittered samples landed**, and drops where the difference from the history keeps flipping sign (aliasing rather than change).
+- **Disocclusion from the previous frame's depth** instead of GSR 2's depth clip, which cut the history at every depth edge and made foliage noisy.
+- **The history is clipped by its low frequencies only**, so the detail it has accumulated survives the current frame's aliasing.
+- **An HDR encoding** (Reinhard, then a square root) so blends behave in a perceptual domain.
 
-- **A per-pixel stability level** in the history's alpha. A pixel that has been stable for a few frames takes less of each new frame, so it stops shimmering, but a pixel whose history was just cut converges as fast as before.
-- **The new frame's share follows how close its jittered samples landed.** Where a sample landed close to the pixel, the new frame counts more; where none did, its blurred estimate barely touches the history.
-- **Disocclusion from the previous frame's depth**, instead of GSR 2's depth clip. A pixel's history is dropped only when, where it came from, the previous frame had a nearer surface moving differently. GSR 2's clip cut the history at every depth edge as soon as the camera moved, which made foliage noisy.
-- **The motion-change test compares against the neighbours.** A camera that speeds up or slows down changes every pixel's motion alike, and must not cut the history; an object's edge changes it here and not a little way off.
-- **The history is clipped by its low frequencies only.** The clip box comes from the current samples, which alias fine detail. Clipping only the history's local mean keeps the detail it has accumulated, unless the mean falls far outside the box.
-- **Motion-aware reconstruction.** While moving, the colour comes through a wider Gaussian and the new frame takes a smaller, more even share. Otherwise the render grid shows as a stipple.
-- **An HDR encoding** (Reinhard, then a square root) so blends behave in a perceptual domain, and a **fast settling** pass for scene changes.
+On integrated GPUs the history is stored as RGB10A2 and the colour work runs in half precision on AMD (`history_10bit`
+and `fp16`, both on by default). The Vulkan path runs the same passes from the same HLSL, with only Vulkan 1.1 core: its
+history is RGBA16F and its shaders FP32.
 
 ## Results
 
@@ -107,9 +94,8 @@ RTX 5070 Ti, 3840x2160 output, render 1670x939 (2.3x), the same view: **DittoSR 
 ### Offline harness
 
 A synthetic HDR scene upscaled to 1440x810 through the FidelityFX API, so DittoSR and AMD's FSR 3.1.5 take exactly the
-same inputs (`test/harness.cpp`). PSNR is measured against a 4x4-supersampled reference, in a perceptual domain. Shimmer
-is the mean difference between consecutive frames once the camera pan is undone (lower is steadier; 0 for a perfect
-upscaler). XeSS 2.0.1's figures were measured through its own API with the same scenes.
+same inputs (`test/harness.cpp`). PSNR is against a 4x4-supersampled reference; shimmer is the mean difference between
+consecutive frames once the pan is undone (lower is steadier). XeSS 2.0.1 was measured through its own API with the same scenes.
 
 | Scene                                        | DittoSR               | AMD FSR 3.1.5         | Intel XeSS 2.0.1      |
 | -------------------------------------------- | --------------------- | --------------------- | --------------------- |
@@ -118,12 +104,12 @@ upscaler). XeSS 2.0.1's figures were measured through its own API with the same 
 | Dense grass, uneven pan 12 ± 3 px/frame, 2x  | 32.5 dB, shimmer 1.96 | 30.3 dB, shimmer 9.02 | 34.7 dB, shimmer 3.09 |
 | Moving object over a detailed background, 2x | 28.4 dB               | 28.7 dB               | 30.7 dB               |
 
-In short: steadier than FSR 3.1.5 and XeSS on foliage in motion, sharper than FSR on foliage, but XeSS still resolves
-more fine detail, and objects that move on their own keep a little less contrast than with FSR.
+In short: steadier than FSR 3.1.5 and XeSS on foliage in motion and sharper than FSR on foliage, while XeSS still
+resolves more fine detail.
 
 ### GPU time
 
-The harness's timestamps either side of the upscale (the median of 400, `scripts\bench.ps1`), RTX 5070 Ti:
+The upscale's GPU time (`scripts\bench.ps1`, the median of 400), RTX 5070 Ti:
 
 | Output    | FSR Quality (1.5x) | FSR Performance (2x) |
 | --------- | ------------------ | -------------------- |
@@ -131,144 +117,47 @@ The harness's timestamps either side of the upscale (the median of 400, `scripts
 | 2560x1440 | 0.35 ms            | 0.33 ms              |
 | 3840x2160 | —                  | 0.75 ms              |
 
-## Integrated GPUs (ROG Ally, Steam Deck-class hardware)
-
-On an integrated GPU, memory bandwidth is shared with the CPU and is the scarce resource. Two advanced keys (below) target it, both on by default:
-
-- **`history_10bit=1`** (the default) keeps the history in RGB10A2 instead of RGBA16F: half the bytes for the texture the upscale reads and writes at output size every frame, and the sharpening reads again.
-  - Its stores are dithered by half a step, so the small blends of a stable pixel still converge.
-  - In the harness this also measured slightly better than RGBA16F (34.6 against 34.1 dB on still grass).
-- **`fp16=-1`** (the default) runs the upscale's and the sharpening's colour work in half precision on AMD GPUs.
-  - RDNA's packed 16-bit math runs at twice the FP32 rate.
-  - On NVIDIA it measured about 7 % slower, so it stays off there.
-  - `fp16=1` forces it on, and `fp16=0` forces it off. It falls back to FP32 by itself on a GPU without native 16-bit math.
-
-FP8 doesn't help here. RDNA3 (the Radeon 780M) has no FP8 math, and an 8-bit float history would band visibly.
-
-To measure on the device, copy `build\DittoSR.zip` (made by `scripts\package.ps1`), extract it, and run:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\bench.ps1
-```
-
-- It times every combination of history format and precision, at 1080p and 1440p, at 1.5x and 2x.
-- It writes the table to `scripts\bench-results.txt`.
-- It needs no game, only D3D12.
-
-## Vulkan
-
-The Vulkan path runs the same passes, compiled from the same HLSL to SPIR-V, on the device the game hands the FidelityFX
-API. It assumes nothing beyond Vulkan 1.1 core: no extension, and no optional feature the game might not have enabled.
-That costs three things against DirectX 12:
-
-- **The history is always RGBA16F.** `history_10bit` doesn't apply: RGB10A2 as a storage image needs an optional feature.
-- **The shaders are always FP32.** `fp16` doesn't apply: 16-bit math needs an extension the game would have had to enable.
-- **The game's output must be RGBA16F, RGBA8, RGB10A2, R11G11B10F or RGBA32F.** Every storage image has its format spelled out, so the final pass is compiled once per output format. BGRA8 and sRGB outputs are refused, and the log says so. The debug views 2–4 are approximate.
-
-Tested in Let's Go Recomp, whose FSR 3.1 option runs on Vulkan, with RGBA8 sRGB-encoded colour. Against AMD's FSR 3.1 in
-the same scripted walk, DittoSR was steadier from frame to frame and slightly softer, as on DirectX 12.
-
-### Checking that it runs
-
-`dittosr.log`, next to the DLL, records:
-
-- the context's creation (`upscale context ...: DittoSR`);
-- the first upscales in full;
-- `DittoSR ran (frame 1)`.
-
-`[debug] indicator=1` in `dittosr.ini` draws a small green square in the top-left corner while DittoSR upscales.
-
 ## Settings (`dittosr.ini`)
 
-The shipped file has five keys. **F9** reads the file again while playing, so `sharpness` and `frame_weight` can be tuned live.
+**F9** reads the file again while playing.
 
-| Section     | Key            | Meaning                                                                                                                                                                                                           |
-| ----------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `[dittosr]` | `enabled`      | `1` DittoSR; `0` AMD's FSR instead (needs AMD's DLL alongside as `.orig.dll`)                                                                                                                                     |
-| `[dittosr]` | `sharpness`    | at rest `0` soft, `0.6` the image as reconstructed, `1` sharpened (more at higher ratios and lower output resolutions); moving, sharpened more the higher; 0.6                                                                                                         |
-| `[dittosr]` | `frame_weight` | the weight of each new frame against the accumulated image, 0.25 to 4; 2. Lower: more persistence (steadier, smoother, more motion blur and trailing). Higher: more responsive (crisper in motion, more shimmer). |
-| `[debug]`   | `enabled`      | `1`: F10 switches DittoSR ↔ AMD's FSR live, and the log describes the first upscales in full                                                                                                                      |
-| `[debug]`   | `indicator`    | `1`: a small green square in the top-left corner while DittoSR upscales                                                                                                                                           |
+| Section     | Key            | Meaning |
+| ----------- | -------------- | ------- |
+| `[dittosr]` | `version`      | the DittoSR version the file was written for: the loader and the install scripts update older settings by it |
+| `[dittosr]` | `enabled`      | `1` DittoSR; `0` AMD's FSR instead (needs AMD's DLL alongside as `.orig.dll`) |
+| `[dittosr]` | `sharpness`    | `0` soft, `0.6` (default) as reconstructed, `1` sharpened |
+| `[dittosr]` | `frame_weight` | each new frame's weight, 0.25 to 4 (default 2): lower is steadier and smoother, higher is crisper in motion with more shimmer |
+| `[debug]`   | `enabled`      | `1`: F10 switches DittoSR ↔ AMD's FSR live, and the log describes the first upscales in full |
+| `[debug]`   | `indicator`    | `1`: a small green square in the top-left corner while DittoSR upscales |
 
-Above 1, the image at rest takes only a quarter of the excess (3 acts as 1.5 there): more of each new frame at rest only brings in the jittered samples' grain, which looks like oversharpening.
+`dittosr.log`, next to the DLL, records the context's creation and `DittoSR ran (frame 1)`.
 
-What `frame_weight` does in the harness (dense grass, 2x, `sharpness` 0.5; still: `vel=0`, uneven pan: `vel=4 wobble=4`, moving object: the tiles scene):
+**Advanced keys**, not in the shipped file but read from `[dittosr]` when added (`src/dittosr.h` describes each with its default):
 
-| `frame_weight` | Still: PSNR, shimmer | Uneven pan: PSNR, shimmer | Moving object: PSNR |
-| -------------- | -------------------- | ------------------------- | ------------------- |
-| 0.5            | 32.1 dB, 0.67        | 31.7 dB, 1.91             | 27.6 dB             |
-| 1              | 33.7 dB, 1.32        | 33.0 dB, 2.82             | 28.6 dB             |
-| 2              | 34.1 dB, 1.67        | 33.3 dB, 4.20             | 29.3 dB             |
-| 3              | 34.2 dB, 2.03        | 32.8 dB, 5.61             | 29.8 dB             |
-
-### Advanced keys
-
-These are not in the shipped file. They are read from `[dittosr]` when added there, for tuning and diagnosis:
-
-| Key                                                                                                                                                                                                                                            | Meaning                                                                                                                                                |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `history_10bit`, `fp16`                                                                                                                                                                                                                        | performance: the history in RGB10A2 (`1`, default) or RGBA16F (`0`); the FP16 shaders on AMD only (`-1`, default), always (`1`) or never (`0`)         |
-| `toggle_key`, `reload_key`                                                                                                                                                                                                                     | the keys' virtual-key codes (`0x79` = F10, `0x78` = F9; `0` turns one off)                                                                             |
-| `debug_view`, `log_dispatches`                                                                                                                                                                                                                 | views instead of the image (`1` motion vectors, `2` the new frame's share, `3` the stability level, `4` the clip); how many upscales the log describes |
-| `exposure_scale`, `encode_power`, `reactive_scale`                                                                                                                                                                                             | the HDR encoding; how far the game's reactive mask raises the new frame's share                                                                        |
-| `width`, `conf`, `share_far`, `share_near`, `alpha_rest`, `gamma_rest`, `motion_gamma`, `motion_share`, `motion_minmax`, `motion_width`, `motion_near`, `split_clip`, `depth_mode`, `react`, `edge`, `lock_lines`, `change_scale`, `fov_h_deg` | the reconstruction's knobs (`src/dittosr.h` describes each, with its default)                                                                          |
-| `jitter_sign_x`, `jitter_sign_y`, `mv_sign`                                                                                                                                                                                                    | convention flips, for diagnosis                                                                                                                        |
+- `ratio_quality`, `ratio_balanced`, `ratio_performance`, `ratio_ultra_performance`: the ratio each quality mode gets (1 to 4), e.g. `ratio_ultra_performance=2.5`. FidelityFX API only.
+- `compare=1` or **F7** (`compare_key`): DittoSR on the left half, the game's own upscaler on the right (needs the game's DLL alongside).
+- `anti_shimmer` (0.5, DirectX 12; `0` off), `auto_reactive` (1; `0` off), `stab_step`: steadiness against responsiveness.
+- `history_10bit`, `fp16`: performance (see above).
+- `game_sharpness`: the sharpness sent with the upscale call in place of the ini's: `-1` (default) only from OptiScaler's custom folder, `1` always, `0` never.
+- `toggle_key`, `reload_key`, `debug_view`, `log_dispatches`: diagnosis.
+- The reconstruction's knobs: `width`, `conf`, `share_far`, `share_near`, `alpha_rest`, `gamma_rest`, `motion_gamma`, `motion_share`, `motion_minmax`, `motion_near`, `split_clip`, `depth_mode`, `react`, `change_scale`, `fov_h_deg`, `exposure_scale`, `encode_power`, `reactive_scale`, `jitter_sign_x`, `jitter_sign_y`, `mv_sign`.
 
 ## Build
 
-Needs Visual Studio 2022 (C++ tools), the Windows SDK's `dxc` (DirectX 12 shaders), and a `dxc` built with SPIR-V for the Vulkan shaders. The Windows SDK's isn't. Either:
-
-- extract the [DirectXShaderCompiler release](https://github.com/microsoft/DirectXShaderCompiler/releases) into `tools\dxc\` (`tools\dxc\bin\x64\dxc.exe`; `tools\` is ignored by git), or
-- install the Vulkan SDK (`%VULKAN_SDK%\Bin\dxc.exe`).
+Needs Visual Studio 2022 (C++ tools), the Windows SDK's `dxc`, and a `dxc` with SPIR-V for the Vulkan shaders: extract
+the [DirectXShaderCompiler release](https://github.com/microsoft/DirectXShaderCompiler/releases) into `tools\dxc\`, or
+install the Vulkan SDK. Then:
 
 ```bat
 build.bat
 ```
 
-The output goes to `build\`:
+`build\` gets the DLL under the names games load (`amd_fidelityfx_dx12.dll`, `amd_fidelityfx_loader_dx12.dll`,
+`amd_fidelityfx_vk.dll`), `libxess.dll`, `harness.exe` and `DittoSRLoader.exe`. `scripts\package.ps1` packs them into
+`build\DittoSR.zip`.
 
-- `amd_fidelityfx_dx12.dll`, `amd_fidelityfx_loader_dx12.dll` and `amd_fidelityfx_vk.dll`: the same DLL under the three names games load;
-- `libxess.dll`: DittoSR in place of XeSS (`src\xess_dll.cpp`), the game's own XeSS renamed `libxess_orig.dll` behind it;
-- `harness.exe`: the offline test;
-- `DittoSRLoader.exe`: the loader, from `loader\`. It's a small WinForms app that `loader\build.bat` compiles with the `csc.exe` of .NET Framework 4.x, which comes with Windows: it needs no SDK, and runs on Windows 10 and 11 as it is.
-
-`scripts\package.ps1` packs these with the scripts, the ini and the documents into `build\DittoSR.zip`, with the loader at its top.
-
-## Offline test
-
-```bat
-build\harness.exe <folder> <png prefix> [dll=amd_fidelityfx_dx12.dll] [scene=tiles|grass] [frames=64] [out=1440x810] [ratio=1.5] [vel=3] [dense=1] [wobble=0] [blur=0] [sharpen=0] [psnr=1]
-```
-
-`<folder>` holds the DLL and a `dittosr.ini`. To compare with AMD's FSR, add AMD's DLL as `<dll>.orig.dll` and, for the SDK 2.x loader, its `amd_fidelityfx_upscaler_dx12.dll`; then set `enabled=0`.
-
-The scenes:
-
-- `tiles`: a detailed background panning and a nearer square moving the other way, for ghosting and disocclusion;
-- `grass`: thin blades over a cracked ground, the camera panning.
-
-The grass scene's options:
-
-- `vel`: the pan's speed, in px/frame;
-- `wobble`: varies the speed each frame, like a hand on the mouse;
-- `dense`: more, thinner blades;
-- `blur`: adds motion blur before the upscale, as games do.
-
-The harness prints:
-
-- the providers the game would see;
-- PSNR and shimmer;
-- the upscale's GPU time, measured by timestamps (the median after 8 warm-up frames).
-
-It also writes PNGs of the output and the reference.
-
-`psnr=0` measures the time alone. It skips the reference and replays 16 rendered frames, so the GPU never idles long enough to drop its clocks.
-
-## Roadmap
-
-- A Vulkan mode in the offline harness (today it drives the DirectX 12 path only).
-- Testing with OptiScaler, and under Proton.
-- Release builds from CI.
+`build\harness.exe <folder> <png prefix> [key=value ...]` runs the offline test against the DLL in `<folder>`; its
+options (scenes, ratio, speed, the GPU) are listed at the top of `test/harness.cpp`.
 
 ## License
 

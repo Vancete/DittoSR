@@ -61,8 +61,6 @@ static void load_config() {
     s.gammaRest = ini_float(ini, "gamma_rest", s.gammaRest);
     s.width = ini_float(ini, "width", s.width);
     s.react = ini_float(ini, "react", s.react);
-    s.edge = ini_float(ini, "edge", s.edge);
-    s.lockLines = ini_float(ini, "lock_lines", s.lockLines);
     s.reactiveScale = ini_float(ini, "reactive_scale", s.reactiveScale);
     s.exposureScale = ini_float(ini, "exposure_scale", s.exposureScale);
     s.jitterSignX = ini_float(ini, "jitter_sign_x", s.jitterSignX);
@@ -78,22 +76,34 @@ static void load_config() {
     s.shareFar = ini_float(ini, "share_far", s.shareFar);
     s.shareNear = ini_float(ini, "share_near", s.shareNear);
     s.encodePower = ini_float(ini, "encode_power", s.encodePower);
-    s.motionWidth = ini_float(ini, "motion_width", s.motionWidth);
     s.motionNear = ini_float(ini, "motion_near", s.motionNear);
     s.splitClip = ini_float(ini, "split_clip", s.splitClip);
     s.history10 = GetPrivateProfileIntA("dittosr", "history_10bit", s.history10, ini);
     s.fp16 = GetPrivateProfileIntA("dittosr", "fp16", s.fp16, ini);
+    s.autoReactive = ini_float(ini, "auto_reactive", s.autoReactive);
+    s.stabStep = ini_float(ini, "stab_step", s.stabStep);
+    s.antiShimmer = ini_float(ini, "anti_shimmer", s.antiShimmer);
+    // (the upscale ratios the FidelityFX API answers a game's quality modes with: 0 FSR 3.1's)
+    c.ratio[0] = ini_float(ini, "ratio_quality", 0.0f);
+    c.ratio[1] = ini_float(ini, "ratio_balanced", 0.0f);
+    c.ratio[2] = ini_float(ini, "ratio_performance", 0.0f);
+    c.ratio[3] = ini_float(ini, "ratio_ultra_performance", 0.0f);
+    GetPrivateProfileStringA("dittosr", "compare_key", "0x76", b, sizeof b, ini);
+    c.compareKey = (int)strtol(b, nullptr, 0);
+    c.compare = GetPrivateProfileIntA("dittosr", "compare", 0, ini) != 0;
+    c.gameSharpness = GetPrivateProfileIntA("dittosr", "game_sharpness", -1, ini);
     s.indicator = GetPrivateProfileIntA("debug", "indicator", GetPrivateProfileIntA("dittosr", "indicator", 0, ini), ini) != 0;
     // (debug_view: 1 the motion, 2 the new frame's share, 3 the stability level, 4 clip / cut / confidence; debug_motion=1
     // is debug_view=1)
     s.debugView = GetPrivateProfileIntA("dittosr", "debug_view", GetPrivateProfileIntA("dittosr", "debug_motion", 0, ini), ini);
-    ditto_log("config: enabled %d, debug %d, sharpness %g, frame_weight %g\n", c.enabled, c.debug, s.sharpness, s.frameWeight);
+    ditto_log("config: enabled %d, debug %d, sharpness %g, frame_weight %g, auto_reactive %g, ratios %g %g %g %g\n", c.enabled,
+              c.debug, s.sharpness, s.frameWeight, s.autoReactive, c.ratio[0], c.ratio[1], c.ratio[2], c.ratio[3]);
     if (!c.debug) return;
     ditto_log("config: toggle key 0x%02x, indicator %d, debug_view %d, exposure_scale %g, reactive_scale %g, "
-              "alpha_rest %g, conf %g, width %g, react %g, edge %g, lock_lines %g, jitter sign %g %g, mv_sign %g, fov_h_deg %g, "
+              "alpha_rest %g, conf %g, width %g, react %g, jitter sign %g %g, mv_sign %g, fov_h_deg %g, "
               "motion gamma %g share %g minmax %g, depth_mode %d, sharpness %g\n",
               c.toggleKey, s.indicator, s.debugView, s.exposureScale, s.reactiveScale, s.alphaRest, s.conf, s.width,
-              s.react, s.edge, s.lockLines, s.jitterSignX, s.jitterSignY, s.mvSign, s.fovHDeg, s.motionGamma, s.motionShare,
+              s.react, s.jitterSignX, s.jitterSignY, s.mvSign, s.fovHDeg, s.motionGamma, s.motionShare,
               s.motionMinMax, s.depthMode, s.sharpness);
 }
 

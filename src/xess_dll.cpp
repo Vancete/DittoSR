@@ -54,6 +54,8 @@ struct Ctx {
     float velocityScale[2] = {1, 1}, jitterScale[2] = {1, 1}, exposureMultiplier = 1, maxResponsive = 1;
     bool useDitto = true;
     bool resetReal = false;  // (XeSS's history is stale after DittoSR ran)
+    bool compare = false;    // (both: the game's XeSS on the output's right half, DittoSR on the left)
+    bool compareSet = false;
     uint64_t executes = 0;
 };
 static std::map<xess_context_handle_t, Ctx> g_ctx;
@@ -162,6 +164,16 @@ __declspec(dllexport) xess_result_t xessD3D12Execute(xess_context_handle_t h, ID
         ditto_log("toggle: %s from execute %llu\n", c->useDitto ? "DittoSR" : "the game's XeSS", (unsigned long long)c->executes);
     }
     down = now;
+    // the comparison (a key press, or compare=1): the game's XeSS draws the whole output first, DittoSR then its left half
+    if (!c->compareSet) c->compare = g_cfg.compare && c->ditto, c->compareSet = true, c->resetReal = c->compare;
+    static bool cdown;
+    bool cnow = g_cfg.compareKey && (GetAsyncKeyState(g_cfg.compareKey) & 0x8000);
+    if (cnow && !cdown && c->ditto) {
+        c->compare = !c->compare;
+        if (c->compare) c->resetReal = true;
+        ditto_log("comparison %s from execute %llu (DittoSR left, the game's XeSS right)\n", c->compare ? "on" : "off", (unsigned long long)c->executes);
+    }
+    cdown = cnow;
     if (ditto_poll_reload() && c->ditto) c->ditto->set_settings(g_cfg.s);
     if (c->executes < (uint64_t)g_cfg.logDispatches) {
         ditto_log("execute %llu: input %ux%u, jitter %.4f %.4f, exposure scale %g, reset %u, bases color %u,%u mv %u,%u depth %u,%u "
@@ -176,6 +188,12 @@ __declspec(dllexport) xess_result_t xessD3D12Execute(xess_context_handle_t h, ID
     c->executes++;
     DittoFrame fr;
     if (c->useDitto && c->ditto && frame_from_xess(*c, cl, e, &fr)) {
+        if (c->compare) {  // (the game's XeSS first, on the whole output: DittoSR's left half then goes over it)
+            xess_d3d12_execute_params_t r = *e;
+            if (c->resetReal) r.resetHistory = 1, c->resetReal = false;
+            o_execute(h, cl, &r);
+        }
+        c->ditto->set_split(c->compare);
         if (c->ditto->dispatch(fr, switched)) {
             uint64_t n = c->ditto->frames();
             if (n == 1 || n % 3600 == 0) ditto_log("DittoSR ran (frame %llu)\n", (unsigned long long)n);

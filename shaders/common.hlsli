@@ -14,20 +14,17 @@ cbuffer C : register(b0) {
     float reset;          // 1: this frame alone
     float gammaRest;      // the history clip width at rest (1.5)
     float react;          // the reaction to changes (1)
-    float edge;           // the edge-directed Gaussian (1)
-    float lockLines;      // thin lines kept (0)
     float reactiveScale;  // the game's reactive mask: how far it raises the new frame's share (1)
+    float tanHalfFovH;    // tan(horizontal fov / 2) for the depth clip
+    float depthInverted;  // 1: depth 1 = near (reversed-Z)
     float2 mvScale;       // FSR motion vector -> this frame's uv - the previous one's (sign and size folded in)
     float2 mvSize;        // the motion vectors' resolution (render, or output with display-resolution vectors)
     float2 jitCancel;     // removed from the motion (uv) when the vectors carry the jitter
-    float tanHalfFovH;    // tan(horizontal fov / 2) for the depth clip
-    float depthInverted;  // 1: depth 1 = near (reversed-Z)
     float preExposure;
     float hdr;            // 1: linear HDR colour (Reinhard + sqrt around the history); 0: [0, 1] colour
     float exposureScale;  // the encoding's exposure multiplier (ini)
     float hasExposure;    // 1: t5 holds the game's 1x1 exposure
     float hasReactive;    // 1: t6 holds the game's reactive mask
-    float mode;           // change pass: 0 = the 4 x 4 image, 1 = averaged into 1 x 1
     float debugView;      // 1: the motion as colour; 2: the new frame's share; 3: the stability level; 4: r = the clip (t - 1), g = cut, b = confidence
     float indicator;      // 1: a small green square in the corner (DittoSR is running)
     float motionGamma;    // the history clip width while moving (0.9 originally)
@@ -39,13 +36,19 @@ cbuffer C : register(b0) {
     float shareFar;       // the new frame's share x this where no sample landed close (0.6 originally)
     float shareNear;      // ... x this where one did (1.4: ANEAR)
     float encodePower;    // the encoding's power after Reinhard (0.5: sqrt; 1: Reinhard alone - blends closer to linear)
-    float motionWidth;    // the narrow Gaussian's width while moving (from 4 output pixels a frame; 0: width throughout)
     float motionNear;     // shareNear while moving (from 4 output pixels a frame; 0: shareNear throughout)
     float splitClip;      // 1: the history clipped by its low frequencies only, its detail kept unless it moved far
                           // (0: the whole history clipped)
     float history10;      // 1: the history is RGB10A2 - its stores dithered by half a step
     float frameWeight;    // x the new frame's share (1): lower - more persistence, smoother and blurrier in motion; higher - more responsive
-    float2 pad;
+    float splitX;         // > 0: the comparison - the sharpening writes the output left of this column only (the game's
+                          // own upscaler's on the right), a line between
+    float autoReactive;   // the reactive mask DittoSR derives when the game gives none: its strength (0: off)
+    float stabStep;       // the stability level's step up each frame a sample lands near the pixel (0.34)
+    float antiShimmer;    // the anti-shimmer's strength (0: off; D3D12)
+    float autoExposure;   // 1: the convert pass measures the exposure (the game asked for it, giving none): t5 the last
+                          // frame's, u2 this one's
+    float pad;
 };
 
 // hf: the colour work's precision - half in the FP16 variant (DITTO_FP16, SM 6.2 with 16-bit types: twice the rate on
@@ -90,11 +93,14 @@ float3 enc(float3 c, float e) {
         c = min(c * e, 65000.0);
         c = c / (1.0 + max3(c));
     }
-    return pow(saturate(c), encodePower);
+    [branch] if (encodePower == 0.5) return sqrt(saturate(c));  // (the default: sqrt, cheaper than pow - a branch, as
+    return pow(saturate(c), encodePower);                       // a ?: would compute both)
 }
 
 float3 dec(float3 g, float e) {
-    float3 t = pow(saturate(g), 1.0 / encodePower);
+    float3 t = saturate(g);
+    [branch] if (encodePower == 0.5) t = t * t;
+    else t = pow(t, 1.0 / encodePower);
     if (hdr > 0.5) {
         t = t / max(1.0 - max3(t), 1.0 / 4096.0);
         t = t / e;
@@ -113,7 +119,9 @@ hf3 ench(float3 c, float e) {
         c = min(c * e, 65000.0);
         c = c / (1.0 + max3(c));
     }
-    return pow(saturate((hf3)c), (hf)encodePower);
+    hf3 h = saturate((hf3)c);
+    [branch] if (encodePower == 0.5) return sqrt(h);
+    return pow(h, (hf)encodePower);
 }
 hf3 ycch(hf3 c) { return hf3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * (c.r - c.b), 0.5 * c.g - 0.25 * (c.r + c.b)); }
 #else

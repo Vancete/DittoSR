@@ -1,4 +1,4 @@
-// DittoSR on D3D12: the convert, change and upscale passes recorded into the game's command list. The inputs are
+// DittoSR on D3D12: the convert, motion, upscale and sharpening passes recorded into the game's command list. The inputs are
 // described API-neutrally (DittoFrame, in FSR 3.1's conventions); the FidelityFX API front end fills it.
 #pragma once
 #include <d3d12.h>
@@ -7,16 +7,15 @@
 #include "ffx_api/ffx_upscale.h"
 
 // the version both front ends report (the FidelityFX API provider, the libxess.dll proxy)
-#define DITTOSR_VERSION_NAME "DittoSR 0.2.4"
+#define DITTOSR_VERSION "0.3.0"
+#define DITTOSR_VERSION_NAME "DittoSR " DITTOSR_VERSION
 
 struct DittoSettings {
     float alphaRest = 0.035f;  // a stable pixel's share of each new frame at rest
     float conf = 0.05f;        // the confidence the narrow estimate is taken alone from (originally 0.3)
     float gammaRest = 0.0f;    // the history clip width at rest (0: 1.5)
-    float width = 0.8f;        // the narrow Gaussian's width (originally 1.4 - at 2.3x a blur as wide as a grass blade)
+    float width = 0.8f;        // the narrow Gaussian's width from 2x (x 0.875 at 1.5x and below; originally 1.4 - at 2.3x a blur as wide as a grass blade)
     float react = 1.0f;        // the reaction to changes
-    float edge = 1.0f;         // the edge-directed Gaussian
-    float lockLines = 0.0f;    // thin lines kept
     float reactiveScale = 1.0f;
     float exposureScale = 1.0f;
     float jitterSignX = 1.0f, jitterSignY = 1.0f;
@@ -34,10 +33,8 @@ struct DittoSettings {
     float shareFar = 0.05f;
     float shareNear = 3.0f;
     float encodePower = 0.5f;  // the encoding's power after Reinhard (0.5: sqrt)
-    // while moving (from 4 output pixels a frame) the history holds little: the narrow Gaussian widens to motionWidth
-    // (the colour only: the samples' confidence stays the narrow one's) - else the render samples' grid shows as a
-    // stipple. And shareNear falls to motionNear: each frame's pattern of pixels a sample landed near shimmers
-    float motionWidth = 1.6f;
+    // while moving (from 4 output pixels a frame) shareNear falls to motionNear: each frame's pattern of pixels a sample
+    // landed near shimmers
     float motionNear = 1.5f;
     // the history's clip on its low frequencies alone (the 5 taps' mean): the current samples' aliasing in fine detail
     // no longer drags the history's accumulated detail toward it - only a real change, far out of the box, drops it
@@ -48,6 +45,16 @@ struct DittoSettings {
     // the FP16 shaders (the colour work in half precision), where the GPU has native 16-bit math: -1 on AMD only
     // (packed half math at twice the rate; on an RTX 5070 Ti they were ~7 % slower than FP32), 1 always, 0 never
     int fp16 = -1;
+    // the reactive mask derived where the game gives none (particles, transparencies, flashes: more of the new frame),
+    // its strength; 0: off
+    float autoReactive = 1.0f;
+    // the history's stability level: the step a pixel climbs each frame a sample lands near it (1: stable). D3D12 keeps it
+    // in its own R8 texture (the RGB10A2 history's alpha has 2 bits), Vulkan in the RGBA16F history's alpha
+    float stabStep = 0.34f;
+    // the anti-shimmer (D3D12; 0 off, 0.5 by default): where the sign of the new frame's difference from the history keeps alternating
+    // (the jittered samples' aliasing), up to this share less of the new frame. Less shimmer (-10..-25 %), a little
+    // softer fine detail in motion. The stability texture becomes R8G8 (the sign's running mean in .y)
+    float antiShimmer = 0.5f;
     bool indicator = false;
     int debugView = 0;  // 1: the motion; 2: the new frame's share; 3: the stability level; 4: clip / cut / confidence
 };
@@ -86,6 +93,8 @@ public:
     bool dispatch(const DittoFrame &f, bool forceReset);
     uint64_t frames() const { return frames_; }
     void set_settings(const DittoSettings &s) { s_ = s; }
+    // the comparison: the output's right half left to what the game's own upscaler wrote there first
+    void set_split(bool on) { split_ = on; }
 
 private:
     struct Tex {
@@ -99,22 +108,25 @@ private:
     void releaseTextures();
     bool makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f);
     void transition(ID3D12GraphicsCommandList *cl, Tex &t, D3D12_RESOURCE_STATES to);
-    D3D12_GPU_DESCRIPTOR_HANDLE table(ID3D12Resource *const srv[7], const DXGI_FORMAT srvFmt[7], ID3D12Resource *const uav[2],
-                                      const DXGI_FORMAT uavFmt[2]);
+    D3D12_GPU_DESCRIPTOR_HANDLE table(ID3D12Resource *const *srv, const DXGI_FORMAT *srvFmt, ID3D12Resource *const *uav,
+                                      const DXGI_FORMAT *uavFmt);
 
     ID3D12Device *dev_ = nullptr;
     DittoCreateInfo ci_;
     DittoSettings s_;
     bool ok_ = false;
     ID3D12RootSignature *rootSig_ = nullptr;
-    ID3D12PipelineState *psoConvert_ = nullptr, *psoChange_ = nullptr, *psoUpscale_ = nullptr, *psoSharpen_ = nullptr;
+    ID3D12PipelineState *psoConvert_ = nullptr, *psoMotion_ = nullptr, *psoUpscale_ = nullptr, *psoSharpen_ = nullptr;
     ID3D12PipelineState *psoUpscale16_ = nullptr, *psoSharpen16_ = nullptr;  // (null: no native 16-bit math)
+    ID3D12PipelineState *psoUpscaleAs_ = nullptr, *psoUpscaleAs16_ = nullptr;  // (the anti-shimmer variants)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     bool amd_ = false;  // (the device's vendor is AMD: fp16 = -1 picks the FP16 shaders)
     ID3D12DescriptorHeap *heap_ = nullptr;
     uint32_t heapSize_ = 0, heapNext_ = 0, descInc_ = 0;
-    Tex mda_[2], hist_[2], change4_, change1_;
+    Tex mda_[2], hist_[2], aux_[2], stab_[2], change1_;
+    Tex expo_[2];  // (the auto exposure, 1 x 1: the game asked for it and gave none)
+    bool split_ = false;
     int cur_ = 0;
     bool texValid_ = false;
     uint64_t frames_ = 0;
@@ -137,6 +149,16 @@ struct DittoConfig {
     int toggleKey = 0x79;
     int reloadKey = 0x78;  // (F9: dittosr.ini read again while playing)
     int logDispatches = 3;
+    // F7: the comparison - the game's own upscaler (AMD's FSR, Intel's XeSS) on the output's right half, DittoSR on the
+    // left; it needs the game's DLL alongside (<name>.orig.dll, libxess_orig.dll)
+    int compareKey = 0x76;
+    bool compare = false;  // ([dittosr] compare=1: from the start)
+    // the ratios the FidelityFX API answers the quality modes with: quality, balanced, performance, ultra performance
+    // (0: FSR 3.1's 1.5, 1.7, 2, 3) - games that ask, not those that work them out themselves
+    float ratio[4] = {0, 0, 0, 0};
+    // the sharpness the FidelityFX API's dispatch carries (when it enables sharpening) in place of dittosr.ini's: -1 only
+    // when this DLL runs from OptiScaler's custom provider folder (its sharpness slider), 1 always, 0 never
+    int gameSharpness = -1;
     DittoSettings s;
 };
 extern DittoConfig g_cfg;

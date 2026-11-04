@@ -28,7 +28,9 @@ if (-not $names) { $names = @($Name); Write-Host "no FidelityFX DLL in $Dir`: Di
 foreach ($n in $names) {
     $target = Join-Path $Dir $n
     $orig = Join-Path $Dir ([IO.Path]::GetFileNameWithoutExtension($n) + ".orig.dll")
-    if ((Test-Path $target) -and -not (Test-Path $orig)) {
+    # (DittoSR there already, installed alone - an update: nothing of AMD's to keep)
+    $ditto = (Test-Path $target) -and (Get-Item $target).Length -lt 16MB -and (Select-String -Path $target -Pattern 'DittoSR \d+\.\d+\.\d+' -Quiet)
+    if ((Test-Path $target) -and -not (Test-Path $orig) -and -not $ditto) {
         # the first install: AMD's file, before anything replaces it
         $sig = Get-AuthenticodeSignature $target
         if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "Advanced Micro Devices") {
@@ -44,13 +46,25 @@ foreach ($n in $names) {
     Write-Host "installed DittoSR as $target"
 }
 $ini = Join-Path $Dir "dittosr.ini"
-if (-not (Test-Path $ini)) { Copy-Item (Join-Path $PSScriptRoot "..\dittosr.ini") $ini }
+$shipped = Join-Path $PSScriptRoot "..\dittosr.ini"
+$version = ((Get-Content $shipped) -match '^\s*version\s*=' | Select-Object -First 1) -replace '^\s*version\s*=\s*', ''
+if (-not (Test-Path $ini)) { Copy-Item $shipped $ini }
 else {
-    # (an ini from before 0.2.2 with the then default sharpness=0.2, a soft blur at rest: the new default, 0.6)
-    $lines = Get-Content $ini
-    if ($lines -match '^\s*sharpness\s*=\s*0\.2\s*$') {
-        $lines -replace '^\s*sharpness\s*=\s*0\.2\s*$', 'sharpness=0.6' | Set-Content $ini -Encoding ascii
+    # (an ini kept from an earlier install: the defaults that changed since its version moved to the new ones, a value
+    # set by hand kept - each step for an ini older than the version that changed it; no version key: before 0.3.0.
+    # Before 0.2.2: sharpness 0.2, a soft blur at rest, to 0.6)
+    $lines = @(Get-Content $ini)
+    $had = [string]($lines -match '^\s*version\s*=' | Select-Object -First 1)
+    $had = ($had -replace '^\s*version\s*=\s*', '').Trim()
+    $from = [version]'0.0.0'
+    if ($had) { try { $from = [version]$had } catch { } }
+    if ($from -lt [version]'0.2.2' -and ($lines -match '^\s*sharpness\s*=\s*0\.2\s*$')) {
+        $lines = $lines -replace '^\s*sharpness\s*=\s*0\.2\s*$', 'sharpness=0.6'
         Write-Host "settings: sharpness 0.2 (the old default) set to 0.6 (the new default)"
     }
+    # (the version the settings are now for: the next update migrates from it)
+    if ($lines -match '^\s*version\s*=') { $lines = $lines -replace '^\s*version\s*=.*$', "version=$version" }
+    else { $lines = $lines -replace '^\s*\[dittosr\]\s*$', "[dittosr]`r`nversion=$version" }
+    $lines | Set-Content $ini -Encoding ascii
 }
 Write-Host "settings: $ini; log: $(Join-Path $Dir 'dittosr.log')"

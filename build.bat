@@ -22,16 +22,19 @@ if not exist "%SPV%" set "SPV=%VULKAN_SDK%\Bin\dxc.exe"
 if not exist "%SPV%" (echo no dxc with SPIR-V: put the DirectXShaderCompiler release in tools\dxc\ or install the Vulkan SDK & exit /b 1)
 
 rem D3D12 (DXIL)
-for %%s in (convert change upscale sharpen) do (
+for %%s in (convert motion upscale sharpen) do (
   %DXC% -nologo -T cs_6_0 -E main -O3 -Fh "%OUT%\gen\cs_%%s.h" -Vn g_cs_%%s "%ROOT%shaders\%%s.hlsl" || exit /b 1
 )
 rem the FP16 variants: native 16-bit types (SM 6.2), picked at run time where the GPU supports them
 for %%s in (upscale sharpen) do (
   %DXC% -nologo -T cs_6_2 -enable-16bit-types -D DITTO_FP16=1 -E main -O3 -Fh "%OUT%\gen\cs_%%s16.h" -Vn g_cs_%%s16 "%ROOT%shaders\%%s.hlsl" || exit /b 1
 )
+rem the anti-shimmer variants of the upscale (D3D12; picked when anti_shimmer > 0 - none of its cost otherwise)
+%DXC% -nologo -T cs_6_0 -D ANTI_SHIMMER=1 -E main -O3 -Fh "%OUT%\gen\cs_upscale_as.h" -Vn g_cs_upscale_as "%ROOT%shaders\upscale.hlsl" || exit /b 1
+%DXC% -nologo -T cs_6_2 -enable-16bit-types -D DITTO_FP16=1 -D ANTI_SHIMMER=1 -E main -O3 -Fh "%OUT%\gen\cs_upscale16_as.h" -Vn g_cs_upscale16_as "%ROOT%shaders\upscale.hlsl" || exit /b 1
 rem Vulkan (SPIR-V): one descriptor set - b0 the constants at 0, t0-t6 at 10, u0-u1 at 20, s0 at 30 (dittosr_vk.cpp)
 set SPVF=-nologo -spirv -fspv-target-env=vulkan1.1 -fvk-b-shift 0 0 -fvk-t-shift 10 0 -fvk-u-shift 20 0 -fvk-s-shift 30 0 -D DITTO_VK=1 -T cs_6_0 -E main -O3
-for %%s in (convert change upscale) do (
+for %%s in (convert motion upscale) do (
   "%SPV%" %SPVF% -Fh "%OUT%\gen\spv_%%s.h" -Vn g_spv_%%s "%ROOT%shaders\%%s.hlsl" || exit /b 1
 )
 rem the sharpening pass writes the game's output: once per output format

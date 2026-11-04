@@ -90,11 +90,26 @@ for n in "${targets[@]}"; do
     echo "installed DittoSR as $target"
 done
 ini="$dir/dittosr.ini"
+version=$(sed -nE 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "$here/../dittosr.ini" | head -1)
 if [ ! -f "$ini" ]; then
     cp "$here/../dittosr.ini" "$ini"
-elif grep -qE '^[[:space:]]*sharpness[[:space:]]*=[[:space:]]*0\.2[[:space:]]*$' "$ini"; then
-    # (an ini from before 0.2.2 with the then default sharpness=0.2, a soft blur at rest: the new default, 0.6)
-    sed -E -i 's/^[[:space:]]*sharpness[[:space:]]*=[[:space:]]*0\.2([[:space:]]*)$/sharpness=0.6\1/' "$ini"
-    echo "settings: sharpness 0.2 (the old default) set to 0.6 (the new default)"
+else
+    # (an ini kept from an earlier install: the defaults that changed since its version moved to the new ones, a value set
+    # by hand kept - each step for an ini older than the version that changed it; no version key: before 0.3.0. Before
+    # 0.2.2: sharpness 0.2, a soft blur at rest, to 0.6)
+    had=$(sed -nE 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "$ini" | head -1)
+    older() {  # older <a> <b>: version a below b (no version: 0)
+        [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "${1:-0}" "$2" | sort -V | head -1)" = "${1:-0}" ]
+    }
+    if older "$had" 0.2.2 && grep -qE '^[[:space:]]*sharpness[[:space:]]*=[[:space:]]*0\.2[[:space:]]*$' "$ini"; then
+        sed -E -i 's/^[[:space:]]*sharpness[[:space:]]*=[[:space:]]*0\.2([[:space:]]*)$/sharpness=0.6\1/' "$ini"
+        echo "settings: sharpness 0.2 (the old default) set to 0.6 (the new default)"
+    fi
+    # (the version the settings are now for: the next update migrates from it)
+    if [ -n "$had" ]; then
+        sed -E -i "s/^[[:space:]]*version[[:space:]]*=.*$/version=$version/" "$ini"
+    else
+        sed -E -i "s/^([[:space:]]*\[dittosr\][[:space:]]*)$/\1\nversion=$version/" "$ini"
+    fi
 fi
 echo "settings: $ini; log: $dir/dittosr.log"

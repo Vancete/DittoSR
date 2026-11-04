@@ -8,19 +8,32 @@
 // frame - 0.1 x sharpness: the wider reconstruction there softens the image (0.2 doubled the shimmer of an uneven pan).
 // Above 2x the moving term grows with the ratio (x 2.25 at 3x): a moving object's detail is softer there - at 3x it was
 // 12 % below 2x's against the reference, now level.
-// t0 = the history (u0 of the upscale; a = the stability level), t1 = the convert pass's (motion), u1 = the game's output.
+//   The comparison (splitX > 0): the game's own upscaler wrote the output first; this pass writes the left of splitX
+// alone, a line between.
+// t0 = the history (u0 of the upscale; Vulkan: a = the stability level), t1 = the convert pass's (motion), t7 = the
+// stability levels (D3D12), u1 = the game's output.
 #include "common.hlsli"
 
 Texture2D<float4> History : register(t0);
 Texture2D<float4> MotionDepthClip : register(t1);
+#if !DITTO_VK
+Texture2D<float> Stab : register(t7);
+#endif
 VKFMT(OUTFMT) RWTexture2D<float4> Output : register(u1);
 
 [numthreads(8, 8, 1)]
 void main(uint2 id : SV_DispatchThreadID) {
     if (any(id >= (uint2)os)) return;
+    if (splitX > 0.0 && float(id.x) >= splitX) {
+        if (float(id.x) < splitX + 2.0) Output[id] = float4(dec((float3)0.85, encExposure()), 1.0);
+        return;
+    }
     float e = encExposure();
     int2 p = int2(id), m = int2(os) - 1;
     float4 c4 = History.Load(int3(p, 0));
+#if !DITTO_VK
+    c4.a = Stab.Load(int3(p, 0));
+#endif
     float3 c = c4.rgb;
     float2 uv = (float2(id) + 0.5) * osRcp;
     float mlen = length(0.5 * MotionDepthClip.SampleLevel(linearClamp, uv, 0.0).xy * os);

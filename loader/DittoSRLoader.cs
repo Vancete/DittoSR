@@ -32,8 +32,8 @@ using Microsoft.Win32;
 
 [assembly: AssemblyTitle("DittoSR Loader")]
 [assembly: AssemblyProduct("DittoSR")]
-[assembly: AssemblyVersion("0.2.4.0")]
-[assembly: AssemblyFileVersion("0.2.4.0")]
+[assembly: AssemblyVersion("0.3.0.0")]
+[assembly: AssemblyFileVersion("0.3.0.0")]
 
 namespace DittoSR {
 
@@ -41,6 +41,7 @@ namespace DittoSR {
 class Candidate {
     public string Folder, Name, State;
     public bool Installable, Recommended;
+    public bool Custom;  // (an OptiScaler custom provider's folder: created on install, removed on restore)
     public string Path { get { return System.IO.Path.Combine(Folder, Name); } }
     public bool Xess { get { return Name == Files.Xess; } }
 }
@@ -103,7 +104,7 @@ static class Files {
         }
     }
 
-    // DittoSR's version name in a DLL ("DittoSR 0.2.4"), or null: not DittoSR's (AMD's DLLs are tens of MB: not read)
+    // DittoSR's version name in a DLL ("DittoSR 0.3.1"), or null: not DittoSR's (AMD's DLLs are tens of MB: not read)
     public static string DittoVersion(string path) {
         try {
             var fi = new FileInfo(path);
@@ -154,8 +155,57 @@ static class Files {
     }
 }
 
+// An OptiScaler install: its folder (with OptiScaler.ini) and its version - its DLL's, whatever name it goes by
+// (dxgi.dll, winmm.dll, OptiScaler.asi...): the one whose version resource names OptiScaler.
+class OptiScaler {
+    public string Folder, Main, Version;  // (Folder: OptiScaler.ini's; Main: its main folder, where custom\ goes)
+    public int Major;
+    // v10 loads FidelityFX providers from custom\<name>\ffx\ (DirectX 12) and custom\<name>\ffx_vk\ (Vulkan), in its
+    // main folder
+    public bool Custom { get { return Major >= 10; } }
+    public string CustomFolder(bool vk) { return Path.Combine(Main, "custom", "DittoSR", vk ? "ffx_vk" : "ffx"); }
+
+    public static OptiScaler At(string dir) {
+        var o = new OptiScaler { Folder = dir, Main = MainFolder(dir) };
+        try {
+            foreach (string d in new[] { dir, o.Main }.Distinct(StringComparer.OrdinalIgnoreCase))
+                foreach (string f in Directory.GetFiles(d, "*.dll").Concat(Directory.GetFiles(d, "*.asi"))) {
+                    var v = FileVersionInfo.GetVersionInfo(f);
+                    if (!string.Equals(v.ProductName, "OptiScaler", StringComparison.OrdinalIgnoreCase) || v.FileMajorPart < o.Major) continue;
+                    o.Major = v.FileMajorPart;
+                    o.Version = string.IsNullOrEmpty(v.ProductVersion) ? v.FileVersion : v.ProductVersion;
+                }
+        } catch (Exception) { }
+        return o;
+    }
+
+    // OptiScaler's own rule: [Libraries] OptiDllPath (by default "OptiScaler", relative to the game's folder), else -
+    // not a folder there - the game's folder itself
+    static string MainFolder(string dir) {
+        string main = "OptiScaler";
+        try {
+            string section = "";
+            foreach (string raw in File.ReadAllLines(Path.Combine(dir, "OptiScaler.ini"))) {
+                string line = raw.Trim();
+                if (line.StartsWith("[")) { section = line.Trim('[', ']').Trim(); continue; }
+                int eq = line.IndexOf('=');
+                if (eq < 0 || !string.Equals(section, "Libraries", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.Equals(line.Substring(0, eq).Trim(), "OptiDllPath", StringComparison.OrdinalIgnoreCase)) continue;
+                string v = line.Substring(eq + 1).Trim().Trim('"');
+                if (v.Length > 0 && !string.Equals(v, "auto", StringComparison.OrdinalIgnoreCase)) main = v;
+            }
+        } catch (Exception) { }
+        try {
+            string p = Path.IsPathRooted(main) ? main : Path.Combine(dir, main);
+            if (Directory.Exists(p)) return Path.GetFullPath(p);
+        } catch (Exception) { }
+        return dir;
+    }
+}
+
 // The scan: every folder at or below the one picked that holds a FidelityFX or XeSS DLL, and the ones OptiScaler is in
-// (its OptiScaler.ini: it loads amd_fidelityfx_dx12.dll from its own folder for its FSR 3.1 option).
+// (its OptiScaler.ini: it loads amd_fidelityfx_dx12.dll from its own folder for its FSR 3.1 option; v10 also custom
+// providers from its custom folder, which the scan leaves out - DittoSR there is not a game's FSR).
 static class Scanner {
     // the exports DittoSR's libxess.dll has (null: not found next to the loader) - a game's XeSS with others would not load
     public static HashSet<string> XessProxyExports;
@@ -167,11 +217,15 @@ static class Scanner {
         while (stack.Count > 0 && !cancelled()) {
             string dir = stack.Pop();
             Look(dir, found);
-            if (File.Exists(System.IO.Path.Combine(dir, "OptiScaler.ini"))) optiScaler.Add(dir);
+            bool opti = File.Exists(System.IO.Path.Combine(dir, "OptiScaler.ini"));
+            if (opti) optiScaler.Add(dir);
             string[] subs;
             try { subs = Directory.GetDirectories(dir); } catch (Exception) { continue; }
             foreach (string s in subs) {
                 if (string.Equals(System.IO.Path.GetFileName(s), Files.Backup, StringComparison.OrdinalIgnoreCase)) continue;
+                // (OptiScaler's custom providers - beside its ini, or in its own folder: DittoSR there is not a game's FSR)
+                if (string.Equals(System.IO.Path.GetFileName(s), "custom", StringComparison.OrdinalIgnoreCase) &&
+                    (opti || Directory.Exists(System.IO.Path.Combine(s, "DittoSR")))) continue;
                 try {
                     if ((File.GetAttributes(s) & FileAttributes.ReparsePoint) != 0) continue;  // (links: not followed)
                 } catch (Exception) { continue; }
@@ -250,6 +304,7 @@ static class Installer {
     public static void Install(Candidate c, string dll, string ini, Action<string> log) {
         string target = c.Path, orig = Files.Orig(c.Folder, c.Name), backup = Path.Combine(c.Folder, Files.Backup);
         if (dll == null) throw new InvalidOperationException("DittoSR's " + (c.Xess ? Files.Xess : Files.Dx12) + " was not found next to the loader");
+        if (c.Custom) Directory.CreateDirectory(c.Folder);
         if (File.Exists(target) && !File.Exists(orig) && Files.DittoVersion(target) == null) {
             // the first install: the vendor's file, before anything replaces it
             string vendor = Files.Vendor(c.Name);
@@ -266,25 +321,27 @@ static class Installer {
         if (!File.Exists(iniTarget) && ini != null) {
             File.Copy(ini, iniTarget);
             log("settings: " + iniTarget);
-        } else if (File.Exists(iniTarget) && MigrateSharpness(iniTarget)) {
-            log("settings: sharpness 0.2 (the old default, a soft blur at rest) set to 0.6 (the new default) in " + iniTarget);
+        } else if (File.Exists(iniTarget)) {
+            Migrate(iniTarget, log);
         }
+        // (the version the settings are now for: the next update migrates from it)
+        string v = Files.DittoVersion(dll);
+        if (v != null && File.Exists(iniTarget)) IniKeys.SetText(iniTarget, "version", v.Substring("DittoSR ".Length));
     }
 
-    // An ini kept from before 0.2.2 with the then default sharpness=0.2: the new default, 0.6 (the image as
-    // reconstructed). Any other value is the user's own and stays.
-    static bool MigrateSharpness(string ini) {
-        string[] lines = File.ReadAllLines(ini);
-        bool changed = false;
-        for (int i = 0; i < lines.Length; i++) {
-            string[] kv = lines[i].Split('=');
-            if (kv.Length == 2 && kv[0].Trim().ToLowerInvariant() == "sharpness" && kv[1].Trim() == "0.2") {
-                lines[i] = "sharpness=0.6";
-                changed = true;
+    // An ini kept from an earlier install: the defaults that changed since its version moved to the new ones; a value
+    // the user set stays. Each step runs for an ini older than the version that changed that default (no version key:
+    // before 0.3.0). Before 0.2.2: sharpness 0.2, a soft blur at rest, to 0.6, the image as reconstructed.
+    static void Migrate(string ini, Action<string> log) {
+        Version from = new Version(0, 0, 0);
+        try { string t = IniKeys.GetText(ini, "version"); if (t != null) from = new Version(t); } catch (Exception) { }
+        if (from < new Version(0, 2, 2)) {
+            float? sh = IniKeys.Get(ini, "sharpness");
+            if (sh.HasValue && Math.Abs(sh.Value - 0.2f) < 0.001f) {
+                IniKeys.Set(ini, "sharpness", 0.6f);
+                log("settings: sharpness 0.2 (the old default, a soft blur at rest) set to 0.6 (the new default) in " + ini);
             }
         }
-        if (changed) File.WriteAllLines(ini, lines);
-        return changed;
     }
 
     public static void Restore(string folder, Action<string> log) {
@@ -314,6 +371,14 @@ static class Installer {
         foreach (string f in new[] { Files.Ini, Files.Log, Files.XessLog }) {
             string p = Path.Combine(folder, f);
             if (File.Exists(p)) File.Delete(p);
+        }
+        // (an OptiScaler custom provider's folders, custom\DittoSR\ffx: removed once empty)
+        string kind = Path.GetFileName(folder), name = Path.GetFileName(Path.GetDirectoryName(folder));
+        if ((kind == "ffx" || kind == "ffx_vk") && name == "DittoSR") {
+            foreach (string d in new[] { folder, Path.GetDirectoryName(folder) })
+                if (Directory.Exists(d) && !Directory.EnumerateFileSystemEntries(d).Any()) Directory.Delete(d);
+            log("done");
+            return;
         }
         log("done (the backups, if any, stay in " + backup + ")");
     }
@@ -535,9 +600,24 @@ static class IniKeys {
         return null;
     }
 
+    public static string GetText(string ini, string key) {
+        bool inside = false;
+        foreach (string raw in File.ReadAllLines(ini)) {
+            string line = raw.Trim();
+            if (line.StartsWith("[")) { if (inside) break; inside = string.Equals(line, "[" + Section + "]", StringComparison.OrdinalIgnoreCase); continue; }
+            int eq = line.IndexOf('=');
+            if (inside && eq > 0 && string.Equals(line.Substring(0, eq).Trim(), key, StringComparison.OrdinalIgnoreCase)) return line.Substring(eq + 1).Trim();
+        }
+        return null;
+    }
+
     public static void Set(string ini, string key, float value) {
+        SetText(ini, key, value.ToString("0.0##", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    public static void SetText(string ini, string key, string value) {
         var lines = File.ReadAllLines(ini).ToList();
-        string text = key + "=" + value.ToString("0.0##", System.Globalization.CultureInfo.InvariantCulture);
+        string text = key + "=" + value;
         int section = -1, last = -1;
         for (int i = 0; i < lines.Count; i++) {
             string line = lines[i].Trim();
@@ -589,6 +669,7 @@ class SettingsForm : Form {
         weight = Setting(ref y, pad, w, "Frame weight", "How much each new frame counts: Stable is steadier and smoother, with a little more " +
                          "trailing in motion; Responsive is crisper in motion, with more shimmer.", "Stable", "Responsive", FrameWeight,
                          IniKeys.Get(ini, "frame_weight"), () => weightMoved = true);
+        y += (int)(10 * k);
 
         y += (int)(6 * k);
         Controls.Add(new Label { Text = "In the game, F9 applies the change live.", ForeColor = Theme.Faint, AutoSize = true, Location = new Point(pad, y) });
@@ -650,8 +731,13 @@ class SettingsForm : Form {
 class LoaderForm : Form {
     readonly string dll, xessDll, ini, version;
     readonly float k;
-    bool xessMode;  // the upscaler DittoSR goes in place of: FSR (false) or XeSS
-    readonly RoundButton fsrButton, xessButton;
+    // where DittoSR goes: in place of the game's FSR (0) or XeSS (1), or as an OptiScaler v10 custom provider (2)
+    int mode;
+    bool xessMode { get { return mode == 1; } }
+    bool optiMode { get { return mode == 2; } }
+    readonly RoundButton optiButton, fsrButton, xessButton;
+    List<OptiScaler> lastOptiInfo = new List<OptiScaler>();
+    string lastAutoOpti;  // (the folder the OptiScaler mode was last picked for by itself)
     readonly Label modeHint = new Label { AutoSize = true, ForeColor = Theme.Muted, Anchor = AnchorStyles.Left };
     // the last scan: shown by mode
     string lastRoot;
@@ -687,6 +773,7 @@ class LoaderForm : Form {
         scan = new RoundButton("Scan", k);
         install = new RoundButton("Install DittoSR", k);
         restore = new RoundButton("Restore game's files", k);
+        optiButton = new RoundButton("OptiScaler", k) { Toggle = true, Visible = false };
         fsrButton = new RoundButton("FSR", k) { Toggle = true, Selected = true };
         xessButton = new RoundButton("XeSS", k) { Toggle = true };
         settings = new RoundButton("Settings", k);
@@ -725,9 +812,9 @@ class LoaderForm : Form {
         top.Controls.Add(scan, 3, 1);
         // the upscaler to replace
         var modes = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, (int)(2 * k), 0, 0) };
-        fsrButton.MinimumSize = xessButton.MinimumSize = new Size((int)(70 * k), (int)(30 * k));
+        optiButton.MinimumSize = fsrButton.MinimumSize = xessButton.MinimumSize = new Size((int)(70 * k), (int)(30 * k));
         modeHint.Margin = new Padding((int)(8 * k), 0, 0, 0);
-        modes.Controls.AddRange(new Control[] { fsrButton, xessButton, modeHint });
+        modes.Controls.AddRange(new Control[] { optiButton, fsrButton, xessButton, modeHint });
         top.Controls.Add(Caption("Replace"), 0, 2);
         top.Controls.Add(modes, 1, 2);
         top.SetColumnSpan(modes, 3);
@@ -789,8 +876,9 @@ class LoaderForm : Form {
         restore.Click += (s, e) => Restore();
         settings.Click += (s, e) => ShowSettings();
         logButton.Click += (s, e) => OpenFile(xessMode ? Files.XessLog : Files.Log, "no log yet: it appears once the game loads DittoSR");
-        fsrButton.Click += (s, e) => SetMode(false);
-        xessButton.Click += (s, e) => SetMode(true);
+        optiButton.Click += (s, e) => SetMode(2);
+        fsrButton.Click += (s, e) => SetMode(0);
+        xessButton.Click += (s, e) => SetMode(1);
         open.Click += (s, e) => { string f = SelectedFolder(); if (f != null) Process.Start("explorer.exe", "\"" + f + "\""); };
         list.ItemChecked += (s, e) => UpdateButtons();
         list.SelectedIndexChanged += (s, e) => UpdateButtons();
@@ -799,7 +887,7 @@ class LoaderForm : Form {
         if (dll == null) Log("DittoSR's DLL was not found next to the loader (build\\" + Files.Dx12 + "): extract the whole DittoSR.zip");
         else Log("DittoSR: " + dll + (version != null ? " (" + version + ")" : ""));
         Log("Pick the game's folder (or a Steam game) - the FidelityFX and XeSS DLLs are looked for in every folder below it.");
-        SetMode(false);
+        SetMode(0);
         if (!string.IsNullOrEmpty(startFolder)) { folder.Text = startFolder; Shown += (s, e) => StartScan(); }
     }
 
@@ -889,17 +977,27 @@ class LoaderForm : Form {
             List<Candidate> found;
             var opti = new List<string>();
             try { found = Scanner.Scan(root, () => stopScan, opti); } catch (Exception ex) { found = new List<Candidate>(); BeginInvoke((Action)(() => Log("scan failed: " + ex.Message))); }
+            var info = opti.Select(OptiScaler.At).ToList();
             if (stopScan) return;
-            BeginInvoke((Action)(() => Show(root, found, opti)));
+            BeginInvoke((Action)(() => Show(root, found, opti, info)));
         }) { IsBackground = true };
         scanning.Start();
     }
 
-    void Show(string root, List<Candidate> found, List<string> optiScaler) {
+    void Show(string root, List<Candidate> found, List<string> optiScaler, List<OptiScaler> info) {
         SetBusy(false);
         lastRoot = root;
         lastFound = found;
         lastOpti = optiScaler;
+        lastOptiInfo = info;
+        foreach (var o in info)
+            Log("OptiScaler " + (o.Version ?? "(version unknown)") + " in " + o.Folder + (o.Custom ? ": DittoSR can go in as its custom provider, in " + Path.Combine(o.Main, "custom") : ""));
+        // OptiScaler v10: its button, picked by itself once for this folder (DittoSR in its list, the game's files untouched)
+        bool custom = info.Any(o => o.Custom);
+        optiButton.Visible = custom;
+        if (custom && lastAutoOpti != root) { lastAutoOpti = root; mode = 2; }
+        else if (!custom && optiMode) mode = 0;
+        SetMode(mode, false);
         int fsr = found.Count(c => !c.Xess), xess = found.Count(c => c.Xess);
         if (fsr > 0 && xess > 0)
             Log("This game has both FSR and XeSS. If DittoSR's green square doesn't show with FSR (some games, as Cyberpunk 2077, " +
@@ -909,17 +1007,38 @@ class LoaderForm : Form {
         Render();
     }
 
-    void SetMode(bool xess) {
-        xessMode = xess;
-        fsrButton.Selected = !xess;
-        xessButton.Selected = xess;
-        modeHint.Text = xess ? "the game's libxess.dll (XeSS on DirectX 12) - then pick XeSS in the game"
-                             : "the game's FidelityFX DLLs (FSR 3.1 or later) - then pick FSR in the game";
+    void SetMode(int m, bool render = true) {
+        mode = m;
+        optiButton.Selected = m == 2;
+        fsrButton.Selected = m == 0;
+        xessButton.Selected = m == 1;
+        var o = lastOptiInfo.FirstOrDefault(x => x.Custom);
+        modeHint.Text = m == 2 ? "a custom provider of OptiScaler " + (o != null && o.Version != null ? o.Version + " " : "") + "- then pick DittoSR in OptiScaler's upscalers"
+                      : m == 1 ? "the game's libxess.dll (XeSS on DirectX 12) - then pick XeSS in the game"
+                               : "the game's FidelityFX DLLs (FSR 3.1 or later) - then pick FSR in the game";
+        if (!render) return;
         if (lastRoot != null) Render();
         else UpdateButtons();
     }
 
+    // OptiScaler v10's custom provider folders: DirectX 12 and Vulkan, DittoSR's one DLL in both
+    void RenderOpti() {
+        string root = lastRoot;
+        list.BeginUpdate();
+        list.Items.Clear();
+        foreach (var o in lastOptiInfo.Where(x => x.Custom))
+            foreach (bool vk in new[] { false, true }) {
+                var c = new Candidate { Folder = o.CustomFolder(vk), Name = vk ? Files.Vk : Files.Dx12, Installable = true, Recommended = true, Custom = true };
+                string v = File.Exists(c.Path) ? Files.DittoVersion(c.Path) : null;
+                c.State = (v != null ? v + " installed" : "not there") + " - OptiScaler's custom provider (" + (vk ? "Vulkan" : "DirectX 12") + ")";
+                list.Items.Add(Row(root, c, true));
+            }
+        list.EndUpdate();
+        UpdateButtons();
+    }
+
     void Render() {
+        if (optiMode) { RenderOpti(); return; }
         string root = lastRoot;
         var found = lastFound.Where(c => c.Xess == xessMode).ToList();
         var optiScaler = xessMode ? new List<string>() : lastOpti;
@@ -983,7 +1102,10 @@ class LoaderForm : Form {
 
     void Install() {
         Run("install", c => Installer.Install(c, c.Xess ? xessDll : dll, ini, Log), Checked());
-        Log("Now choose " + (xessMode ? "XeSS" : "FSR (FSR 3.1 or later)") + " in the game's settings. With [debug] indicator=1, a green square shows top-left when DittoSR runs.");
+        if (optiMode)
+            Log("Now, in the game, open OptiScaler's menu (Insert) and pick DittoSR as the upscaler. Its Sharpness (Override) and FSR 3's Velocity Factor set DittoSR's sharpness and frame weight.");
+        else
+            Log("Now choose " + (xessMode ? "XeSS" : "FSR (FSR 3.1 or later)") + " in the game's settings. With [debug] indicator=1, a green square shows top-left when DittoSR runs.");
     }
 
     void Restore() {

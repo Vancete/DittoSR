@@ -42,6 +42,8 @@ public:
     bool dispatch(const DittoFrameVk &f, bool forceReset);
     uint64_t frames() const { return frames_; }
     void set_settings(const DittoSettings &s) { s_ = s; }
+    // the comparison: the output's right half left to what the game's own upscaler wrote there first
+    void set_split(bool on) { split_ = on; }
 
 private:
     struct Img {
@@ -75,7 +77,7 @@ private:
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout setLayout_ = VK_NULL_HANDLE;
     VkPipelineLayout pipeLayout_ = VK_NULL_HANDLE;
-    VkPipeline psoConvert_ = VK_NULL_HANDLE, psoChange_ = VK_NULL_HANDLE, psoUpscale_ = VK_NULL_HANDLE;
+    VkPipeline psoConvert_ = VK_NULL_HANDLE, psoMotion_ = VK_NULL_HANDLE, psoUpscale_ = VK_NULL_HANDLE;
     VkPipeline psoSharpen_[5] = {};  // (per output format: rgba16f, rgba8, rgb10a2, r11g11b10f, rgba32f)
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> sets_;
@@ -83,7 +85,8 @@ private:
     VkDeviceMemory uboMem_ = VK_NULL_HANDLE;
     uint8_t *uboMap_ = nullptr;
     uint32_t uboStride_ = 256;
-    Img mda_[2], hist_[2], change4_, change1_, dummy_;
+    Img mda_[2], hist_[2], aux_[2], change1_, dummy_;
+    bool split_ = false;
     std::vector<Garbage> garbage_;
     int cur_ = 0;
     bool texValid_ = false;

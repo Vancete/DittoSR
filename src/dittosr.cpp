@@ -1,7 +1,7 @@
-// DittoSR on D3D12 (dittosr.h), as compute shaders: convert (render size) -> change (4 x 4, then 1 x 1; skipped on a
-// reset) -> upscale (output size) -> sharpen (output size, but with a debug view), the history and the convert pass's
-// output each a ping-pong pair. The history is RGBA16F (rgb encoded: common.hlsli enc, a = the stability level): the
-// game's colour is linear HDR.
+// DittoSR on D3D12 (dittosr.h), as compute shaders: convert (render size; with the change against the history in an
+// extra group) -> motion (render size: the motion checks, the derived reactive mask) -> upscale (output size) -> sharpen
+// (output size, but with a debug view), the history, the stability levels, the convert and motion passes' outputs each a
+// ping-pong pair. The history is RGB10A2 or RGBA16F (rgb encoded: common.hlsli enc), the stability levels R8.
 #include "dittosr.h"
 #include "constants.h"
 
@@ -11,17 +11,19 @@
 #include <math.h>
 #include <string.h>
 
-#include "cs_change.h"
+#include "cs_motion.h"
 #include "cs_convert.h"
 #include "cs_sharpen.h"
 #include "cs_upscale.h"
 #include "cs_upscale16.h"
+#include "cs_upscale_as.h"
+#include "cs_upscale16_as.h"
 #include "cs_sharpen16.h"
 
 namespace {
 
 constexpr UINT kConstants = sizeof(DittoConstants) / 4;
-constexpr UINT kSrvs = 7, kUavs = 2, kTable = kSrvs + kUavs;
+constexpr UINT kSrvs = 8, kUavs = 3, kTable = kSrvs + kUavs;
 constexpr UINT kTablesPerFrame = 5;
 constexpr UINT kFramesInRing = 256;  // (descriptors are rewritten 256 frames later: long past the GPU's use)
 
@@ -86,10 +88,11 @@ bool float_format(DXGI_FORMAT f) {
 float ditto_ratio_from_quality(uint32_t q) {
     switch (q) {
     case FFX_UPSCALE_QUALITY_MODE_NATIVEAA: return 1.0f;
-    case FFX_UPSCALE_QUALITY_MODE_QUALITY: return 1.5f;
-    case FFX_UPSCALE_QUALITY_MODE_BALANCED: return 1.7f;
-    case FFX_UPSCALE_QUALITY_MODE_PERFORMANCE: return 2.0f;
-    case FFX_UPSCALE_QUALITY_MODE_ULTRA_PERFORMANCE: return 3.0f;
+    // (dittosr.ini's ratio_* where set, between 1 and 4)
+    case FFX_UPSCALE_QUALITY_MODE_QUALITY: return g_cfg.ratio[0] >= 1.0f && g_cfg.ratio[0] <= 4.0f ? g_cfg.ratio[0] : 1.5f;
+    case FFX_UPSCALE_QUALITY_MODE_BALANCED: return g_cfg.ratio[1] >= 1.0f && g_cfg.ratio[1] <= 4.0f ? g_cfg.ratio[1] : 1.7f;
+    case FFX_UPSCALE_QUALITY_MODE_PERFORMANCE: return g_cfg.ratio[2] >= 1.0f && g_cfg.ratio[2] <= 4.0f ? g_cfg.ratio[2] : 2.0f;
+    case FFX_UPSCALE_QUALITY_MODE_ULTRA_PERFORMANCE: return g_cfg.ratio[3] >= 1.0f && g_cfg.ratio[3] <= 4.0f ? g_cfg.ratio[3] : 3.0f;
     default: return 0.0f;
     }
 }
@@ -120,10 +123,12 @@ DittoSR::DittoSR(ID3D12Device *device, const DittoCreateInfo &ci, const DittoSet
 DittoSR::~DittoSR() {
     releaseTextures();
     if (psoConvert_) psoConvert_->Release();
-    if (psoChange_) psoChange_->Release();
+    if (psoMotion_) psoMotion_->Release();
     if (psoUpscale_) psoUpscale_->Release();
     if (psoSharpen_) psoSharpen_->Release();
     if (psoUpscale16_) psoUpscale16_->Release();
+    if (psoUpscaleAs_) psoUpscaleAs_->Release();
+    if (psoUpscaleAs16_) psoUpscaleAs16_->Release();
     if (psoSharpen16_) psoSharpen16_->Release();
     if (rootSig_) rootSig_->Release();
     if (heap_) heap_->Release();
@@ -159,11 +164,12 @@ bool DittoSR::createPipelines() {
     HRESULT hr = dev_->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&rootSig_));
     blob->Release();
     if (FAILED(hr)) return ditto_log("CreateRootSignature 0x%08x\n", (unsigned)hr), false;
-    struct { const BYTE *code; size_t size; ID3D12PipelineState **pso; const char *name; } cs[4] = {
+    struct { const BYTE *code; size_t size; ID3D12PipelineState **pso; const char *name; } cs[5] = {
         {g_cs_convert, sizeof g_cs_convert, &psoConvert_, "convert"},
-        {g_cs_change, sizeof g_cs_change, &psoChange_, "change"},
+        {g_cs_motion, sizeof g_cs_motion, &psoMotion_, "motion"},
         {g_cs_upscale, sizeof g_cs_upscale, &psoUpscale_, "upscale"},
         {g_cs_sharpen, sizeof g_cs_sharpen, &psoSharpen_, "sharpen"},
+        {g_cs_upscale_as, sizeof g_cs_upscale_as, &psoUpscaleAs_, "upscale (anti-shimmer)"},
     };
     for (auto &c : cs) {
         D3D12_COMPUTE_PIPELINE_STATE_DESC pd = {};
@@ -178,16 +184,18 @@ bool DittoSR::createPipelines() {
     bool native16 = SUCCEEDED(dev_->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof sm)) && sm.HighestShaderModel >= D3D_SHADER_MODEL_6_2 &&
                     SUCCEEDED(dev_->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &o4, sizeof o4)) && o4.Native16BitShaderOpsSupported;
     if (native16) {
-        struct { const BYTE *code; size_t size; ID3D12PipelineState **pso; } cs16[2] = {
-            {g_cs_upscale16, sizeof g_cs_upscale16, &psoUpscale16_}, {g_cs_sharpen16, sizeof g_cs_sharpen16, &psoSharpen16_}};
+        struct { const BYTE *code; size_t size; ID3D12PipelineState **pso; } cs16[3] = {
+            {g_cs_upscale16, sizeof g_cs_upscale16, &psoUpscale16_}, {g_cs_sharpen16, sizeof g_cs_sharpen16, &psoSharpen16_},
+            {g_cs_upscale16_as, sizeof g_cs_upscale16_as, &psoUpscaleAs16_}};
         for (auto &c : cs16) {
             D3D12_COMPUTE_PIPELINE_STATE_DESC pd = {};
             pd.pRootSignature = rootSig_;
             pd.CS.pShaderBytecode = c.code, pd.CS.BytecodeLength = c.size;
             if (FAILED(dev_->CreateComputePipelineState(&pd, IID_PPV_ARGS(c.pso)))) *c.pso = nullptr;
         }
-        if (!psoUpscale16_ || !psoSharpen16_) {
+        if (!psoUpscale16_ || !psoSharpen16_ || !psoUpscaleAs16_) {
             if (psoUpscale16_) psoUpscale16_->Release(), psoUpscale16_ = nullptr;
+            if (psoUpscaleAs16_) psoUpscaleAs16_->Release(), psoUpscaleAs16_ = nullptr;
             if (psoSharpen16_) psoSharpen16_->Release(), psoSharpen16_ = nullptr;
         }
     }
@@ -229,19 +237,24 @@ bool DittoSR::makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f) {
 }
 
 void DittoSR::releaseTextures() {
-    for (Tex *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &change4_, &change1_})
+    for (Tex *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &change1_, &expo_[0], &expo_[1]})
         if (t->res) t->res->Release(), *t = Tex();
     texValid_ = false;
 }
 
 bool DittoSR::ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, DXGI_FORMAT hf) {
-    if (texValid_ && mda_[0].w == rw && mda_[0].h == rh && hist_[0].w == ow && hist_[0].h == oh && hist_[0].fmt == hf) return true;
+    // (the stability levels R8, or R8G8 with the anti-shimmer's state)
+    DXGI_FORMAT sf = s_.antiShimmer > 0.0f ? DXGI_FORMAT_R8G8_UNORM : DXGI_FORMAT_R8_UNORM;
+    if (texValid_ && mda_[0].w == rw && mda_[0].h == rh && hist_[0].w == ow && hist_[0].h == oh && hist_[0].fmt == hf && stab_[0].fmt == sf) return true;
     // (a new size: the game waits for the GPU before it changes its resolution, as FSR requires; a new history format:
     // the reload key - a frame's hitch)
     releaseTextures();
     bool ok = makeTex(mda_[0], rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) && makeTex(mda_[1], rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
               makeTex(hist_[0], ow, oh, hf) && makeTex(hist_[1], ow, oh, hf) &&
-              makeTex(change4_, 4, 4, DXGI_FORMAT_R16_FLOAT) && makeTex(change1_, 1, 1, DXGI_FORMAT_R16_FLOAT);
+              makeTex(aux_[0], rw, rh, DXGI_FORMAT_R8G8B8A8_UNORM) && makeTex(aux_[1], rw, rh, DXGI_FORMAT_R8G8B8A8_UNORM) &&
+              makeTex(stab_[0], ow, oh, sf) && makeTex(stab_[1], ow, oh, sf) &&
+              makeTex(change1_, 1, 1, DXGI_FORMAT_R16_FLOAT) && makeTex(expo_[0], 1, 1, DXGI_FORMAT_R32_FLOAT) &&
+              makeTex(expo_[1], 1, 1, DXGI_FORMAT_R32_FLOAT);
     if (!ok) return releaseTextures(), false;
     texValid_ = true;
     ditto_log("textures: render %ux%u, output %ux%u, history %s\n", rw, rh, ow, oh, hf == DXGI_FORMAT_R10G10B10A2_UNORM ? "RGB10A2" : "RGBA16F");
@@ -258,8 +271,8 @@ void DittoSR::transition(ID3D12GraphicsCommandList *cl, Tex &t, D3D12_RESOURCE_S
     t.state = to;
 }
 
-D3D12_GPU_DESCRIPTOR_HANDLE DittoSR::table(ID3D12Resource *const srv[7], const DXGI_FORMAT srvFmt[7], ID3D12Resource *const uav[2],
-                                           const DXGI_FORMAT uavFmt[2]) {
+D3D12_GPU_DESCRIPTOR_HANDLE DittoSR::table(ID3D12Resource *const *srv, const DXGI_FORMAT *srvFmt, ID3D12Resource *const *uav,
+                                           const DXGI_FORMAT *uavFmt) {
     if (heapNext_ + kTable > heapSize_) heapNext_ = 0;
     UINT base = heapNext_;
     heapNext_ += kTable;
@@ -324,7 +337,9 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     D3D12_RESOURCE_DESC cd = color->GetDesc(), dd = depth ? depth->GetDesc() : D3D12_RESOURCE_DESC{}, md = mv->GetDesc(), od = out->GetDesc();
     uint32_t rw = fr.rw, rh = fr.rh, ow = fr.ow, oh = fr.oh;
     DXGI_FORMAT hfmt = s_.history10 ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R16G16B16A16_FLOAT;
-    bool resized = !texValid_ || mda_[0].w != rw || mda_[0].h != rh || hist_[0].w != ow || hist_[0].h != oh || hist_[0].fmt != hfmt;
+    DXGI_FORMAT sfmt = s_.antiShimmer > 0.0f ? DXGI_FORMAT_R8G8_UNORM : DXGI_FORMAT_R8_UNORM;
+    bool resized = !texValid_ || mda_[0].w != rw || mda_[0].h != rh || hist_[0].w != ow || hist_[0].h != oh || hist_[0].fmt != hfmt ||
+                   stab_[0].fmt != sfmt;
     if (!ensureTextures(rw, rh, ow, oh, hfmt)) return false;
     bool reset = fr.reset || forceReset || resized;
 
@@ -353,7 +368,12 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
 
     // the constants
     DittoConstants k;
-    ditto_fill_constants(k, s_, fr, reset, expo != nullptr, reac != nullptr, hist_[0].fmt == DXGI_FORMAT_R10G10B10A2_UNORM, prevJit_);
+    // (the auto exposure: the game set FSR's flag and gave no exposure - measured in the convert pass, its 1 x 1 the
+    // exposure the passes read)
+    bool autoExpo = !expo && (ci_.flags & FFX_UPSCALE_ENABLE_AUTO_EXPOSURE) && rw >= 16;
+    ditto_fill_constants(k, s_, fr, reset, expo != nullptr || autoExpo, reac != nullptr, hist_[0].fmt == DXGI_FORMAT_R10G10B10A2_UNORM, prevJit_);
+    k.autoExposure = autoExpo ? 1.0f : 0.0f;
+    if (split_) k.splitX = (float)(ow / 2);
     // (a float colour declared LDR is read as HDR: as [0, 1] colour it would be clipped at 1 - Witcher 3 through
     // OptiScaler, its highlights flattened)
     if (!fr.hdr && float_format(cd.Format)) {
@@ -365,66 +385,76 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
 
     cur_ ^= 1;
     Tex &mdaC = mda_[cur_], &mdaP = mda_[cur_ ^ 1], &histC = hist_[cur_], &histP = hist_[cur_ ^ 1];
+    Tex &auxC = aux_[cur_], &auxP = aux_[cur_ ^ 1], &stabC = stab_[cur_], &stabP = stab_[cur_ ^ 1];
     ID3D12DescriptorHeap *heaps[1] = {heap_};
     cl->SetDescriptorHeaps(1, heaps);
     cl->SetComputeRootSignature(rootSig_);
-    auto run = [&](ID3D12PipelineState *pso, ID3D12Resource *const srv[7], const DXGI_FORMAT sf[7], ID3D12Resource *const uav[2],
-                   const DXGI_FORMAT uf[2], UINT gx, UINT gy) {
+    auto run = [&](ID3D12PipelineState *pso, ID3D12Resource *const srv[kSrvs], const DXGI_FORMAT sf[kSrvs], ID3D12Resource *const uav[kUavs],
+                   const DXGI_FORMAT uf[kUavs], UINT gx, UINT gy) {
         cl->SetPipelineState(pso);
         cl->SetComputeRoot32BitConstants(0, kConstants, &k, 0);
         cl->SetComputeRootDescriptorTable(1, table(srv, sf, uav, uf));
         cl->Dispatch(gx, gy, 1);
     };
-    DXGI_FORMAT exf = expo ? expo->GetDesc().Format : DXGI_FORMAT_UNKNOWN, rf = reac ? reac->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
+    DXGI_FORMAT rf = reac ? reac->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
+    const DXGI_FORMAT X = DXGI_FORMAT_UNKNOWN;
+    Tex &expoC = expo_[cur_], &expoP = expo_[cur_ ^ 1];
+    ID3D12Resource *expoIn = expo;  // (the convert pass's t5: the game's, or the last frame's auto exposure)
+    if (autoExpo) {
+        transition(cl, expoP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        transition(cl, expoC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        expoIn = expoP.res;
+    }
+    DXGI_FORMAT exfIn = expoIn ? expoIn->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
 
-    // convert (render size)
+    // convert (render size), and in its extra row's first group the change against the history (1 x 1)
     transition(cl, mdaC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    {
-        ID3D12Resource *s[7] = {depth, mv};
-        DXGI_FORMAT f[7] = {dd.Format, md.Format};
-        ID3D12Resource *u[2] = {mdaC.res};
-        DXGI_FORMAT uf[2] = {mdaC.fmt};
-        run(psoConvert_, s, f, u, uf, (rw + 7) / 8, (rh + 7) / 8);
-    }
-    transition(cl, mdaC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    transition(cl, change1_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     transition(cl, histP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    transition(cl, mdaP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    // change (how much of the image changed against the history: 4 x 4, then 1 x 1)
-    if (!reset) {
-        transition(cl, change4_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        ID3D12Resource *s[7] = {histP.res, mdaC.res, color, nullptr, nullptr, expo};
-        DXGI_FORMAT f[7] = {histP.fmt, mdaC.fmt, cd.Format, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN, exf};
-        ID3D12Resource *u[2] = {change4_.res};
-        DXGI_FORMAT uf[2] = {change4_.fmt};
-        k.mode = 0.0f;
-        run(psoChange_, s, f, u, uf, 1, 1);
-        transition(cl, change4_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        transition(cl, change1_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        ID3D12Resource *s1[7] = {change4_.res};
-        DXGI_FORMAT f1[7] = {change4_.fmt};
-        ID3D12Resource *u1[2] = {change1_.res};
-        DXGI_FORMAT uf1[2] = {change1_.fmt};
-        k.mode = 1.0f;
-        run(psoChange_, s1, f1, u1, uf1, 1, 1);
-        k.mode = 0.0f;
-    }
-    transition(cl, change1_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    // upscale (output size): the history and the game's output
-    transition(cl, histC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     {
-        ID3D12Resource *s[7] = {histP.res, mdaC.res, color, mdaP.res, change1_.res, expo, reac};
-        DXGI_FORMAT f[7] = {histP.fmt, mdaC.fmt, cd.Format, mdaP.fmt, change1_.fmt, exf, rf};
-        ID3D12Resource *u[2] = {histC.res, out};
-        DXGI_FORMAT uf[2] = {histC.fmt, od.Format};
-        run(fp16 ? psoUpscale16_ : psoUpscale_, s, f, u, uf, (ow + 7) / 8, (oh + 7) / 8);
+        ID3D12Resource *s[kSrvs] = {depth, mv, color, histP.res, nullptr, expoIn};
+        DXGI_FORMAT f[kSrvs] = {dd.Format, md.Format, cd.Format, histP.fmt, X, exfIn};
+        ID3D12Resource *u[kUavs] = {mdaC.res, change1_.res, autoExpo ? expoC.res : nullptr};
+        DXGI_FORMAT uf[kUavs] = {mdaC.fmt, change1_.fmt, autoExpo ? expoC.fmt : X};
+        run(psoConvert_, s, f, u, uf, (rw + 7) / 8, (rh + 7) / 8 + 1);
+    }
+    // (the later passes read this frame's exposure: the auto one just measured, or the game's)
+    if (autoExpo) transition(cl, expoC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE), expo = expoC.res;
+    DXGI_FORMAT exf = expo ? expo->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
+    transition(cl, mdaC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    transition(cl, change1_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    transition(cl, mdaP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    transition(cl, auxP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    // motion (render size): the motion checks, the derived reactive mask
+    transition(cl, auxC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    {
+        ID3D12Resource *s[kSrvs] = {auxP.res, mdaC.res, color, mdaP.res, nullptr, expo};
+        DXGI_FORMAT f[kSrvs] = {auxP.fmt, mdaC.fmt, cd.Format, mdaP.fmt, X, exf};
+        ID3D12Resource *u[kUavs] = {auxC.res};
+        DXGI_FORMAT uf[kUavs] = {auxC.fmt};
+        run(psoMotion_, s, f, u, uf, (rw + 7) / 8, (rh + 7) / 8);
+    }
+    transition(cl, auxC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    // upscale (output size): the history, the stability levels (and the game's output, a debug view)
+    transition(cl, histC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    transition(cl, stabC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    transition(cl, stabP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    {
+        ID3D12Resource *s[kSrvs] = {histP.res, mdaC.res, color, auxC.res, change1_.res, expo, reac, stabP.res};
+        DXGI_FORMAT f[kSrvs] = {histP.fmt, mdaC.fmt, cd.Format, auxC.fmt, change1_.fmt, exf, rf, stabP.fmt};
+        ID3D12Resource *u[kUavs] = {histC.res, out, stabC.res};
+        DXGI_FORMAT uf[kUavs] = {histC.fmt, od.Format, stabC.fmt};
+        bool as = s_.antiShimmer > 0.0f;
+        run(fp16 ? (as ? psoUpscaleAs16_ : psoUpscale16_) : (as ? psoUpscaleAs_ : psoUpscale_), s, f, u, uf, (ow + 7) / 8, (oh + 7) / 8);
     }
     transition(cl, histC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    transition(cl, stabC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     // sharpen (output size): the history into the game's output
     if (!s_.debugView) {  // (always: at sharpness 0 a soft blur; a debug view: the upscale writes it)
-        ID3D12Resource *s[7] = {histC.res, mdaC.res, nullptr, nullptr, nullptr, expo};
-        DXGI_FORMAT f[7] = {histC.fmt, mdaC.fmt, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN, exf};
-        ID3D12Resource *u[2] = {nullptr, out};
-        DXGI_FORMAT uf[2] = {DXGI_FORMAT_UNKNOWN, od.Format};
+        ID3D12Resource *s[kSrvs] = {histC.res, mdaC.res, nullptr, nullptr, nullptr, expo, nullptr, stabC.res};
+        DXGI_FORMAT f[kSrvs] = {histC.fmt, mdaC.fmt, X, X, X, exf, X, stabC.fmt};
+        ID3D12Resource *u[kUavs] = {nullptr, out};
+        DXGI_FORMAT uf[kUavs] = {X, od.Format};
         run(fp16 ? psoSharpen16_ : psoSharpen_, s, f, u, uf, (ow + 7) / 8, (oh + 7) / 8);
     }
 

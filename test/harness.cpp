@@ -4,16 +4,34 @@
 //   harness.exe <dir> <png prefix> [key=value ...]
 //     dll=amd_fidelityfx_dx12.dll (or amd_fidelityfx_loader_dx12.dll)
 //     scene=tiles     a detailed background panning, a nearer square moving the other way (disocclusion, ghosting)
+//     scene=glints    a dark ground with small, very bright HDR sparks panning (flashes: flick=1's sparkle)
 //     scene=grass     thin grass blades over a cracked ground, the camera panning (one motion for every depth: a turn)
 //     frames=64, ratio=1.5 (output / render; output 1440x810), vel=3 (grass: output pixels a frame), sharpen=0,
 //                     dense=1 (grass: blades x dense, thinner by its square root), wobble=0 (grass: the speed vel - wobble, vel,
 //                     vel + wobble in turn), blur=0 (grass: motion blur over
 //                     blur x vel output pixels, in the render and the reference alike - the game's, before the upscale)
+//     sky=0           grass: 1 - dark blades against a bright HDR sky (6 - 25)
+//     wind=0          grass: the blades sway in the wind, their tips this many pixels (period ~19 frames), with no
+//                     motion vectors of their own - as games animate foliage and hair
+//     spec=0          1: bright reflections sliding at half the pan's speed, no motion vectors of their own
+//     light=0         1: a shadow sweeping across the screen with no motion vectors (a change only the clip and the
+//                     reaction catch)
+//     radiance=1      the colour handed over x this (a game in physical units: pair it with exposure_scale=1/K in the
+//                     ini); the output / K is compared. A NaN or infinite output pixel counts as black
+//     velocity=, reactive=  FSR 3.1's velocity factor and reactiveness scale through ffxConfigure (OptiScaler's sliders
+//                     and presets; DittoSR: the frame weight)
+//     maxres=0        1: the inputs' textures at the output size, the render in their top-left (magenta outside)
+//     switch=N:R      the ratio R from frame N on, in the same textures (a resolution change, a ratio override)
+//     autoexp=0       1: FSR's auto exposure flag (no exposure texture given - the upscaler measures it, as The Witcher 3 asks)
+//     mvs=1           the motion vectors handed to the upscaler x this (0.8: 20 % short - a game's imprecise ones; the
+//                     clip has to catch what they miss)
 //     out=1440x810    the output size (the render: out / ratio); psnr=0: the GPU time alone (no reference, no PNGs)
 // Reported: the upscale's GPU time (timestamps either side of its dispatch, the median); PSNR against the scene
 // supersampled 4x4 at output size (in a perceptual domain: sqrt of Reinhard), at the
 // middle and last frames, PNGs of both; with an integer pan (grass), the shimmer - the mean difference between frame t
-// and frame t - 1 shifted by the pan over the last 16 frames, 0 for a perfect upscaler (x 1000, perceptual).
+// and frame t - 1 shifted by the pan over the last 16 frames, 0 for a perfect upscaler (x 1000, perceptual); the flicker,
+// any scene and speed, with flick=1: over the last 8 frames, on a central 640 x 360, the output's change between frames against the
+// reference's (x 1000, perceptual).
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <d3d12.h>
@@ -40,9 +58,10 @@ struct ffxCreateBackendDX12Desc {
 
 static uint32_t OW = 1440, OH = 810;  // (out=)
 static uint32_t RW = 960, RH = 540;
-static bool g_grass;
-static float g_vel = 3.0f, g_dense = 1.0f, g_blur = 0.0f;
-static int g_wobble = 0;
+static bool g_grass, g_glints;
+static float g_vel = 3.0f, g_dense = 1.0f, g_blur = 0.0f, g_mvs = 1.0f, g_radiance = 1.0f;
+static int g_wobble = 0, g_light = 0, g_sky = 0, g_spec = 0;
+static float g_wind = 0.0f;  // (wind=: the blades' tips sway this many output pixels, with no motion vectors of their own)
 // the pan's speed at frame t (output pixels): vel, or vel - wobble, vel, vel + wobble in turn - a hand on the mouse
 static float pan_vel(int t) { return t <= 0 ? g_vel : g_vel + g_wobble * ((t * 7) % 3 - 1); }
 static float pan_pos(int t) { return g_vel * t + (t % 3 == 2 ? g_wobble : 0); }  // (the sum of pan_vel(1 .. t))
@@ -108,14 +127,22 @@ static Sample grass(float x, float y, int t) {
             float u = (by - sy) / h;  // (0 at the base, 1 at the tip)
             if (u < 0 || u > 1) continue;
             float px = bx + lean * h * u * u;
+            if (g_wind > 0.0f) px += g_wind * sinf(0.33f * t + 6.2832f * hf(cx, ry, 17)) * u * u;
             float hw = 0.5f * w * (1.0f - 0.7f * u);
             if (fabsf(sx - px) < hw) {
                 float v = 0.35f + 0.9f * hf(cx, ry, 6) * (0.4f + u);
+                if (g_sky) v *= 0.15f;  // (sky=1: dark blades against it)
                 s.rgb[0] = 1.1f * v, s.rgb[1] = 0.9f * v, s.rgb[2] = 0.45f * v;
                 s.depth = 0.4f + 0.1f * hf(cx, ry, 7);
                 return s;
             }
         }
+    if (g_sky) {  // sky=1: a bright HDR sky behind the blades, 6 - 25 (foliage against the sky, a neon wall)
+        float k = 6.0f + 19.0f * (0.5f + 0.5f * sinf(sx * 0.004f + sy * 0.003f));
+        s.rgb[0] = 0.8f * k, s.rgb[1] = 0.9f * k, s.rgb[2] = k;
+        s.depth = 0.0f;
+        return s;
+    }
     // the ground: sunlit, cracks (a dark polygonal network) and grains
     float g = 1.4f + 0.25f * sinf(sx * 0.031f) * sinf(sy * 0.047f);
     float cxf = sx / 37.0f, cyf = sy / 29.0f;
@@ -128,7 +155,71 @@ static Sample grass(float x, float y, int t) {
     s.depth = 0.2f;
     return s;
 }
+// light=1: a shadow - a disc of radius 160 with a 3-pixel edge, 70 % darker - sweeping across the screen by (5, 2.5)
+// output pixels a frame, with no motion vectors of its own (the surfaces' stay): a change only the clip and the reaction
+// catch, as a game's moving shadows, flashlights and animated lights
+static float lightAt(float x, float y, int t) {
+    float cx = fmodf(200.0f + 5.0f * t, (float)OW), cy = fmodf(150.0f + 2.5f * t, (float)OH);
+    float d = sqrtf((x - cx) * (x - cx) + (y - cy) * (y - cy));
+    float in = fminf(fmaxf((160.0f - d) / 3.0f + 0.5f, 0.0f), 1.0f);
+    return 1.0f - 0.7f * in;
+}
+static Sample sceneLit(float x, float y, int t);
 static Sample scene(float x, float y, int t) {
+    Sample s = sceneLit(x, y, t);
+    if (g_spec) {  // spec=1: reflections - bright spots (15 - 50, 1.5 - 4 pixels, soft-edged) sliding at half the
+                   // pan's speed across the surface, with the surface's motion vectors only (a reflection's parallax)
+        float sx = x + 0.5f * pan_pos(t), sy = y;
+        const float C = 61.0f;
+        int cx0 = (int)floorf(sx / C), cy0 = (int)floorf(sy / C);
+        float add = 0.0f;
+        for (int cy = cy0 - 1; cy <= cy0 + 1; cy++)
+            for (int cx = cx0 - 1; cx <= cx0 + 1; cx++) {
+                if (hf(cx, cy, 20) > 0.6f) continue;
+                float px = (cx + hf(cx, cy, 21)) * C, py = (cy + hf(cx, cy, 22)) * C, r = 1.5f + 2.5f * hf(cx, cy, 23);
+                float d = sqrtf((sx - px) * (sx - px) + (sy - py) * (sy - py));
+                add += (15.0f + 35.0f * hf(cx, cy, 24)) * fminf(fmaxf((r - d) / 1.0f + 0.5f, 0.0f), 1.0f);
+            }
+        for (int c = 0; c < 3; c++) s.rgb[c] += add;
+    }
+    if (g_light) {
+        float l = lightAt(x, y, t);
+        for (int c = 0; c < 3; c++) s.rgb[c] *= l;
+    }
+    return s;
+}
+// glints: a dark ground with small, very bright HDR sparks - discs of 0.25 - 0.9 pixels at 6 - 40, a few short
+// streaks - panning by vel as the grass (a city's distant lights, sun on wet stones, specular sparkles): what a blend
+// that overshoots shows as a flash
+static Sample glints(float x, float y, int t) {
+    Sample s;
+    float sx = x + pan_pos(t), sy = y;
+    s.mv[0] = pan_vel(t), s.mv[1] = 0;
+    s.depth = 0.2f;
+    float g = 0.08f + 0.06f * hf((int)floorf(sx * 0.5f), (int)floorf(sy * 0.5f), 11) + 0.04f * sinf(sx * 0.02f) * sinf(sy * 0.03f);
+    const float CX = 23.0f, CY = 19.0f;
+    int cx0 = (int)floorf(sx / CX), cy0 = (int)floorf(sy / CY);
+    float v = 0.0f;
+    for (int cy = cy0 - 1; cy <= cy0 + 1; cy++)
+        for (int cx = cx0 - 1; cx <= cx0 + 1; cx++) {
+            float p = hf(cx, cy, 12);
+            if (p > 0.45f) continue;
+            float px = (cx + hf(cx, cy, 13)) * CX, py = (cy + hf(cx, cy, 14)) * CY;
+            float in = 6.0f + 34.0f * hf(cx, cy, 15);
+            if (p < 0.08f) {  // (a streak: 1 x 7 pixels, slanted)
+                float u = (sx - px) * 0.94f + (sy - py) * 0.34f, w = -(sx - px) * 0.34f + (sy - py) * 0.94f;
+                if (fabsf(u) < 3.5f && fabsf(w) < 0.5f) v = fmaxf(v, in * 0.5f);
+            } else {
+                float r = 0.25f + 0.65f * hf(cx, cy, 16);
+                if ((sx - px) * (sx - px) + (sy - py) * (sy - py) < r * r) v = fmaxf(v, in);
+            }
+        }
+    float c = g + v;
+    s.rgb[0] = c, s.rgb[1] = 0.95f * c, s.rgb[2] = 0.85f * c;
+    return s;
+}
+static Sample sceneLit(float x, float y, int t) {
+    if (g_glints) return glints(x, y, t);
     if (!g_grass) return tiles(x, y, t);
     if (g_blur <= 0.0f) return grass(x, y, t);
     // (the game's motion blur, before the upscale: the pan averaged over blur x vel output pixels)
@@ -253,23 +344,43 @@ static const char *opt(int argc, char **argv, const char *key, const char *def) 
 }
 
 int main(int argc, char **argv) {
-    if (argc < 3) return printf("harness.exe <dir> <png prefix> [dll=] [scene=tiles|grass] [frames=] [out=WxH] [ratio=] [vel=] [dense=] [wobble=] [blur=] [sharpen=] [psnr=1] [gpu=index]\n"), 1;
+    if (argc < 3) return printf("harness.exe <dir> <png prefix> [dll=] [scene=tiles|grass] [frames=] [out=WxH] [ratio=] [vel=] [dense=] [wobble=] [blur=] [mvs=] [light=] [sharpen=] [psnr=1] [flick=0] [gpu=index]\n"), 1;
     const char *dir = argv[1], *prefix = argv[2];
     const char *dll = opt(argc, argv, "dll", "amd_fidelityfx_dx12.dll");
     int frames = atoi(opt(argc, argv, "frames", "64"));
     sscanf(opt(argc, argv, "out", "1440x810"), "%ux%u", &OW, &OH);
     bool measure = atoi(opt(argc, argv, "psnr", "1")) != 0;
+    bool flick = atoi(opt(argc, argv, "flick", "0")) != 0;
     bool sharpen = atoi(opt(argc, argv, "sharpen", "0")) != 0;
     g_grass = !strcmp(opt(argc, argv, "scene", "tiles"), "grass");
+    g_glints = !strcmp(opt(argc, argv, "scene", "tiles"), "glints");
     g_vel = (float)atof(opt(argc, argv, "vel", "3"));
     g_wobble = atoi(opt(argc, argv, "wobble", "0"));
     g_dense = (float)atof(opt(argc, argv, "dense", "1"));
     g_blur = (float)atof(opt(argc, argv, "blur", "0"));
+    g_mvs = (float)atof(opt(argc, argv, "mvs", "1"));
+    g_radiance = (float)atof(opt(argc, argv, "radiance", "1"));
+    g_light = atoi(opt(argc, argv, "light", "0"));
+    g_sky = atoi(opt(argc, argv, "sky", "0"));
+    g_spec = atoi(opt(argc, argv, "spec", "0"));
+    g_wind = (float)atof(opt(argc, argv, "wind", "0"));
     float ratio = (float)atof(opt(argc, argv, "ratio", "1.5"));
     RW = (uint32_t)(OW / ratio), RH = (uint32_t)(OH / ratio);
     float r = (float)OW / RW;
-    int ivel = (int)g_vel;
-    bool shimmer = g_grass && (float)ivel == g_vel;  // (an integer pan: frame t = frame t - 1 shifted, for a perfect upscaler)
+    // maxres=1: the colour, depth and motion textures at the output size, the render in their top-left RW x RH - as a game
+    // with dynamic resolution or an upscale ratio override renders; the rest magenta (a read outside shows). switch=N:R:
+    // the ratio R from frame N on (with maxres), the textures as they were - a game's resolution change mid-play
+    int swFrame = -1;
+    float swRatio = 0;
+    if (const char *sw = opt(argc, argv, "switch", nullptr)) sscanf(sw, "%d:%f", &swFrame, &swRatio);
+    bool maxres = atoi(opt(argc, argv, "maxres", swFrame >= 0 ? "1" : "0")) != 0;
+    const uint32_t TW = maxres ? OW : RW, TH = maxres ? OH : RH;
+    // (a pan by a whole number of pixels every lag frames: frame t = frame t - lag shifted, for a perfect upscaler - lag 1
+    // for an integer speed, 2 for x.5 (the history then resampled half a pixel off: the worst case), 4 for x.25)
+    int lag = 0;
+    for (int k : {1, 2, 4})
+        if (!lag && (k == 1 || !g_wobble) && fabsf(g_vel * k - roundf(g_vel * k)) < 1e-4f) lag = k;
+    bool shimmer = (g_grass || g_glints) && lag > 0 && !g_light && !g_spec && g_wind <= 0.0f;  // (the light breaks the pan's shift: no shimmer then)
 
     Gpu g = {};
     // the GPU with the most memory (not the integrated one), or gpu=: DXGI's adapter index
@@ -286,7 +397,7 @@ int main(int argc, char **argv) {
     }
     DXGI_ADAPTER_DESC1 ad;
     best->GetDesc1(&ad);
-    printf("adapter: %ls; %s, %s scene, %ux%u -> %ux%u\n", ad.Description, dll, g_grass ? "grass" : "tiles", RW, RH, OW, OH);
+    printf("adapter: %ls; %s, %s scene, %ux%u -> %ux%u\n", ad.Description, dll, g_glints ? "glints" : g_grass ? "grass" : "tiles", RW, RH, OW, OH);
     CHECK(D3D12CreateDevice(best, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&g.dev)));
     D3D12_COMMAND_QUEUE_DESC qd = {D3D12_COMMAND_LIST_TYPE_DIRECT};
     CHECK(g.dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&g.q)));
@@ -312,8 +423,20 @@ int main(int argc, char **argv) {
     ffxCreateContextDescUpscale cd = {};
     cd.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE, cd.header.pNext = &be.header;
     cd.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_DEPTH_INVERTED | FFX_UPSCALE_ENABLE_DEPTH_INFINITE;
+    if (atoi(opt(argc, argv, "autoexp", "0"))) cd.flags |= FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;  // (no exposure given: the upscaler's own)
     cd.maxRenderSize = {RW, RH}, cd.maxUpscaleSize = {OW, OH};
     if (create(&ctx, &cd.header, nullptr) != FFX_API_RETURN_OK) return printf("ffxCreateContext failed\n"), 1;
+    // velocity=, reactive=: FSR 3.1's velocity factor and reactiveness scale configured, as OptiScaler's sliders and
+    // presets do (DittoSR: the frame weight)
+    for (int k = 0; k < 2; k++)
+        if (const char *v = opt(argc, argv, k ? "reactive" : "velocity", nullptr)) {
+            auto configure = (PfnFfxConfigure)GetProcAddress(m, "ffxConfigure");
+            float vf = (float)atof(v);
+            ffxConfigureDescUpscaleKeyValue kv = {};
+            kv.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
+            kv.key = k ? FFX_API_CONFIGURE_UPSCALE_KEY_FREACTIVENESSSCALE : FFX_API_CONFIGURE_UPSCALE_KEY_FVELOCITYFACTOR, kv.ptr = &vf;
+            printf("ffxConfigure %s %g: %u\n", k ? "reactiveness scale" : "velocity factor", vf, (unsigned)configure(&ctx, &kv.header));
+        }
     ffxQueryDescUpscaleGetJitterPhaseCount pq = {{FFX_API_QUERY_DESC_TYPE_UPSCALE_GETJITTERPHASECOUNT}, RW, OW, &phases};
     query(&ctx, &pq.header);
     // (the upscaler's providers, as a game lists them before choosing one)
@@ -328,9 +451,9 @@ int main(int argc, char **argv) {
     ffxQueryGetProviderVersion pv = {{FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION}};
     if (query(&ctx, &pv.header) == FFX_API_RETURN_OK && pv.versionName) printf("provider: %s\n", pv.versionName);
 
-    ID3D12Resource *color = tex(g, RW, RH, DXGI_FORMAT_R16G16B16A16_FLOAT, false, D3D12_RESOURCE_STATE_COPY_DEST);
-    ID3D12Resource *depth = tex(g, RW, RH, DXGI_FORMAT_R32_TYPELESS, false, D3D12_RESOURCE_STATE_COPY_DEST);
-    ID3D12Resource *mv = tex(g, RW, RH, DXGI_FORMAT_R16G16_FLOAT, false, D3D12_RESOURCE_STATE_COPY_DEST);
+    ID3D12Resource *color = tex(g, TW, TH, DXGI_FORMAT_R16G16B16A16_FLOAT, false, D3D12_RESOURCE_STATE_COPY_DEST);
+    ID3D12Resource *depth = tex(g, TW, TH, DXGI_FORMAT_R32_TYPELESS, false, D3D12_RESOURCE_STATE_COPY_DEST);
+    ID3D12Resource *mv = tex(g, TW, TH, DXGI_FORMAT_R16G16_FLOAT, false, D3D12_RESOURCE_STATE_COPY_DEST);
     ID3D12Resource *out = tex(g, OW, OH, DXGI_FORMAT_R16G16B16A16_FLOAT, true, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     ID3D12Resource *up = buffer(g, 96ull << 20, D3D12_HEAP_TYPE_UPLOAD);
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT ofp;
@@ -348,16 +471,31 @@ int main(int argc, char **argv) {
     g.q->GetTimestampFrequency(&tsFreq);
     std::vector<double> gpuMs;
 
-    std::vector<uint16_t> cbuf(RW * RH * 4), mbuf(RW * RH * 2);
-    std::vector<float> dbuf(RW * RH), cur(OW * OH * 3), prev(OW * OH * 3);
-    double psnrSum = 0, shimSum = 0, upMs = 0;
-    int psnrN = 0, shimN = 0;
+    std::vector<uint16_t> cbuf(TW * TH * 4), mbuf(TW * TH * 2, 0);
+    std::vector<float> dbuf(TW * TH, 0.0f), cur(OW * OH * 3);
+    for (size_t i = 0; i < (size_t)TW * TH; i++)  // (outside the render: magenta, bright)
+        cbuf[i * 4] = f2h(20.0f), cbuf[i * 4 + 1] = f2h(0.0f), cbuf[i * 4 + 2] = f2h(20.0f), cbuf[i * 4 + 3] = f2h(1.0f);
+    std::vector<std::vector<float>> ring(lag > 0 ? lag : 1, std::vector<float>(OW * OH * 3));
+    double psnrSum = 0, shimSum = 0, upMs = 0, flickSum = 0, sparkSum = 0, sparkPx = 0;
+    int sparkN = 0;
+    double sparkMax = 0;  // (the worst pixel: its excess over the reference's 3x3 brightest, x that brightest)
+    int psnrN = 0, shimN = 0, flickN = 0;
+    const uint32_t FLICK_W = OW < 640 ? OW : 640, FLICK_H = OH < 360 ? OH : 360;
+    const int FLICK_N = 9;
+    std::vector<float> fo(FLICK_W * FLICK_H * 3), fop(fo.size()), fg(fo.size()), fgp(fo.size()), lo(fo.size()), lg(fo.size());
+    std::vector<float> curLin(OW * OH * 3);
     // (psnr=0, the GPU time alone: the first 16 frames rendered once and replayed - the CPU's render between upscales
     // left the GPU idle long enough to drop its clocks, and the time measured was its power saving)
     const int kCached = 16;
     std::vector<std::vector<uint16_t>> cc(measure ? 0 : kCached), mc(measure ? 0 : kCached);
     std::vector<std::vector<float>> dc(measure ? 0 : kCached);
     for (int t = 0; t < frames; t++) {
+        if (t == swFrame && swRatio > 0) {  // (the new ratio: a new render size inside the same textures, a new jitter cycle)
+            RW = (uint32_t)(OW / swRatio), RH = (uint32_t)(OH / swRatio), r = (float)OW / RW;
+            ffxQueryDescUpscaleGetJitterPhaseCount pq2 = {{FFX_API_QUERY_DESC_TYPE_UPSCALE_GETJITTERPHASECOUNT}, RW, OW, &phases};
+            query(&ctx, &pq2.header);
+            printf("frame %d: render %ux%u\n", t, RW, RH);
+        }
         int k = t % phases + 1;
         float jx = halton(k, 2) - 0.5f, jy = halton(k, 3) - 0.5f;
         bool replay = !measure && t >= kCached;
@@ -366,12 +504,12 @@ int main(int argc, char **argv) {
         for (uint32_t y = 0; y < RH && !replay; y++)
             for (uint32_t x = 0; x < RW; x++) {
                 Sample s = scene((x + 0.5f - jx) * r, (y + 0.5f - jy) * r, t);
-                size_t i = (size_t)y * RW + x;
-                for (int c = 0; c < 3; c++) cbuf[i * 4 + c] = f2h(s.rgb[c]);
+                size_t i = (size_t)y * TW + x;
+                for (int c = 0; c < 3; c++) cbuf[i * 4 + c] = f2h(s.rgb[c] * g_radiance);
                 cbuf[i * 4 + 3] = f2h(1.0f);
                 dbuf[i] = s.depth;
                 // (the previous position = this one + mv x scale, here in uv with scale = render size)
-                mbuf[i * 2] = f2h(s.mv[0] / OW), mbuf[i * 2 + 1] = f2h(s.mv[1] / OH);
+                mbuf[i * 2] = f2h(g_mvs * s.mv[0] / OW), mbuf[i * 2 + 1] = f2h(g_mvs * s.mv[1] / OH);
             }
         if (!measure && t < kCached) cc[t] = cbuf, dc[t] = dbuf, mc[t] = mbuf;
         g.ca->Reset();
@@ -382,9 +520,9 @@ int main(int argc, char **argv) {
             barrier(g.cl, mv, SRV, D3D12_RESOURCE_STATE_COPY_DEST);
         }
         UINT64 off = 0;
-        upload(g, up, off, color, cbuf.data(), RW, RH, 8);
-        upload(g, up, off, depth, dbuf.data(), RW, RH, 4);
-        upload(g, up, off, mv, mbuf.data(), RW, RH, 4);
+        upload(g, up, off, color, cbuf.data(), TW, TH, 8);
+        upload(g, up, off, depth, dbuf.data(), TW, TH, 4);
+        upload(g, up, off, mv, mbuf.data(), TW, TH, 4);
         barrier(g.cl, color, D3D12_RESOURCE_STATE_COPY_DEST, SRV);
         barrier(g.cl, depth, D3D12_RESOURCE_STATE_COPY_DEST, SRV);
         barrier(g.cl, mv, D3D12_RESOURCE_STATE_COPY_DEST, SRV);
@@ -421,8 +559,9 @@ int main(int argc, char **argv) {
             g.cl->ResolveQueryData(qh, D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, qrb, 0);
         }
         bool psnrFrame = measure && (t == frames - 1 || t == frames / 2);
-        bool shimFrame = shimmer && t >= frames - 17;
-        bool grab = psnrFrame || shimFrame;
+        bool shimFrame = shimmer && t >= frames - 16 - lag;
+        bool flickFrame = measure && flick && t >= frames - FLICK_N;
+        bool grab = psnrFrame || shimFrame || flickFrame;
         if (grab) {
             barrier(g.cl, out, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
             D3D12_TEXTURE_COPY_LOCATION s = {out, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX}, d = {rb, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
@@ -451,21 +590,73 @@ int main(int argc, char **argv) {
         for (uint32_t y = 0; y < OH; y++) {
             const uint16_t *row = (const uint16_t *)(mp + (size_t)y * ofp.Footprint.RowPitch);
             for (uint32_t x = 0; x < OW; x++)
-                for (int c = 0; c < 3; c++) cur[((size_t)y * OW + x) * 3 + c] = perceptual(h2f(row[x * 4 + c]));
+                for (int c = 0; c < 3; c++) {
+                    float v = h2f(row[x * 4 + c]) / g_radiance;
+                    if (!(v == v) || v > 1e30f) v = -1.0f;  // (NaN or infinite: counted as black, as a tonemapper shows it)
+                    cur[((size_t)y * OW + x) * 3 + c] = perceptual(v), curLin[((size_t)y * OW + x) * 3 + c] = v;
+                }
         }
         rb->Unmap(0, nullptr);
-        // the shimmer: this frame against the previous one shifted by the pan (away from the borders)
+        // the shimmer: this frame against the one lag frames back, shifted by the pan (away from the borders)
         if (shimFrame && t >= frames - 16) {
+            const std::vector<float> &prev = ring[t % lag];
+            int sh = (int)lroundf(pan_pos(t) - pan_pos(t - lag));
             double sum = 0;
             size_t n = 0;
             for (uint32_t y = 8; y < OH - 8; y++)
-                for (uint32_t x = 8; x + ivel + g_wobble < OW - 8; x++)
-                    for (int c = 0; c < 3; c++, n++) sum += fabs(cur[((size_t)y * OW + x) * 3 + c] - prev[((size_t)y * OW + x + (int)pan_vel(t)) * 3 + c]);
+                for (uint32_t x = 8; x + sh < OW - 8; x++)
+                    for (int c = 0; c < 3; c++, n++) sum += fabs(cur[((size_t)y * OW + x) * 3 + c] - prev[((size_t)y * OW + x + sh) * 3 + c]);
             shimSum += sum / n, shimN++;
         }
-        if (shimFrame) std::swap(cur, prev);
+        // the flicker, any motion: on a central crop, the output's change from the previous frame against the
+        // reference's - mean |(out_t - out_t-1) - (ref_t - ref_t-1)|, 0 for a perfect upscaler at any speed
+        if (flickFrame) {
+            uint32_t cx0 = (OW - FLICK_W) / 2, cy0 = (OH - FLICK_H) / 2;
+            for (uint32_t y = 0; y < FLICK_H; y++)
+                for (uint32_t x = 0; x < FLICK_W; x++) {
+                    float ref[3] = {0, 0, 0};
+                    for (int sy = 0; sy < 4; sy++)
+                        for (int sx = 0; sx < 4; sx++) {
+                            Sample s = scene(cx0 + x + (sx + 0.5f) / 4, cy0 + y + (sy + 0.5f) / 4, t);
+                            for (int c = 0; c < 3; c++) ref[c] += s.rgb[c] / 16;
+                        }
+                    for (int c = 0; c < 3; c++) {
+                        size_t i = ((size_t)y * FLICK_W + x) * 3 + c;
+                        fo[i] = cur[((size_t)(cy0 + y) * OW + cx0 + x) * 3 + c], fg[i] = perceptual(ref[c]);
+                        lo[i] = curLin[((size_t)(cy0 + y) * OW + cx0 + x) * 3 + c], lg[i] = ref[c];
+                    }
+                }
+            if (t > frames - FLICK_N) {
+                double sum = 0;
+                for (size_t i = 0; i < fo.size(); i++) sum += fabs((fo[i] - fop[i]) - (fg[i] - fgp[i]));
+                flickSum += sum / fo.size(), flickN++;
+            }
+            // the sparkle: light that is not there - in linear HDR, as the game's bloom after the upscale sees it: the
+            // output's luma above the reference's brightest in its 3 x 3 (0 for a perfect upscaler; near white the
+            // perceptual domain hides it - a small error there is a large linear one: a flash once bloomed)
+            {
+                auto Y = [&](const std::vector<float> &v, size_t i) { return 0.25f * v[i * 3] + 0.5f * v[i * 3 + 1] + 0.25f * v[i * 3 + 2]; };
+                double ex = 0;
+                float emax = 0;
+                size_t nb = 0, np = 0;
+                for (uint32_t y = 1; y + 1 < FLICK_H; y++)
+                    for (uint32_t x = 1; x + 1 < FLICK_W; x++, np++) {
+                        float rm = 0;
+                        for (int j = -1; j <= 1; j++)
+                            for (int i = -1; i <= 1; i++) rm = fmaxf(rm, Y(lg, (size_t)(y + j) * FLICK_W + x + i));
+                        float e = Y(lo, (size_t)y * FLICK_W + x) - rm;
+                        if (e > 0.0f) ex += e;
+                        emax = fmaxf(emax, rm > 0 ? e / rm : 0);
+                        if (e > 1.0f) nb++;  // (a pixel a whole unit of light too bright)
+                    }
+                sparkSum += ex / np, sparkPx += 100.0 * nb / np, sparkN++;
+                sparkMax = fmax(sparkMax, emax);
+            }
+            std::swap(fo, fop), std::swap(fg, fgp);
+        }
+        if (shimFrame) ring[t % lag] = cur;
         if (!psnrFrame) continue;
-        const std::vector<float> &o = shimFrame ? prev : cur;
+        const std::vector<float> &o = cur;
         // the comparison: the output against the scene supersampled 4x4 at output size
         std::vector<uint8_t> img(OW * OH * 3), gt(OW * OH * 3);
         double se = 0;
@@ -499,6 +690,8 @@ int main(int argc, char **argv) {
     double gmed = gpuMs.empty() ? 0.0 : gpuMs[gpuMs.size() / 2];
     if (psnrN) printf("mean PSNR %.2f dB, ", psnrSum / psnrN);
     if (shimN) printf("shimmer %.2f, ", 1000.0 * shimSum / shimN);
+    if (flickN) printf("flicker %.2f, ", 1000.0 * flickSum / flickN);
+    if (sparkN) printf("sparkle %.3f (%.3f %% px, worst x%.2f), ", 1000.0 * sparkSum / sparkN, sparkPx / sparkN, sparkMax);
     printf("%.3f ms GPU an upscale (median; %.3f ms wall clock)\n", gmed, upMs / (frames - 8));
     destroy(&ctx, nullptr);
     return 0;
