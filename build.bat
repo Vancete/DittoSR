@@ -22,7 +22,7 @@ if not exist "%SPV%" set "SPV=%VULKAN_SDK%\Bin\dxc.exe"
 if not exist "%SPV%" (echo no dxc with SPIR-V: put the DirectXShaderCompiler release in tools\dxc\ or install the Vulkan SDK & exit /b 1)
 
 rem D3D12 (DXIL)
-for %%s in (convert motion upscale sharpen aoprep aomain aomip aofilter aotemporal aocompose aolut aoup aohalfnd aocacao aocurve) do (
+for %%s in (convert motion upscale sharpen aoprep aomain aomip aofilter aotemporal aocompose aolut aoup aohalfnd aocacao aocurve fg_field fg_dilate fg_warp) do (
   %DXC% -nologo -T cs_6_0 -E main -O3 -Fh "%OUT%\gen\cs_%%s.h" -Vn g_cs_%%s "%ROOT%shaders\%%s.hlsl" || exit /b 1
 )
 rem Ditto Relight: its main pass in 16 x 16 groups (ao_workgroup16)
@@ -61,7 +61,7 @@ for %%f in (rgba16f rgba8 rgb10a2 r11g11b10f rgba32f) do (
 )
 
 cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /LD /I"%ROOT%src" /I"%OUT%\gen" /I"%ROOT%third_party\vulkan\include" "%ROOT%src\ffx_dll.cpp" ^
-   "%ROOT%src\dittosr.cpp" "%ROOT%src\dittosr_vk.cpp" "%ROOT%src\common.cpp" "%ROOT%src\overlay.cpp" ^
+   "%ROOT%src\dittosr.cpp" "%ROOT%src\dittosr_vk.cpp" "%ROOT%src\fg.cpp" "%ROOT%src\common.cpp" "%ROOT%src\overlay.cpp" ^
    "%ROOT%src\opti_plugin.cpp" /Fo"%OUT%\obj\\" ^
    /Fe"%OUT%\amd_fidelityfx_dx12.dll" ^
    /link d3d12.lib dxgi.lib user32.lib gdi32.lib || exit /b 1

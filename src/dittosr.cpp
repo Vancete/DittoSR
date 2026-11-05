@@ -107,6 +107,9 @@ bool float_format(DXGI_FORMAT f) {
 
 }  // namespace
 
+D3D12_RESOURCE_STATES ditto_d3d_state(uint32_t s) { return d3d_state(s); }
+DXGI_FORMAT ditto_view_format(DXGI_FORMAT f, bool uav) { return view_format(f, uav); }
+
 float ditto_ratio_from_quality(uint32_t q) {
     switch (q) {
     case FFX_UPSCALE_QUALITY_MODE_NATIVEAA: return 1.0f;

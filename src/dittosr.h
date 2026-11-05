@@ -329,6 +329,10 @@ private:
 // An FSR 3.1 upscale dispatch as a DittoFrame (false: a resource missing)
 bool ditto_frame_from_ffx(const ffxDispatchDescUpscale *d, const DittoCreateInfo &ci, DittoFrame *f);
 
+// FidelityFX's resource state as D3D12's; a typed format to view a (possibly typeless, sRGB or depth) resource with
+D3D12_RESOURCE_STATES ditto_d3d_state(uint32_t s);
+DXGI_FORMAT ditto_view_format(DXGI_FORMAT f, bool uav);
+
 // The FSR 3.1 formulas for the upscale queries the game asks before creating anything
 float ditto_ratio_from_quality(uint32_t q);
 int32_t ditto_jitter_phase_count(uint32_t renderWidth, uint32_t displayWidth);
@@ -358,6 +362,9 @@ struct DittoConfig {
     // the sharpness the FidelityFX API's dispatch carries (when it enables sharpening) in place of dittosr.ini's: -1 only
     // when this DLL runs from OptiScaler's custom provider folder (its sharpness slider), 1 always, 0 never
     int gameSharpness = -1;
+    // frame generation: 1 DittoSR's in-between images when the game (or OptiScaler) turns FSR 3.1's on (AMD's swapchain
+    // still presents them: its DLL alongside); 0 AMD's own interpolation
+    int frameGen = 1;
     DittoSettings s;
 };
 extern DittoConfig g_cfg;

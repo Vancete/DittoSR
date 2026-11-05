@@ -15,6 +15,9 @@
 //                     vel + wobble in turn), blur=0 (grass: motion blur over
 //                     blur x vel output pixels, in the render and the reference alike - the game's, before the upscale)
 //     stop=0          grass: the pan stops after this frame (stop=24: how fast the image gets sharp again at rest)
+//     fg=0            1: FSR 3.1's frame generation through the DLL (D3D12; its own context: no AMD's DLL alongside) -
+//                     the in-between image (half a frame back) measured against the scene then; 2: the frame itself
+//                     measured the same way (as if shown twice - the baseline)
 //     sky=0           grass: 1 - dark blades against a bright HDR sky (6 - 25)
 //     wind=0          grass: the blades sway in the wind, their tips this many pixels (period ~19 frames), with no
 //                     motion vectors of their own - as games animate foliage and hair
@@ -55,6 +58,7 @@
 
 #include "ffx_api/ffx_api.h"
 #include "ffx_api/ffx_upscale.h"
+#include "ffx_api/ffx_framegeneration.h"
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 #include "ffx_api/vk/ffx_api_vk.h"
@@ -78,13 +82,16 @@ static int g_stop = 0;  // (stop=: the pan stops after this frame - how fast the
 static float g_dolly = 0.0f;  // (dolly=: the corner's camera moving forward this much a frame)
 static float g_wind = 0.0f;  // (wind=: the blades' tips sway this many output pixels, with no motion vectors of their own)
 // the pan's speed at frame t (output pixels): vel, or vel - wobble, vel, vel + wobble in turn - a hand on the mouse
-static float pan_vel(int t) {
+// (the time a float: fg= compares the in-between images with the scene half a frame back)
+static float pan_vel(float t) {
     if (g_stop > 0 && t > g_stop) return 0.0f;
-    return t <= 0 ? g_vel : g_vel + g_wobble * ((t * 7) % 3 - 1);
+    int ti = (int)floorf(t);
+    return t <= 0 ? g_vel : g_vel + g_wobble * ((ti * 7) % 3 - 1);
 }
-static float pan_pos(int t) {  // (the sum of pan_vel(1 .. t))
-    if (g_stop > 0 && t > g_stop) t = g_stop;
-    return g_vel * t + (t % 3 == 2 ? g_wobble : 0);
+static float pan_pos(float t) {  // (the sum of pan_vel(1 .. t))
+    if (g_stop > 0 && t > g_stop) t = (float)g_stop;
+    int ti = (int)floorf(t);
+    return g_vel * t + (ti % 3 == 2 ? g_wobble : 0);
 }
 static const float BG_VEL[2] = {1.7f, 0.6f};  // (tiles: output pixels per frame)
 static const float FG_VEL[2] = {-4.3f, 2.1f};
@@ -104,7 +111,7 @@ static float bg(float x, float y) {
     float bright = ((tx * 7 + ty * 3) % 11 == 0) ? 8.0f : 0.0f;
     return tile + 0.4f * zp + 0.6f * lines + bright * (fmodf(x, 64.0f) > 32.0f ? 1.0f : 0.0f);
 }
-static Sample tiles(float x, float y, int t) {
+static Sample tiles(float x, float y, float t) {
     Sample s;
     float fx = 300 + FG_VEL[0] * t, fy = 200 + FG_VEL[1] * t;
     fx = fmodf(fmodf(fx, (float)OW) + OW, (float)OW), fy = fmodf(fmodf(fy, (float)OH) + OH, (float)OH);
@@ -127,7 +134,7 @@ static Sample tiles(float x, float y, int t) {
 // corner (scene=corner): the view's ray through output pixel (x, y) (the camera's vertical fov 1 radian, as the dispatch
 // says), against a wall through (0, 0, 4) turned 0.6 radians (receding to the right) and a ceiling at y = 1 in front of
 // it; the ceiling within 0.06 of the wall a strip of light (HDR 12, 8, 3), the rest dim, the wall a flat grey
-static Sample corner(float x, float y, int t) {
+static Sample corner(float x, float y, float t) {
     Sample s;
     float ty = tanf(0.5f), tx = ty * OW / OH;
     float dx = (2.0f * x / OW - 1.0f) * tx, dy = (1.0f - 2.0f * y / OH) * ty;
@@ -159,7 +166,7 @@ static uint32_t hash(int32_t a, int32_t b) {
 static float hf(int32_t a, int32_t b, int k) { return (float)(hash(a * 7 + k, b * 13 - k) & 0xffff) / 65535.0f; }
 // grass: blades (thin slanted segments, nearer) every few pixels in rows, over a sunlit cracked ground; the camera pans
 // by vel output pixels a frame, every depth alike (a turn of the camera)
-static Sample grass(float x, float y, int t) {
+static Sample grass(float x, float y, float t) {
     Sample s;
     float sx = x + pan_pos(t), sy = y;
     s.mv[0] = pan_vel(t), s.mv[1] = 0;
@@ -206,14 +213,14 @@ static Sample grass(float x, float y, int t) {
 // light=1: a shadow - a disc of radius 160 with a 3-pixel edge, 70 % darker - sweeping across the screen by (5, 2.5)
 // output pixels a frame, with no motion vectors of its own (the surfaces' stay): a change only the clip and the reaction
 // catch, as a game's moving shadows, flashlights and animated lights
-static float lightAt(float x, float y, int t) {
+static float lightAt(float x, float y, float t) {
     float cx = fmodf(200.0f + 5.0f * t, (float)OW), cy = fmodf(150.0f + 2.5f * t, (float)OH);
     float d = sqrtf((x - cx) * (x - cx) + (y - cy) * (y - cy));
     float in = fminf(fmaxf((160.0f - d) / 3.0f + 0.5f, 0.0f), 1.0f);
     return 1.0f - 0.7f * in;
 }
-static Sample sceneLit(float x, float y, int t);
-static Sample scene(float x, float y, int t) {
+static Sample sceneLit(float x, float y, float t);
+static Sample scene(float x, float y, float t) {
     Sample s = sceneLit(x, y, t);
     if (g_spec) {  // spec=1: reflections - bright spots (15 - 50, 1.5 - 4 pixels, soft-edged) sliding at half the
                    // pan's speed across the surface, with the surface's motion vectors only (a reflection's parallax)
@@ -239,7 +246,7 @@ static Sample scene(float x, float y, int t) {
 // glints: a dark ground with small, very bright HDR sparks - discs of 0.25 - 0.9 pixels at 6 - 40, a few short
 // streaks - panning by vel as the grass (a city's distant lights, sun on wet stones, specular sparkles): what a blend
 // that overshoots shows as a flash
-static Sample glints(float x, float y, int t) {
+static Sample glints(float x, float y, float t) {
     Sample s;
     float sx = x + pan_pos(t), sy = y;
     s.mv[0] = pan_vel(t), s.mv[1] = 0;
@@ -266,7 +273,7 @@ static Sample glints(float x, float y, int t) {
     s.rgb[0] = c, s.rgb[1] = 0.95f * c, s.rgb[2] = 0.85f * c;
     return s;
 }
-static Sample sceneLit(float x, float y, int t) {
+static Sample sceneLit(float x, float y, float t) {
     if (g_glints) return glints(x, y, t);
     if (g_corner) return corner(x, y, t);
     if (!g_grass) return tiles(x, y, t);
@@ -814,6 +821,7 @@ int main(int argc, char **argv) {
     g_spec = atoi(opt(argc, argv, "spec", "0"));
     g_wind = (float)atof(opt(argc, argv, "wind", "0"));
     g_dolly = (float)atof(opt(argc, argv, "dolly", "0"));
+    int fgMode = atoi(opt(argc, argv, "fg", "0"));
     float ratio = (float)atof(opt(argc, argv, "ratio", "1.5"));
     RW = (uint32_t)(OW / ratio), RH = (uint32_t)(OH / ratio);
     float r = (float)OW / RW;
@@ -830,7 +838,7 @@ int main(int argc, char **argv) {
     int lag = 0;
     for (int k : {1, 2, 4})
         if (!lag && (k == 1 || !g_wobble) && fabsf(g_vel * k - roundf(g_vel * k)) < 1e-4f) lag = k;
-    bool shimmer = (g_grass || g_glints) && lag > 0 && !g_light && !g_spec && g_wind <= 0.0f;  // (the light breaks the pan's shift: no shimmer then)
+    bool shimmer = (g_grass || g_glints) && lag > 0 && !g_light && !g_spec && g_wind <= 0.0f && !fgMode;  // (the light breaks the pan's shift: no shimmer then)
 
     Api *api = vk ? (Api *)new Vk() : (Api *)new Dx12();
     if (!api->init(atoi(opt(argc, argv, "gpu", "-1")))) return printf("no GPU\n"), 1;
@@ -882,6 +890,19 @@ int main(int argc, char **argv) {
 
     Tex color = api->texture(TW, TH, K_COLOR, false), depth = api->texture(TW, TH, K_DEPTH, false), mv = api->texture(TW, TH, K_MV, false);
     Tex out = api->texture(OW, OH, K_OUT, out8);
+    // fg=1 (D3D12): a frame generation context of the DLL's, and its in-between image - what is measured, against the
+    // scene half a frame back; fg=2: the frame itself measured the same way (as if each were shown twice - the baseline)
+    ffxContext fgc = nullptr;
+    Tex fgOut = {};
+    if (fgMode == 1) {
+        if (vk) return printf("fg=1: D3D12 only\n"), 1;
+        ffxCreateContextDescFrameGeneration fd = {};
+        fd.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION, fd.header.pNext = api->backend();
+        fd.flags = FFX_FRAMEGENERATION_ENABLE_DEPTH_INVERTED | FFX_FRAMEGENERATION_ENABLE_DEPTH_INFINITE | FFX_FRAMEGENERATION_ENABLE_HIGH_DYNAMIC_RANGE;
+        fd.displaySize = {OW, OH}, fd.maxRenderSize = {RW, RH}, fd.backBufferFormat = FFX_API_SURFACE_FORMAT_R16G16B16A16_FLOAT;
+        if (create(&fgc, &fd.header, nullptr) != FFX_API_RETURN_OK) return printf("ffxCreateContext (frame generation) failed\n"), 1;
+        fgOut = api->texture(OW, OH, K_OUT, false);
+    }
     if (vk) ((Vk *)api)->prepare(out);
     std::vector<double> gpuMs;
 
@@ -945,14 +966,29 @@ int main(int argc, char **argv) {
             dd.cameraNear = 0.1f, dd.cameraFar = 1e6f, dd.cameraFovAngleVertical = 1.0f, dd.viewSpaceToMetersFactor = 1.0f;
             ffxReturnCode_t rc = dispatch(&ctx, &dd.header);
             if (rc != FFX_API_RETURN_OK) return printf("ffxDispatch failed %u at frame %d\n", rc, t), 1;
+            if (fgMode == 1) {  // (the frame generation's prepare and dispatch: between the previous frame and this one)
+                ffxDispatchDescFrameGenerationPrepare pp = {};
+                pp.header.type = FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE;
+                pp.frameID = (uint64_t)t, pp.commandList = dd.commandList, pp.renderSize = {RW, RH};
+                pp.jitterOffset = {jx, jy}, pp.motionVectorScale = {(float)RW, (float)RH}, pp.frameTimeDelta = 16.6f;
+                pp.cameraNear = 0.1f, pp.cameraFar = 1e6f, pp.cameraFovAngleVertical = 1.0f, pp.viewSpaceToMetersFactor = 1.0f;
+                pp.depth = api->res(depth), pp.motionVectors = api->res(mv);
+                if (dispatch(&fgc, &pp.header) != FFX_API_RETURN_OK) return printf("frame generation prepare failed at frame %d\n", t), 1;
+                ffxDispatchDescFrameGeneration fg = {};
+                fg.header.type = FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION;
+                fg.commandList = dd.commandList, fg.presentColor = api->res(out), fg.outputs[0] = api->res(fgOut);
+                fg.numGeneratedFrames = 1, fg.reset = t == 0, fg.frameID = (uint64_t)t, fg.generationRect = {0, 0, (int32_t)OW, (int32_t)OH};
+                if (dispatch(&fgc, &fg.header) != FFX_API_RETURN_OK) return printf("frame generation dispatch failed at frame %d\n", t), 1;
+            }
         }
+        float tr = fgMode ? (float)t - 0.5f : (float)t;  // (the scene's time what is measured stands for)
         // (with stop=: also the frames 1, 2, 4, 8 ... after the pan stopped)
         int ts = t - g_stop;
-        bool psnrFrame = measure && (t == frames - 1 || t == frames / 2 || (g_stop > 0 && ts > 0 && (ts & (ts - 1)) == 0));
+        bool psnrFrame = measure && (t == frames - 1 || t == frames / 2 || (g_stop > 0 && ts > 0 && (ts & (ts - 1)) == 0) || (fgMode && t >= frames - 8));
         bool shimFrame = shimmer && t >= frames - 16 - lag;
         bool flickFrame = measure && flick && t >= frames - FLICK_N;
         bool grab = psnrFrame || shimFrame || flickFrame;
-        api->end(out, grab);
+        api->end(fgMode == 1 ? fgOut : out, grab);
         if (t >= 8) upMs += api->wallMs, gpuMs.push_back(api->gpu_ms());
         if (api->lost()) return 1;
         if (!grab) continue;
@@ -992,7 +1028,7 @@ int main(int argc, char **argv) {
                     float ref[3] = {0, 0, 0};
                     for (int sy = 0; sy < 4; sy++)
                         for (int sx = 0; sx < 4; sx++) {
-                            Sample s = scene(cx0 + x + (sx + 0.5f) / 4, cy0 + y + (sy + 0.5f) / 4, t);
+                            Sample s = scene(cx0 + x + (sx + 0.5f) / 4, cy0 + y + (sy + 0.5f) / 4, tr);
                             for (int c = 0; c < 3; c++) ref[c] += s.rgb[c] / 16;
                         }
                     for (int c = 0; c < 3; c++) {
@@ -1040,7 +1076,7 @@ int main(int argc, char **argv) {
                 float ref[3] = {0, 0, 0};
                 for (int sy = 0; sy < 4; sy++)
                     for (int sx = 0; sx < 4; sx++) {
-                        Sample s = scene(x + (sx + 0.5f) / 4, y + (sy + 0.5f) / 4, t);
+                        Sample s = scene(x + (sx + 0.5f) / 4, y + (sy + 0.5f) / 4, tr);
                         for (int c = 0; c < 3; c++) ref[c] += s.rgb[c] / 16;
                     }
                 for (int c = 0; c < 3; c++) {
@@ -1098,6 +1134,7 @@ int main(int argc, char **argv) {
             printf("menu: %s (%.1f ms a draw; the first, with the font atlas, %.1f ms)\n", f, snapMs, atlasMs);
         }
     }
+    if (fgc) destroy(&fgc, nullptr);
     destroy(&ctx, nullptr);
     return 0;
 }

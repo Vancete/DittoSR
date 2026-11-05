@@ -10,6 +10,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <map>
 #include <mutex>
 #include <set>
 #include <stdio.h>
@@ -17,7 +18,9 @@
 
 #include "dittosr.h"
 #include "dittosr_vk.h"
+#include "fg.h"
 #include "ffx_api/ffx_api.h"
+#include "ffx_api/ffx_framegeneration.h"
 #include "ffx_api/ffx_upscale.h"
 #include "ffx_api/vk/ffx_api_vk.h"
 
@@ -105,6 +108,25 @@ static bool from_optiscaler() {
     return r == 1;
 }
 static std::set<UpscaleCtx *> g_ctx;
+
+// ---- frame generation (fg.h): DittoSR's in-between images for a frame generation context - AMD's (its swapchain, the
+// pacing and the UI composition stay AMD's) or, without AMD's DLL, DittoSR's own (prepare and dispatch alone: no
+// swapchain - FSR's FFX_FRAMEGENERATION_FLAG_NO_SWAPCHAIN_CONTEXT_NOTIFY use, and the harness). Keyed by the handle the
+// game holds. Their own lock: the FG dispatch comes from AMD's presentation thread, which an ffxConfigure of the game's
+// - under g_mu, forwarded to AMD's - may wait for.
+struct FgCtx {
+    DittoFG *fg = nullptr;
+    bool own = false;  // (DittoSR's own context: nothing of AMD's behind the handle)
+    uint64_t dispatches = 0;
+};
+static std::mutex g_fgmu;
+static std::map<ffxContext, FgCtx *> g_fg;
+
+static FgCtx *fg_of(ffxContext *c) {
+    if (!c || !*c) return nullptr;
+    auto it = g_fg.find(*c);
+    return it == g_fg.end() ? nullptr : it->second;
+}
 
 static UpscaleCtx *ours(ffxContext *c) {
     if (!c || !*c) return nullptr;
@@ -203,6 +225,29 @@ FFX_API_ENTRY ffxReturnCode_t ffxCreateContext(ffxContext *context, ffxCreateCon
     bool amd = load_original();
     if (!context || !desc) return FFX_API_RETURN_ERROR_PARAMETER;
     log_chain("ffxCreateContext", desc);
+    if (desc->type == FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION) {
+        auto *fd = (const ffxCreateContextDescFrameGeneration *)desc;
+        auto *be = (const ffxCreateBackendDX12Desc *)find_desc(desc, FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12);
+        bool want = g_cfg.enabled && g_cfg.frameGen && be && be->device;
+        ffxReturnCode_t rc = FFX_API_RETURN_OK;
+        if (amd) rc = o_create(context, desc, memCb);
+        else if (!want) return FFX_API_RETURN_NO_PROVIDER;
+        ditto_log("frame generation context: flags 0x%x, display %ux%u, back buffer format %u: %s\n", fd->flags, fd->displaySize.width,
+                  fd->displaySize.height, fd->backBufferFormat, !want ? "AMD's" : amd ? "AMD's, DittoSR's in-between images" : "DittoSR's alone");
+        if (rc != FFX_API_RETURN_OK || !want) return rc;
+        FgCtx *f = new FgCtx();
+        f->fg = new DittoFG(be->device, fd->flags, fd->displaySize.width, fd->displaySize.height);
+        if (!f->fg->ok()) {
+            ditto_log("frame generation: DittoSR's failed%s\n", amd ? ", AMD's instead" : "");
+            delete f->fg, delete f;
+            return amd ? FFX_API_RETURN_OK : FFX_API_RETURN_ERROR_RUNTIME_ERROR;
+        }
+        f->own = !amd;
+        if (f->own) *context = (ffxContext)f;
+        std::lock_guard<std::mutex> fl(g_fgmu);
+        g_fg[*context] = f;
+        return FFX_API_RETURN_OK;
+    }
     if (desc->type != FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE) return amd ? o_create(context, desc, memCb) : FFX_API_RETURN_NO_PROVIDER;
     // (enabled=0, or a version override naming one of AMD's providers: AMD's FSR alone)
     auto *ov = (const ffxOverrideVersion *)find_desc(desc, FFX_API_DESC_TYPE_OVERRIDE_VERSION);
@@ -244,6 +289,17 @@ FFX_API_ENTRY ffxReturnCode_t ffxCreateContext(ffxContext *context, ffxCreateCon
 }
 
 FFX_API_ENTRY ffxReturnCode_t ffxDestroyContext(ffxContext *context, const ffxAllocationCallbacks *memCb) {
+    {
+        std::unique_lock<std::mutex> fl(g_fgmu);
+        if (FgCtx *f = fg_of(context)) {
+            ditto_log("frame generation context destroyed after %llu in-between images of DittoSR's\n", (unsigned long long)f->fg->generated());
+            g_fg.erase(*context);
+            fl.unlock();
+            bool own = f->own;
+            delete f->fg, delete f;
+            if (own) return *context = nullptr, FFX_API_RETURN_OK;
+        }
+    }
     std::lock_guard<std::mutex> lk(g_mu);
     bool amd = load_original();
     UpscaleCtx *c = ours(context);
@@ -260,6 +316,11 @@ FFX_API_ENTRY ffxReturnCode_t ffxDestroyContext(ffxContext *context, const ffxAl
 }
 
 FFX_API_ENTRY ffxReturnCode_t ffxConfigure(ffxContext *context, const ffxConfigureDescHeader *desc) {
+    {
+        std::lock_guard<std::mutex> fl(g_fgmu);
+        FgCtx *f = fg_of(context);
+        if (f && f->own) return FFX_API_RETURN_OK;  // (DittoSR's own frame generation context: nothing to configure)
+    }
     std::lock_guard<std::mutex> lk(g_mu);
     bool amd = load_original();
     UpscaleCtx *c = ours(context);
@@ -282,6 +343,18 @@ FFX_API_ENTRY ffxReturnCode_t ffxConfigure(ffxContext *context, const ffxConfigu
 }
 
 FFX_API_ENTRY ffxReturnCode_t ffxQuery(ffxContext *context, ffxQueryDescHeader *desc) {
+    {
+        std::lock_guard<std::mutex> fl(g_fgmu);
+        FgCtx *f = fg_of(context);
+        if (f && f->own) {
+            if (desc && desc->type == FFX_API_QUERY_DESC_TYPE_FRAMEGENERATION_GPU_MEMORY_USAGE) {
+                auto *q = (ffxQueryDescFrameGenerationGetGPUMemoryUsage *)desc;
+                if (q->gpuMemoryUsageFrameGeneration) q->gpuMemoryUsageFrameGeneration->totalUsageInBytes = 0, q->gpuMemoryUsageFrameGeneration->aliasableUsageInBytes = 0;
+                return FFX_API_RETURN_OK;
+            }
+            return FFX_API_RETURN_ERROR_UNKNOWN_DESCTYPE;
+        }
+    }
     std::lock_guard<std::mutex> lk(g_mu);
     bool amd = load_original();
     if (!desc) return FFX_API_RETURN_ERROR_PARAMETER;
@@ -301,6 +374,24 @@ FFX_API_ENTRY ffxReturnCode_t ffxQuery(ffxContext *context, ffxQueryDescHeader *
 }
 
 FFX_API_ENTRY ffxReturnCode_t ffxDispatch(ffxContext *context, const ffxDispatchDescHeader *desc) {
+    // (frame generation: its prepare and its dispatch - the latter from the swapchain's frame generation callback - on a
+    // context DittoSR answers: its own field, its own in-between images; AMD's context then left idle)
+    if (desc && (desc->type == FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE || desc->type == FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION)) {
+        std::lock_guard<std::mutex> fl(g_fgmu);
+        if (FgCtx *f = fg_of(context)) {
+            if (desc->type == FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE) {
+                f->fg->prepare((const ffxDispatchDescFrameGenerationPrepare *)desc);
+                return FFX_API_RETURN_OK;
+            }
+            auto *d = (const ffxDispatchDescFrameGeneration *)desc;
+            if (f->dispatches++ < 3)
+                ditto_log("frame generation dispatch %llu: frame %llu, %u image(s), reset %d, rect %d,%d %ux%u, present %p, output %p\n",
+                          (unsigned long long)f->dispatches - 1, (unsigned long long)d->frameID, d->numGeneratedFrames, d->reset,
+                          d->generationRect.left, d->generationRect.top, d->generationRect.width, d->generationRect.height,
+                          d->presentColor.resource, d->outputs[0].resource);
+            return f->fg->generate(d);
+        }
+    }
     std::lock_guard<std::mutex> lk(g_mu);
     bool amd = load_original();
     UpscaleCtx *c = ours(context);
