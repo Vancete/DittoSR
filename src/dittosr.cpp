@@ -337,7 +337,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     uint32_t rw = fr.rw, rh = fr.rh, ow = fr.ow, oh = fr.oh;
     DXGI_FORMAT hfmt = s_.history10 ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R16G16B16A16_FLOAT;
     // (the stability levels R8, or R8G8 with the anti-shimmer's state)
-    DXGI_FORMAT sfmt = s_.antiShimmer > 0.0f ? DXGI_FORMAT_R8G8_UNORM : DXGI_FORMAT_R8_UNORM;
+    DXGI_FORMAT sfmt = s_.antiShimmer != 0.0f ? DXGI_FORMAT_R8G8_UNORM : DXGI_FORMAT_R8_UNORM;
     bool resized;
     if (!ensureTextures(rw, rh, ow, oh, hfmt, sfmt, &resized)) return false;
     bool reset = fr.reset || forceReset || resized;
@@ -443,7 +443,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
         DXGI_FORMAT f[kSrvs] = {histP.fmt, mdaC.fmt, cd.Format, auxC.fmt, change1_.fmt, exf, rf, stabP.fmt};
         ID3D12Resource *u[kUavs] = {histC.res, out, stabC.res};
         DXGI_FORMAT uf[kUavs] = {histC.fmt, od.Format, stabC.fmt};
-        bool as = s_.antiShimmer > 0.0f;
+        bool as = s_.antiShimmer != 0.0f;
         run(fp16 ? (as ? psoUpscaleAs16_ : psoUpscale16_) : (as ? psoUpscaleAs_ : psoUpscale_), s, f, u, uf, (ow + 7) / 8, (oh + 7) / 8);
     }
     transition(cl, histC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);

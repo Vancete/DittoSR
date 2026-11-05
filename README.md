@@ -137,7 +137,7 @@ The upscale's GPU time (`scripts\bench.ps1`, the median of 400), RTX 5070 Ti:
 
 - `ratio_quality`, `ratio_balanced`, `ratio_performance`, `ratio_ultra_performance`: the ratio each quality mode gets (1 to 4), e.g. `ratio_ultra_performance=2.5`. FidelityFX API only.
 - `compare=1` or **F7** (`compare_key`): DittoSR on the left half, the game's own upscaler on the right (needs the game's DLL alongside).
-- `anti_shimmer` (0.5, DirectX 12; `0` off), `auto_reactive` (1; `0` off), `stab_step`: steadiness against responsiveness.
+- `anti_shimmer` (0.4 up to 2x, 0.2 at 3x, DirectX 12; `0` off), `auto_reactive` (0.5; `0` off), `stab_step`: steadiness against responsiveness.
 - `history_sharpen` (1; `0` off): how far the history's resampling blur is made up in motion (fine moving detail).
 - `history_10bit`, `fp16`: performance (see above).
 - `game_sharpness`: the sharpness sent with the upscale call in place of the ini's: `-1` (default) only from OptiScaler's custom folder, `1` always, `0` never.

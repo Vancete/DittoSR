@@ -234,19 +234,15 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     // (historySharpen: that detail a little stronger as far as the history was resampled off whole pixels, 4 f (1 - f) -
     // the axes' mean, nothing at rest or on whole-pixel pans. Catmull-Rom there softens it a little (half a pixel off:
     // detail 4 pixels wide x 0.88), and in motion that compounds frame after frame: moving detail went soft however
-    // steady. x 1.02 up to 2x, 1.05 from 3x (constants.h): beyond, the tiles' zone plate drifted over 240 frames; the
+    // steady. x 1.03 up to 2x, 1.05 from 3x (constants.h), the extra bounded: beyond, the tiles' zone plate drifted; the
     // taps' own detail sharpened in hist(), bounded by their range, did as well but cost 0.3 ms on a 2 CU RDNA 2 - its
-    // registers. None very bright, as the flash fix below)
-    float bright = max(hy.x, hl.x);
+    // registers)
     float2 rf = frac(puv * os - 0.5), rl = 4.0 * rf * (1.0 - rf);
-    float dk = 1.0 + historySharpen * 0.5 * (rl.x + rl.y) * (1.0 - smoothstep(0.8, 0.9, bright));
-    hy = splitClip > 0.5 ? hcc + (hy - hl) * (dk * (1.0 - smoothstep(1.0, 2.5, t))) : hcc;
-    // (very bright - an emissive or reflective surface, a bright sky - the detail put back held within the samples'
-    // range: past it, at a dark edge against the light, it overshot toward white, which decodes to up to 4096 x the
-    // light - a flash the game's bloom spreads (harness sky=1: a pixel 330 x the light around it). Encoded luma 0.8 -
-    // 0.9: ~2 - 4 x the exposure; below it the detail as before)
-    [branch] if (bright > 0.8)  // (bright pixels come in areas: the others skip it)
-        hy = lerp(hy, clamp(hy, min(hcc, (float3)ymn), max(hcc, (float3)ymx)), smoothstep(0.8, 0.9, bright));
+    float dk = 1.0 + historySharpen * 0.5 * (rl.x + rl.y);
+    // (the extra held within the samples' range - past it, it grew into the tiles' zone plate over the frames)
+    float3 dtl = (hy - hl) * (1.0 - smoothstep(1.0, 2.5, t)), bse = hcc + dtl;
+    float3 lo = min(bse, min(hcc, (float3)ymn)), hi = max(bse, max(hcc, (float3)ymx));
+    hy = splitClip > 0.5 ? clamp(bse + (dk - 1.0) * dtl, lo, hi) : hcc;
     // (above 2x - hr 0 to 1 at 3x - moving, more of the new frame: its jittered samples are what carries a moving
     // object's detail, the history resampled every frame softening it - at 3x a moving object matched FSR's at 2.3x,
     // and the grass still shimmered half as much as FSR's)
@@ -289,6 +285,19 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     // after a cut converges)
     bool cut = t > 1.25 || rj > 0.5 || dz > 0.5 || gch > 0.5 || rv > 0.5;
     float3 res = rgb(lerp(hy, cur, saturate(a)));
+    // (very bright: the box, the clip and the fill are per YCoCg component - a saturated bright colour (an orange
+    // light strip) at their corners came out with a channel above every sample's, near 1 encoded: decoded many times the
+    // light, a flash the bloom spreads (Cyberpunk's club light bars flashed in bursts, the camera swaying). Each channel
+    // no higher than the brightest sample's brightest one - the samples read again from the tile, not kept in registers.
+    // It replaces 0.3.0's flash fix - the detail held within the samples' range where bright - and history_sharpen off
+    // there: without them the harness' bright sky sparkled less (25.5 -> 21.2 at 2x), 0.08 ms less on a 2 CU RDNA 2)
+    float rb = max(res.r, max(res.g, res.b));
+    [branch] if (rb > 0.8 && inTile) {
+        int o0 = (b0.y - t0.y - 1) * TILE + b0.x - t0.x - 1;
+        float smx = 0.0;
+        [unroll] for (int i = 0; i < 9; i++) smx = max(smx, mxc((float3)gsTile[o0 + (i / 3) * TILE + i % 3]));
+        res = lerp(res, min(res, smx), smoothstep(0.8, 0.9, rb));
+    }
     bool landed = hr <= 0.0 || cf > 0.15 * hr || mlen > 1.0;
     float stab = cut ? 0.0 : min(sp + (landed ? stabStep : 0.0), 1.0);
 #if ANTI_SHIMMER

@@ -108,6 +108,7 @@ float3 dec(float3 g, float e) {
 
 float3 ycc(float3 c) { return float3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * (c.r - c.b), 0.5 * c.g - 0.25 * (c.r + c.b)); }
 float3 rgb(float3 y) { return float3(y.x + y.y - y.z, y.x + y.z, y.x - y.y - y.z); }
+float mxc(float3 y) { return y.x + max(y.z, abs(y.y) - y.z); }  // (max(r, g, b) of a YCoCg colour)
 
 // enc and ycc at hf precision: Reinhard in float (HDR values beyond half's range), the power and the rest in hf
 #if DITTO_FP16

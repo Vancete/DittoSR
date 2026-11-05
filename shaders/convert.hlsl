@@ -88,7 +88,9 @@ groupshared float gsLog[64];
 // average luminance - geometric, of the colour without its pre-exposure), here over 32 x 32 points of the render image,
 // eased over the frames (0.1 a frame in log2: it only sets where DittoSR's encoding compresses - undone on decoding,
 // a lag changes no brightness). Without it a game's HDR far above 1 - a bright sky - was compressed so far that an edge
-// against it, blended there, came out darker than the light it mixes: a dark outline against the sky (The Witcher 3)
+// against it, blended there, came out darker than the light it mixes: a dark outline against the sky (The Witcher 3).
+// At most 1 (0.2.4's): a dark scene - a lit figure on a black menu - raised it thousands of times, the figure's light
+// then all in the compression's shoulder, its history's slightest errors light and dark grain once decoded
 void autoexp(uint li) {
     int2 r = int2(rs);
     float s = 0.0;
@@ -103,8 +105,8 @@ void autoexp(uint li) {
     if (li != 0) return;
     float t = 0.0;
     for (int j = 0; j < 64; j++) t += gsLog[j];
-    float target = -log2(2.4) - t / 1024.0;  // (log2 of the exposure: FSR's x 4 - a little more compression, as
-    // DittoSR's encoding was tuned: with FSR's own, bright HDR trails behind wrong vectors weighed more (tiles80 3x -2 dB))
+    float target = min(-log2(2.4) - t / 1024.0, 0.0);  // (log2 of the exposure: FSR's x 4 - a little more compression,
+    // as DittoSR's encoding was tuned: with FSR's own, bright HDR trails behind wrong vectors weighed more (tiles80 3x -2 dB))
     float prev = Exposure.Load(int3(0, 0, 0));
     bool fresh = reset > 0.5 || !(prev > 1e-12 && prev < 1e12);
     ExposureOut[uint2(0, 0)] = exp2(fresh ? target : lerp(log2(prev), target, 0.1));

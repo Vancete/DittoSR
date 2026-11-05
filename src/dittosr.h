@@ -7,7 +7,7 @@
 #include "ffx_api/ffx_upscale.h"
 
 // the version both front ends report (the FidelityFX API provider, the libxess.dll proxy)
-#define DITTOSR_VERSION "0.3.0"
+#define DITTOSR_VERSION "0.3.1"
 #define DITTOSR_VERSION_NAME "DittoSR " DITTOSR_VERSION
 
 struct DittoSettings {
@@ -45,15 +45,16 @@ struct DittoSettings {
     int fp16 = -1;
     // the reactive mask derived where the game gives none (particles, transparencies, flashes: more of the new frame),
     // its strength; 0: off
-    float autoReactive = 1.0f;
+    float autoReactive = 0.5f;  // (1 until 0.3.0: at 0.5 the image gets sharp again a little sooner after a turn)
     // the history's stability level: the step a pixel climbs each frame a sample lands near it (1: stable). D3D12 keeps it
     // in its own R8 texture (the RGB10A2 history's alpha has 2 bits), Vulkan in the RGBA16F history's alpha
     float stabStep = 0.34f;
-    // the anti-shimmer (D3D12; 0 off, 0.5 by default): where the sign of the new frame's difference from the history keeps alternating
+    // the anti-shimmer (D3D12; 0 off; -1, the default: 0.4 up to 2x, 0.2 from 3x): where the sign of the new frame's
+    // difference from the history keeps alternating
     // (the jittered samples' aliasing), up to this share less of the new frame. Less shimmer (-10..-25 %), a little
     // softer fine detail in motion. The stability texture becomes R8G8 (the sign's running mean in .y)
-    float antiShimmer = 0.5f;
-    // the history's detail made up for its resampling blur in motion (upscale.hlsl): x its default strength (0.02 up to
+    float antiShimmer = -1.0f;
+    // the history's detail made up for its resampling blur in motion (upscale.hlsl): x its default strength (0.03 up to
     // 2x, 0.05 from 3x); 0 off
     float historySharpen = 1.0f;
     bool indicator = false;

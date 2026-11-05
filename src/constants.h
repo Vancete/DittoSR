@@ -57,9 +57,12 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
     k.frameWeight = s.frameWeight < 0.25f ? 0.25f : s.frameWeight > 4.0f ? 4.0f : s.frameWeight;
     k.autoReactive = hasReactive ? 0.0f : s.autoReactive;  // (the game's own mask wins)
     k.stabStep = s.stabStep > 0.01f ? s.stabStep : 0.34f;
-    // (upscale.hlsl: 0.02 up to 2x, 0.05 from 3x - there the history carries more of the detail, and 0.05 still held the
-    // tiles' zone plate over 240 frames (+0.19 dB); at 2x beyond 0.02 it drifted, -0.12 dB at 0.025)
+    // (upscale.hlsl: 0.03 up to 2x, 0.05 from 3x, the extra bounded by the samples' range - unbounded, at 2x beyond 0.02
+    // the tiles' zone plate drifted over the frames (-0.12 dB at 0.025); bounded, 0.03 holds it and 0.04 not)
     float hr = k.ratio <= 2.0f ? 0.0f : k.ratio >= 3.0f ? 1.0f : k.ratio - 2.0f;
-    k.historySharpen = s.historySharpen > 0.0f ? (0.02f + 0.03f * hr) * s.historySharpen : 0.0f;
-    k.antiShimmer = s.antiShimmer < 0.0f ? 0.0f : s.antiShimmer > 0.9f ? 0.9f : s.antiShimmer;
+    k.historySharpen = s.historySharpen > 0.0f ? (0.03f + 0.02f * hr) * s.historySharpen : 0.0f;
+    // (the anti-shimmer by the ratio unless set: 0.4 up to 2x, 0.2 from 3x - there it held back the new frame's detail,
+    // the image slower to get sharp again after a turn, and the history's own detail is made up more)
+    float as = s.antiShimmer >= 0.0f ? s.antiShimmer : 0.4f - 0.2f * hr;
+    k.antiShimmer = as > 0.9f ? 0.9f : as;
 }

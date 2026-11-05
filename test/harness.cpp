@@ -10,6 +10,7 @@
 //                     dense=1 (grass: blades x dense, thinner by its square root), wobble=0 (grass: the speed vel - wobble, vel,
 //                     vel + wobble in turn), blur=0 (grass: motion blur over
 //                     blur x vel output pixels, in the render and the reference alike - the game's, before the upscale)
+//     stop=0          grass: the pan stops after this frame (stop=24: how fast the image gets sharp again at rest)
 //     sky=0           grass: 1 - dark blades against a bright HDR sky (6 - 25)
 //     wind=0          grass: the blades sway in the wind, their tips this many pixels (period ~19 frames), with no
 //                     motion vectors of their own - as games animate foliage and hair
@@ -61,10 +62,17 @@ static uint32_t RW = 960, RH = 540;
 static bool g_grass, g_glints;
 static float g_vel = 3.0f, g_dense = 1.0f, g_blur = 0.0f, g_mvs = 1.0f, g_radiance = 1.0f;
 static int g_wobble = 0, g_light = 0, g_sky = 0, g_spec = 0;
+static int g_stop = 0;  // (stop=: the pan stops after this frame - how fast the image gets sharp again)
 static float g_wind = 0.0f;  // (wind=: the blades' tips sway this many output pixels, with no motion vectors of their own)
 // the pan's speed at frame t (output pixels): vel, or vel - wobble, vel, vel + wobble in turn - a hand on the mouse
-static float pan_vel(int t) { return t <= 0 ? g_vel : g_vel + g_wobble * ((t * 7) % 3 - 1); }
-static float pan_pos(int t) { return g_vel * t + (t % 3 == 2 ? g_wobble : 0); }  // (the sum of pan_vel(1 .. t))
+static float pan_vel(int t) {
+    if (g_stop > 0 && t > g_stop) return 0.0f;
+    return t <= 0 ? g_vel : g_vel + g_wobble * ((t * 7) % 3 - 1);
+}
+static float pan_pos(int t) {  // (the sum of pan_vel(1 .. t))
+    if (g_stop > 0 && t > g_stop) t = g_stop;
+    return g_vel * t + (t % 3 == 2 ? g_wobble : 0);
+}
 static const float BG_VEL[2] = {1.7f, 0.6f};  // (tiles: output pixels per frame)
 static const float FG_VEL[2] = {-4.3f, 2.1f};
 
@@ -356,6 +364,7 @@ int main(int argc, char **argv) {
     g_glints = !strcmp(opt(argc, argv, "scene", "tiles"), "glints");
     g_vel = (float)atof(opt(argc, argv, "vel", "3"));
     g_wobble = atoi(opt(argc, argv, "wobble", "0"));
+    g_stop = atoi(opt(argc, argv, "stop", "0"));
     g_dense = (float)atof(opt(argc, argv, "dense", "1"));
     g_blur = (float)atof(opt(argc, argv, "blur", "0"));
     g_mvs = (float)atof(opt(argc, argv, "mvs", "1"));
@@ -558,7 +567,9 @@ int main(int argc, char **argv) {
             g.cl->EndQuery(qh, D3D12_QUERY_TYPE_TIMESTAMP, 1);
             g.cl->ResolveQueryData(qh, D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, qrb, 0);
         }
-        bool psnrFrame = measure && (t == frames - 1 || t == frames / 2);
+        // (with stop=: also the frames 1, 2, 4, 8 ... after the pan stopped)
+        int ts = t - g_stop;
+        bool psnrFrame = measure && (t == frames - 1 || t == frames / 2 || (g_stop > 0 && ts > 0 && (ts & (ts - 1)) == 0));
         bool shimFrame = shimmer && t >= frames - 16 - lag;
         bool flickFrame = measure && flick && t >= frames - FLICK_N;
         bool grab = psnrFrame || shimFrame || flickFrame;
