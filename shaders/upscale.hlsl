@@ -234,9 +234,9 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     // (historySharpen: that detail a little stronger as far as the history was resampled off whole pixels, 4 f (1 - f) -
     // the axes' mean, nothing at rest or on whole-pixel pans. Catmull-Rom there softens it a little (half a pixel off:
     // detail 4 pixels wide x 0.88), and in motion that compounds frame after frame: moving detail went soft however
-    // steady. x 1.02 at most: at 1.03 the tiles' zone plate drifted -0.26 dB over 240 frames at 2x; the taps' own detail
-    // sharpened in hist(), bounded by their range, did as well but cost 0.3 ms on a 2 CU RDNA 2 - its registers. None
-    // very bright, as the flash fix below)
+    // steady. x 1.02 up to 2x, 1.05 from 3x (constants.h): beyond, the tiles' zone plate drifted over 240 frames; the
+    // taps' own detail sharpened in hist(), bounded by their range, did as well but cost 0.3 ms on a 2 CU RDNA 2 - its
+    // registers. None very bright, as the flash fix below)
     float bright = max(hy.x, hl.x);
     float2 rf = frac(puv * os - 0.5), rl = 4.0 * rf * (1.0 - rf);
     float dk = 1.0 + historySharpen * 0.5 * (rl.x + rl.y) * (1.0 - smoothstep(0.8, 0.9, bright));

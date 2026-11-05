@@ -57,6 +57,9 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
     k.frameWeight = s.frameWeight < 0.25f ? 0.25f : s.frameWeight > 4.0f ? 4.0f : s.frameWeight;
     k.autoReactive = hasReactive ? 0.0f : s.autoReactive;  // (the game's own mask wins)
     k.stabStep = s.stabStep > 0.01f ? s.stabStep : 0.34f;
-    k.historySharpen = s.historySharpen > 0.0f ? 0.02f * s.historySharpen : 0.0f;  // (upscale.hlsl)
+    // (upscale.hlsl: 0.02 up to 2x, 0.05 from 3x - there the history carries more of the detail, and 0.05 still held the
+    // tiles' zone plate over 240 frames (+0.19 dB); at 2x beyond 0.02 it drifted, -0.12 dB at 0.025)
+    float hr = k.ratio <= 2.0f ? 0.0f : k.ratio >= 3.0f ? 1.0f : k.ratio - 2.0f;
+    k.historySharpen = s.historySharpen > 0.0f ? (0.02f + 0.03f * hr) * s.historySharpen : 0.0f;
     k.antiShimmer = s.antiShimmer < 0.0f ? 0.0f : s.antiShimmer > 0.9f ? 0.9f : s.antiShimmer;
 }

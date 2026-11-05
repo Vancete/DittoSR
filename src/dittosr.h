@@ -53,7 +53,8 @@ struct DittoSettings {
     // (the jittered samples' aliasing), up to this share less of the new frame. Less shimmer (-10..-25 %), a little
     // softer fine detail in motion. The stability texture becomes R8G8 (the sign's running mean in .y)
     float antiShimmer = 0.5f;
-    // the history's detail made up for its resampling blur in motion (upscale.hlsl): x its default strength; 0 off
+    // the history's detail made up for its resampling blur in motion (upscale.hlsl): x its default strength (0.02 up to
+    // 2x, 0.05 from 3x); 0 off
     float historySharpen = 1.0f;
     bool indicator = false;
     int debugView = 0;  // 1: the motion; 2: the new frame's share; 3: the stability level; 4: clip / cut / confidence
