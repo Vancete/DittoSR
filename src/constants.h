@@ -17,7 +17,7 @@ struct DittoConstants {
     float antiShimmer, sharpness, changeScale, shareFar;
     float shareNear, encodePower, motionNear, splitClip;
     float history10, frameWeight, splitX, autoReactive;
-    float autoExposure, pad;
+    float autoExposure, historySharpen;
 };
 static_assert(sizeof(DittoConstants) == 50 * 4, "the root constants");
 
@@ -57,5 +57,6 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
     k.frameWeight = s.frameWeight < 0.25f ? 0.25f : s.frameWeight > 4.0f ? 4.0f : s.frameWeight;
     k.autoReactive = hasReactive ? 0.0f : s.autoReactive;  // (the game's own mask wins)
     k.stabStep = s.stabStep > 0.01f ? s.stabStep : 0.34f;
+    k.historySharpen = s.historySharpen > 0.0f ? 0.02f * s.historySharpen : 0.0f;  // (upscale.hlsl)
     k.antiShimmer = s.antiShimmer < 0.0f ? 0.0f : s.antiShimmer > 0.9f ? 0.9f : s.antiShimmer;
 }

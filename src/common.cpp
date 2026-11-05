@@ -81,6 +81,7 @@ static void load_config() {
     s.autoReactive = ini_float(ini, "auto_reactive", s.autoReactive);
     s.stabStep = ini_float(ini, "stab_step", s.stabStep);
     s.antiShimmer = ini_float(ini, "anti_shimmer", s.antiShimmer);
+    s.historySharpen = ini_float(ini, "history_sharpen", s.historySharpen);
     // (the upscale ratios the FidelityFX API answers a game's quality modes with: 0 FSR 3.1's)
     c.ratio[0] = ini_float(ini, "ratio_quality", 0.0f);
     c.ratio[1] = ini_float(ini, "ratio_balanced", 0.0f);

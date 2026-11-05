@@ -46,7 +46,7 @@ cbuffer C : register(b0) {
     float autoReactive;   // the reactive mask DittoSR derives when the game gives none: its strength (0: off)
     float autoExposure;   // 1: the convert pass measures the exposure (the game asked for it, giving none): t5 the last
                           // frame's, u2 this one's
-    float pad;
+    float historySharpen; // the history's detail made up for its resampling blur, in motion (upscale.hlsl; 0: off)
 };
 
 // hf: the colour work's precision - half in the FP16 variant (DITTO_FP16, SM 6.2 with 16-bit types: twice the rate on

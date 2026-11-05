@@ -231,12 +231,20 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     float3 ad = abs(dir) / ext3;
     float t = max(ad.x, max(ad.y, ad.z));
     float3 hcc = t > 1.0 ? bc + dir / t : hc;
-    hy = splitClip > 0.5 ? hcc + (hy - hl) * (1.0 - smoothstep(1.0, 2.5, t)) : hcc;
+    // (historySharpen: that detail a little stronger as far as the history was resampled off whole pixels, 4 f (1 - f) -
+    // the axes' mean, nothing at rest or on whole-pixel pans. Catmull-Rom there softens it a little (half a pixel off:
+    // detail 4 pixels wide x 0.88), and in motion that compounds frame after frame: moving detail went soft however
+    // steady. x 1.02 at most: at 1.03 the tiles' zone plate drifted -0.26 dB over 240 frames at 2x; the taps' own detail
+    // sharpened in hist(), bounded by their range, did as well but cost 0.3 ms on a 2 CU RDNA 2 - its registers. None
+    // very bright, as the flash fix below)
+    float bright = max(hy.x, hl.x);
+    float2 rf = frac(puv * os - 0.5), rl = 4.0 * rf * (1.0 - rf);
+    float dk = 1.0 + historySharpen * 0.5 * (rl.x + rl.y) * (1.0 - smoothstep(0.8, 0.9, bright));
+    hy = splitClip > 0.5 ? hcc + (hy - hl) * (dk * (1.0 - smoothstep(1.0, 2.5, t))) : hcc;
     // (very bright - an emissive or reflective surface, a bright sky - the detail put back held within the samples'
     // range: past it, at a dark edge against the light, it overshot toward white, which decodes to up to 4096 x the
     // light - a flash the game's bloom spreads (harness sky=1: a pixel 330 x the light around it). Encoded luma 0.8 -
     // 0.9: ~2 - 4 x the exposure; below it the detail as before)
-    float bright = max(hy.x, hl.x);
     [branch] if (bright > 0.8)  // (bright pixels come in areas: the others skip it)
         hy = lerp(hy, clamp(hy, min(hcc, (float3)ymn), max(hcc, (float3)ymx)), smoothstep(0.8, 0.9, bright));
     // (above 2x - hr 0 to 1 at 3x - moving, more of the new frame: its jittered samples are what carries a moving
