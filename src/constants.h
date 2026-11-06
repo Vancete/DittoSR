@@ -17,9 +17,9 @@ struct DittoConstants {
     float antiShimmer, sharpness, changeScale, shareFar;
     float shareNear, encodePower, motionNear, splitClip;
     float history10, frameWeight, splitX, autoReactive;
-    float autoExposure, historySharpen;
+    float autoExposure, historySharpen, fusedSharpen;
 };
-static_assert(sizeof(DittoConstants) == 50 * 4, "the root constants");
+static_assert(sizeof(DittoConstants) == 51 * 4, "the root constants");
 
 // One upscale's constants from the settings and the frame (DittoFrame or DittoFrameVk: the same numeric fields).
 // prevJit: the previous frame's jitter, updated (the vectors' jitter cancellation).
@@ -65,4 +65,6 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
     // the image slower to get sharp again after a turn, and the history's own detail is made up more)
     float as = s.antiShimmer >= 0.0f ? s.antiShimmer : 0.4f - 0.2f * hr;
     k.antiShimmer = as > 0.9f ? 0.9f : as;
+    // (the sharpening in the upscale, its own pass skipped: D3D12 without the comparison - set by the driver)
+    k.fusedSharpen = 0.0f;
 }

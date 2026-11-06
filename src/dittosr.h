@@ -40,9 +40,9 @@ struct DittoSettings {
     // the history RGB10A2 (half the bandwidth of RGBA16F: the upscale reads and writes it at output size, the sharpening
     // reads it again - what an integrated GPU's shared memory feels most), its stores dithered; 0: RGBA16F
     int history10 = 1;
-    // the FP16 shaders (the colour work in half precision), where the GPU has native 16-bit math: -1 on AMD only
-    // (packed half math at twice the rate; on an RTX 5070 Ti they were ~7 % slower than FP32), 1 always, 0 never
-    int fp16 = -1;
+    // the FP16 shaders (the colour work in half precision), where the GPU has native 16-bit math: 1 always, -1 on AMD
+    // only, 0 never - the default: on the ROG Ally they were slower than FP32 (2x 0.1 ms), on an RTX 5070 Ti ~7 %
+    int fp16 = 0;
     // the reactive mask derived where the game gives none (particles, transparencies, flashes: more of the new frame),
     // its strength; 0: off
     float autoReactive = 0.5f;  // (1 until 0.3.0: at 0.5 the image gets sharp again a little sooner after a turn)
@@ -57,6 +57,9 @@ struct DittoSettings {
     // the history's detail made up for its resampling blur in motion (upscale.hlsl): x its default strength (0.03 up to
     // 2x, 0.05 from 3x); 0 off
     float historySharpen = 1.0f;
+    // the sharpening in the upscale, its own pass skipped (D3D12, up to 2.5x - above it the separate pass): the gain
+    // of the detail term; 0 the separate pass. On the ROG Ally 0.3 ms less at 1080p 2x
+    float fusedSharpen = 1.0f;
     bool indicator = false;
     int debugView = 0;  // 1: the motion; 2: the new frame's share; 3: the stability level; 4: clip / cut / confidence
 };

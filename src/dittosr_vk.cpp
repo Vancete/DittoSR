@@ -504,7 +504,7 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
         VkImageView s[kSampled] = {histP.view, mdaC.view, vColor, auxC.view, change1_.view, vExpo, vReac};
         VkImageLayout l[kSampled] = {G, G, lColor, G, G, lExpo, lReac};
         VkImageView u[kStorage] = {histC.view, VK_NULL_HANDLE};
-        run(psoUpscale_, s, l, u, u0, (ow + 7) / 8, (oh + 7) / 8);
+        run(psoUpscale_, s, l, u, u0, (ow + 15) / 16, (oh + 7) / 8);  // (upscale.hlsl: 16 x 8 groups)
     }
     compute_barrier();
     // sharpen (output size; the game's output): t0 history, t1 mda -> u1 output

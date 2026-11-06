@@ -51,30 +51,41 @@ float3 hist(float2 uv, out float3 low) {  // (Catmull-Rom in 5 bilinear taps; lo
     return saturate(r / ws);
 }
 
-void put(uint2 id, float3 g, float2 stab, float e) {
+void put(uint2 id, float3 g, float2 stab, float e, float3 shown) {
     g = saturate(g);
-    History[id] = hstore(id, g, stab.x);
+    float4 hs = hstore(id, g, stab.x);
+    History[id] = hs;
+    // (fused: the output from the history as stored - RGB10A2 rounds it to 1/1023, as the sharpening pass reads it -
+    // plus the sharpening's own term: a still pixel's frame-to-frame wobble below a step stays hidden as it did; the
+    // unrounded value showed it, the shimmer at rest up 10 %)
+    if (history10 > 0.5) shown = round(hs.rgb * 1023.0) / 1023.0 + (shown - g);
 #if !DITTO_VK
 #if ANTI_SHIMMER
     StabOut[id] = stab;
 #else
     StabOut[id] = stab.x;
 #endif
-    if (debugView < 0.5) return;  // (sharpen.hlsl writes the output from the history; a debug view: this pass)
-    float3 o = dec(g, e);
+    if (debugView < 0.5 && fusedSharpen <= 0.0) return;  // (sharpen.hlsl writes the output; a debug view or fused: here)
+    float3 o = dec(saturate(shown), e);
     float3 ic;
     if (indicator > 0.5 && indicatorAt(id, e, ic)) o = ic;
     Output[id] = float4(o, 1.0);
 #endif
 }
+void put(uint2 id, float3 g, float2 stab, float e) { put(id, g, stab, e, g); }
 
 // The group's render samples: an 8 x 8 output tile reads at most 10 x 10 of them (8 / ratio and its 3x3's margin, at
 // ratio 1 and above), each loaded and encoded once into groupshared memory - not by each of the 9 x ratio^2 output
 // pixels around it (~20 at 1.5x, ~80 at 3x). One sample more on each side: the tile's bounds and a pixel's own 3x3
 // round the same floor apart and can land a sample apart (seen at 3x, where q + jitter falls on whole samples). A
 // pixel whose 3x3 still falls outside, or below ratio 1, its own loads.
-#define TILE 12
-groupshared hf3 gsTile[TILE * TILE];  // (the samples encoded, in YCoCg: converted once, not by each pixel's 3x3)
+// (the group: 16 x 8 output pixels - dittosr.cpp kUpGX, kUpGY: on the ROG Ally 0.16 ms less at 2x than 8 x 8, fewer
+// samples of the tile's margin loaded per pixel; 32 x 8 and 16 x 16 slower)
+#define GX 16
+#define GY 8
+#define TILE (GX + 4)   // (the tile's row pitch: the group's width at ratio 1 and its margin)
+#define TILEH (GY + 4)
+groupshared hf3 gsTile[TILE * TILEH];  // (the samples encoded, in YCoCg: converted once, not by each pixel's 3x3)
 
 int2 sampleBase(uint2 p) {  // (the 3x3's centre sample, as main computes it)
     float2 uv = (float2(p) + 0.5) * osRcp, q = uv * rs;
@@ -111,17 +122,17 @@ bool spatial(float2 q, int2 t0, int2 tw, out float3 o) {
     return true;
 }
 
-[numthreads(8, 8, 1)]
+[numthreads(GX, GY, 1)]
 void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_GroupIndex) {
     float e = encExposure();
     int2 cs = int2(rs) - 1;
-    uint2 g0 = gid * 8;
-    int2 t0 = sampleBase(g0) - 2, tw = sampleBase(min(g0 + 7, (uint2)os - 1)) + 3 - t0;
-    bool tiled = all(tw <= TILE);
+    uint2 g0 = gid * uint2(GX, GY);
+    int2 t0 = sampleBase(g0) - 2, tw = sampleBase(min(g0 + uint2(GX - 1, GY - 1), (uint2)os - 1)) + 3 - t0;
+    bool tiled = tw.x <= TILE && tw.y <= TILEH;
     if (tiled) {
         // (the row by a float reciprocal: an integer division by tw.x costs more than the loads)
         float rw = 1.0 / float(tw.x);
-        for (int i = (int)li; i < tw.x * tw.y; i += 64) {
+        for (int i = (int)li; i < tw.x * tw.y; i += GX * GY) {
             int y = int((float(i) + 0.5) * rw);
             int2 o = int2(i - y * tw.x, y);
             gsTile[o.y * TILE + o.x] = sampleAt(t0 + o, cs, e);
@@ -145,13 +156,11 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     } else {
         [unroll] for (int i = 0; i < 9; i++) cc[i] = sampleAt(b0 + int2(i % 3 - 1, i / 3 - 1), cs, e);
     }
-    hf3 sg = 0.0, ss = 0.0, ymn = 1e4, ymx = -1e4, m1h = 0.0, m2h = 0.0;
-    float wg = 0.0, wsum = 0.0;
-    // (the smooth Gaussian as exp2 with its constants folded once, round, so separable: 3 + 3 exp2 for the 9)
+    hf3 sg = 0.0, ymn = 1e4, ymx = -1e4, m1h = 0.0, m2h = 0.0;
+    float wg = 0.0;
     const float L2E = 1.44269504;
     float2 d0 = float2(b0) + 0.5 - jit - q;
     float3 dx = d0.x + float3(-1.0, 0.0, 1.0), dy = d0.y + float3(-1.0, 0.0, 1.0);
-    float3 ex = exp2(-1.4 * L2E * dx * dx), ey = exp2(-1.4 * L2E * dy * dy);
     // the edge: the samples' luma gradient (Sobel); the narrow Gaussian stretched along it, narrow across it (r2 =
     // |d|^2 - 0.75 es dt^2, dt by steps from the centre's). 0.2.4 had it, 0.3.0 dropped it for speed; back with the
     // anti-shimmer at 0.8 it beat 0.3.1 on every 3x scene, PSNR and shimmer alike, +0.58 ms on a 2 CU RDNA 2)
@@ -170,16 +179,25 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
         wn[i] = exp2(kn * (dx[i % 3] * dx[i % 3] + dy[i / 3] * dy[i / 3] - ke * dt * dt));
     }
     [unroll] for (int i = 0; i < 9; i++) {
-        float w = wn[i], w2 = ex[i % 3] * ey[i / 3];
-        sg += cc[i] * (hf)w; wg += w; ss += cc[i] * (hf)w2; wsum += w2;
+        float w = wn[i];
+        sg += cc[i] * (hf)w; wg += w;
         ymn = min(ymn, cc[i]); ymx = max(ymx, cc[i]);
         hf3 dc = cc[i] - cc[4]; m1h += dc; m2h += dc * dc;
     }
     float3 m1 = (float3)m1h / 9.0, sig = sqrt(max((float3)m2h / 9.0 - m1 * m1, 0.0));
     m1 += (float3)cc[4];
-    float3 cg = (float3)sg / max(wg, 1e-6), cs2 = (float3)ss / max(wsum, 1e-6);
+    // (the smooth estimate - where no sample landed close, and with no history: the bilinear of the 4 samples around
+    // the pixel (its 2 x 2 corner b0 or b0 - 1 on each axis). Once a round Gaussian over the 3 x 3: the same PSNR and
+    // shimmer on the harness, 0.09 ms less on the ROG Ally at 1.5x and 2x)
+    float2 gq = q + jit - 0.5, fb = gq - floor(gq);
+    bool hx = floor(gq.x) >= float(b0.x), hy0 = floor(gq.y) >= float(b0.y);
+    hf3 c00 = hy0 ? (hx ? cc[4] : cc[3]) : (hx ? cc[1] : cc[0]), c10 = hy0 ? (hx ? cc[5] : cc[4]) : (hx ? cc[2] : cc[1]);
+    hf3 c01 = hy0 ? (hx ? cc[7] : cc[6]) : (hx ? cc[4] : cc[3]), c11 = hy0 ? (hx ? cc[8] : cc[7]) : (hx ? cc[5] : cc[4]);
+    float3 cs2 = lerp(lerp((float3)c00, (float3)c10, fb.x), lerp((float3)c01, (float3)c11, fb.x), fb.y);
+    float3 cg = (float3)sg / max(wg, 1e-6);
     float cf = saturate(wg);
     float3 cur = lerp(cs2, cg, smoothstep(0.05, conf > 0.0 ? conf : 0.6, cf));
+    float dcur = cur.x - cs2.x;  // (fused sharpening: the new frame's detail - its narrow estimate over its smooth one)
     float2 puv = uv - 0.5 * mda4.xy;
     if (debugView > 0.5 && debugView < 1.5) { put(id, float3(saturate(abs(0.5 * mda4.xy * os) * 64.0), 0.0), float2(0.0, 0.5), 1.0); return; }
     bool off = any(puv < 0.0) || any(puv > 1.0);
@@ -244,6 +262,7 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     float3 dtl = (hy - hl) * (1.0 - smoothstep(1.0, 2.5, t)), bse = hcc + dtl;
     float3 lo = min(bse, min(hcc, (float3)ymn)), hi = max(bse, max(hcc, (float3)ymx));
     hy = splitClip > 0.5 ? clamp(bse + (dk - 1.0) * dtl, lo, hi) : hcc;
+    float dhis = hy.x - hcc.x;  // (fused sharpening: the history's detail over its low frequencies)
     // (above 2x - hr 0 to 1 at 3x - moving, more of the new frame: its jittered samples are what carries a moving
     // object's detail, the history resampled every frame softening it - at 3x a moving object matched FSR's at 2.3x,
     // and the grass still shimmered half as much as FSR's)
@@ -317,5 +336,23 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
 #endif
         return;
     }
-    put(id, res, stab2, e);
+    // the fused sharpening (fusedSharpen > 0, D3D12): the output, not the history - the blend's detail (the history's over
+    // its low frequencies, the new frame's narrow estimate over its smooth one, by the frame's share) added to the luma
+    // by sharpen.hlsl's strength (at rest by the sharpness and the stability, moving 0.1 x sharpness), within the
+    // samples' luma range and a quarter beyond moving; not on very bright pixels (the decoding blows a little up)
+    float3 shown = res;
+    if (fusedSharpen > 0.0) {
+        float sh = saturate(sharpness);
+        float boost = 1.0 + 0.3 * saturate((ratio - 1.5) / 1.5) + 0.3 * saturate((2160.0 - os.y) / 1080.0);
+        float kr = sh < 0.6 ? 0.25 * (sh - 0.6) : min(0.125 * boost, 0.2) * (sh - 0.6) / 0.4;
+        float km = 0.1 * sh * (1.0 + 1.25 * hr);
+        float mv = saturate(mlen * 0.5);
+        float kk = min(lerp(kr > 0.0 ? kr * (0.5 + 0.5 * stab) : kr, km, mv), 0.2);
+        float g = fusedSharpen * (0.8 - 0.5 * hr) * 4.0 * kk / (1.0 - 4.0 * kk);  // (0.8 up to 2x, 0.3 at 3x: the pass's sharpness)
+        float yb = 0.25 * res.r + 0.5 * res.g + 0.25 * res.b;
+        float mrg = 0.25 * (1.0 - hr) * (ymx.x - ymn.x) * mv;
+        float yt = clamp(yb + g * lerp(dhis, dcur, saturate(a)), min(yb, ymn.x - mrg), max(yb, ymx.x + mrg));
+        shown = res + (yt - yb) * (1.0 - smoothstep(0.8, 0.9, max(res.r, max(res.g, res.b))));
+    }
+    put(id, res, stab2, e, shown);
 }

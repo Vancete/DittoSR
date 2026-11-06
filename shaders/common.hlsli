@@ -47,6 +47,7 @@ cbuffer C : register(b0) {
     float autoExposure;   // 1: the convert pass measures the exposure (the game asked for it, giving none): t5 the last
                           // frame's, u2 this one's
     float historySharpen; // the history's detail made up for its resampling blur, in motion (upscale.hlsl; 0: off)
+    float fusedSharpen;   // > 0: the upscale sharpens and writes the output itself, the sharpening pass skipped (D3D12)
 };
 
 // hf: the colour work's precision - half in the FP16 variant (DITTO_FP16, SM 6.2 with 16-bit types: twice the rate on

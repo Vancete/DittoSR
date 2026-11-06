@@ -25,7 +25,8 @@ namespace {
 constexpr UINT kConstants = sizeof(DittoConstants) / 4;
 constexpr UINT kSrvs = 8, kUavs = 3, kTable = kSrvs + kUavs;
 constexpr UINT kTablesPerFrame = 5;
-constexpr UINT kFramesInRing = 256;  // (descriptors are rewritten 256 frames later: long past the GPU's use)
+constexpr UINT kFramesInRing = 256;
+constexpr UINT kUpGX = 16, kUpGY = 8;  // (the upscale's group: upscale.hlsl GX, GY)  // (descriptors are rewritten 256 frames later: long past the GPU's use)
 
 D3D12_RESOURCE_STATES d3d_state(uint32_t s) {
     switch (s) {
@@ -401,6 +402,10 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     ditto_fill_constants(k, s_, fr, reset, expo != nullptr || autoExpo, reac != nullptr, hist_[0].fmt == DXGI_FORMAT_R10G10B10A2_UNORM, prevJit_);
     k.autoExposure = autoExpo ? 1.0f : 0.0f;
     if (split_) k.splitX = (float)(ow / 2);
+    // (the sharpening in the upscale: its own pass skipped - not with the comparison, nor a debug view)
+    // (up to 2.5x: above it the separate pass - its moving clamp to the output's 4 neighbours holds the shimmer of a
+    // 3x pan, which the fused term's bound by the samples' range cannot: grass at 3x 2.70 against 2.24, as sharp)
+    k.fusedSharpen = !split_ && !s_.debugView && s_.fusedSharpen > 0.0f && k.ratio <= 2.55f ? s_.fusedSharpen : 0.0f;
     // (a float colour declared LDR is read as HDR: as [0, 1] colour it would be clipped at 1 - Witcher 3 through
     // OptiScaler, its highlights flattened)
     if (!fr.hdr && float_format(cd.Format)) {
@@ -472,12 +477,12 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
         ID3D12Resource *u[kUavs] = {histC.res, out, stabC.res};
         DXGI_FORMAT uf[kUavs] = {histC.fmt, od.Format, stabC.fmt};
         bool as = s_.antiShimmer != 0.0f;
-        run(fp16 ? (as ? psoUpscaleAs16_ : psoUpscale16_) : (as ? psoUpscaleAs_ : psoUpscale_), s, f, u, uf, (ow + 7) / 8, (oh + 7) / 8);
+        run(fp16 ? (as ? psoUpscaleAs16_ : psoUpscale16_) : (as ? psoUpscaleAs_ : psoUpscale_), s, f, u, uf, (ow + kUpGX - 1) / kUpGX, (oh + kUpGY - 1) / kUpGY);
     }
     transition(cl, histC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     transition(cl, stabC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     // sharpen (output size): the history into the game's output
-    if (!s_.debugView) {  // (always: at sharpness 0 a soft blur; a debug view: the upscale writes it)
+    if (!s_.debugView && k.fusedSharpen <= 0.0f) {  // (at sharpness 0 a soft blur; a debug view or fused: the upscale writes it)
         ID3D12Resource *s[kSrvs] = {histC.res, mdaC.res, nullptr, nullptr, nullptr, expo, nullptr, stabC.res};
         DXGI_FORMAT f[kSrvs] = {histC.fmt, mdaC.fmt, X, X, X, exf, X, stabC.fmt};
         ID3D12Resource *u[kUavs] = {nullptr, out};

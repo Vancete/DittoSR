@@ -82,8 +82,9 @@ What changed from GSR 2's upscale, in short:
 - **The history's resampling blur is made up in motion**: moved by a fraction of a pixel each frame, its detail would otherwise soften frame after frame.
 - **An HDR encoding** (Reinhard, then a square root) so blends behave in a perceptual domain.
 
-On integrated GPUs the history is stored as RGB10A2 and the colour work runs in half precision on AMD (`history_10bit`
-and `fp16`, both on by default). The Vulkan path runs the same passes from the same HLSL, with only Vulkan 1.1 core: its
+On integrated GPUs the history is stored as RGB10A2 (`history_10bit`, on by default) and, up to 2.5x, the sharpening
+runs inside the upscale instead of a pass of its own (`fused_sharpen`). Half precision (`fp16`) is off by default: on
+the ROG Ally it was slower than full precision. The Vulkan path runs the same passes from the same HLSL, with only Vulkan 1.1 core: its
 history is RGBA16F and its shaders FP32.
 
 ## Results
@@ -152,7 +153,7 @@ drags too. `menu_key` changes the key (`0`: no menu).
 - `menu_key` (`0x76`, F7; `0` off): the in-game menu's key.
 - `anti_shimmer` (0.4 up to 2x, 0.2 at 3x, DirectX 12; `0` off), `auto_reactive` (0.5; `0` off), `stab_step`: steadiness against responsiveness.
 - `history_sharpen` (1; `0` off): how far the history's resampling blur is made up in motion (fine moving detail).
-- `history_10bit`, `fp16`: performance (see above).
+- `history_10bit`, `fp16`, `fused_sharpen` (1; `0`: the separate sharpening pass): performance (see above).
 - `game_sharpness`: the sharpness sent with the upscale call in place of the ini's: `-1` (default) only from OptiScaler's custom folder, `1` always, `0` never.
 - `toggle_key`, `reload_key`, `debug_view`, `log_dispatches`: diagnosis.
 - The reconstruction's knobs: `width`, `conf`, `share_far`, `share_near`, `alpha_rest`, `gamma_rest`, `motion_gamma`, `motion_share`, `motion_minmax`, `motion_near`, `split_clip`, `react`, `change_scale`, `exposure_scale`, `encode_power`, `reactive_scale`, `jitter_sign_x`, `jitter_sign_y`, `mv_sign`.
