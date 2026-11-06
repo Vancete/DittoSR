@@ -62,7 +62,8 @@ void put(uint2 id, float3 g, float2 stab, float e) {
 #endif
     if (debugView < 0.5) return;  // (sharpen.hlsl writes the output from the history; a debug view: this pass)
     float3 o = dec(g, e);
-    if (indicator > 0.5 && id.x < 12 && id.y < 12) o = float3(0.0, 1.0, 0.0) / e;
+    float3 ic;
+    if (indicator > 0.5 && indicatorAt(id, e, ic)) o = ic;
     Output[id] = float4(o, 1.0);
 #endif
 }

@@ -32,8 +32,8 @@ using Microsoft.Win32;
 
 [assembly: AssemblyTitle("DittoSR Loader")]
 [assembly: AssemblyProduct("DittoSR")]
-[assembly: AssemblyVersion("0.3.1.0")]
-[assembly: AssemblyFileVersion("0.3.1.0")]
+[assembly: AssemblyVersion("0.4.0.0")]
+[assembly: AssemblyFileVersion("0.4.0.0")]
 
 namespace DittoSR {
 
@@ -104,7 +104,7 @@ static class Files {
         }
     }
 
-    // DittoSR's version name in a DLL ("DittoSR 0.3.1"), or null: not DittoSR's (AMD's DLLs are tens of MB: not read)
+    // DittoSR's version name in a DLL ("DittoSR 0.4.0"), or null: not DittoSR's (AMD's DLLs are tens of MB: not read)
     public static string DittoVersion(string path) {
         try {
             var fi = new FileInfo(path);
@@ -1000,7 +1000,7 @@ class LoaderForm : Form {
         SetMode(mode, false);
         int fsr = found.Count(c => !c.Xess), xess = found.Count(c => c.Xess);
         if (fsr > 0 && xess > 0)
-            Log("This game has both FSR and XeSS. If DittoSR's green square doesn't show with FSR (some games, as Cyberpunk 2077, " +
+            Log("This game has both FSR and XeSS. If DittoSR's pink face doesn't show with FSR (some games, as Cyberpunk 2077, " +
                 "build their FSR in), install it on XeSS and pick XeSS in the game.");
         else if (xess > 0 && !xessMode && optiScaler.Count == 0)
             Log("No FidelityFX DLL, but XeSS: switch to XeSS above.");
@@ -1105,7 +1105,7 @@ class LoaderForm : Form {
         if (optiMode)
             Log("Now, in the game, open OptiScaler's menu (Insert) and pick DittoSR as the upscaler. Its Sharpness (Override) and FSR 3's Velocity Factor set DittoSR's sharpness and frame weight.");
         else
-            Log("Now choose " + (xessMode ? "XeSS" : "FSR (FSR 3.1 or later)") + " in the game's settings. With [debug] indicator=1, a green square shows top-left when DittoSR runs.");
+            Log("Now choose " + (xessMode ? "XeSS" : "FSR (FSR 3.1 or later)") + " in the game's settings. With [debug] indicator=1, a small pink face shows top-left when DittoSR runs.");
     }
 
     void Restore() {

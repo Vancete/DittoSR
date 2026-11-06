@@ -158,7 +158,8 @@ __declspec(dllexport) xess_result_t xessD3D12Execute(xess_context_handle_t h, ID
     static bool down;
     bool now = g_cfg.toggleKey && (GetAsyncKeyState(g_cfg.toggleKey) & 0x8000);
     bool switched = false;
-    if (now && !down && c->ditto) {
+    bool req = InterlockedExchange(&g_reqToggle, 0) != 0;  // (the menu's)
+    if (((now && !down) || req) && c->ditto) {
         c->useDitto = !c->useDitto, switched = true;
         if (!c->useDitto) c->resetReal = true;
         ditto_log("toggle: %s from execute %llu\n", c->useDitto ? "DittoSR" : "the game's XeSS", (unsigned long long)c->executes);
@@ -168,13 +169,14 @@ __declspec(dllexport) xess_result_t xessD3D12Execute(xess_context_handle_t h, ID
     if (!c->compareSet) c->compare = g_cfg.compare && c->ditto, c->compareSet = true, c->resetReal = c->compare;
     static bool cdown;
     bool cnow = g_cfg.compareKey && (GetAsyncKeyState(g_cfg.compareKey) & 0x8000);
-    if (cnow && !cdown && c->ditto) {
+    bool creq = InterlockedExchange(&g_reqCompare, 0) != 0;
+    if (((cnow && !cdown) || creq) && c->ditto) {
         c->compare = !c->compare;
         if (c->compare) c->resetReal = true;
         ditto_log("comparison %s from execute %llu (DittoSR left, the game's XeSS right)\n", c->compare ? "on" : "off", (unsigned long long)c->executes);
     }
     cdown = cnow;
-    if (ditto_poll_reload() && c->ditto) c->ditto->set_settings(g_cfg.s);
+    if (ditto_poll_reload() && c->ditto) c->ditto->set_settings(ditto_settings());
     if (c->executes < (uint64_t)g_cfg.logDispatches) {
         ditto_log("execute %llu: input %ux%u, jitter %.4f %.4f, exposure scale %g, reset %u, bases color %u,%u mv %u,%u depth %u,%u "
                   "output %u,%u, heap %p; scales velocity %g %g jitter %g %g, exposure multiplier %g, max responsive %g\n",
@@ -186,6 +188,8 @@ __declspec(dllexport) xess_result_t xessD3D12Execute(xess_context_handle_t h, ID
         log_res("exposure", e->pExposureScaleTexture), log_res("responsive", e->pResponsivePixelMaskTexture), log_res("output", e->pOutputTexture);
     }
     c->executes++;
+    ditto_stats_update(2, e->inputWidth, e->inputHeight, c->init.outputResolution.x, c->init.outputResolution.y,
+                       c->useDitto && c->ditto, c->compare && c->ditto, c->ditto != nullptr);
     DittoFrame fr;
     if (c->useDitto && c->ditto && frame_from_xess(*c, cl, e, &fr)) {
         if (c->compare) {  // (the game's XeSS first, on the whole output: DittoSR's left half then goes over it)

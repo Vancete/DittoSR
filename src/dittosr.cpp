@@ -118,10 +118,30 @@ void ditto_jitter_offset(int32_t index, int32_t phaseCount, float *x, float *y) 
 DittoSR::DittoSR(ID3D12Device *device, const DittoCreateInfo &ci, const DittoSettings &s) : dev_(device), ci_(ci), s_(s) {
     dev_->AddRef();
     ok_ = createPipelines();
+    if (!ok_) return;
+    // (the timestamps: their frequency from a direct queue of the game's device - the game's own queue is not ours to see)
+    D3D12_COMMAND_QUEUE_DESC qd = {};
+    qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    ID3D12CommandQueue *q = nullptr;
+    UINT64 hz = 0;
+    if (SUCCEEDED(dev_->CreateCommandQueue(&qd, IID_PPV_ARGS(&q)))) q->GetTimestampFrequency(&hz), q->Release();
+    D3D12_QUERY_HEAP_DESC hd = {D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 2 * kTimeRing, 0};
+    D3D12_HEAP_PROPERTIES hp = {D3D12_HEAP_TYPE_READBACK};
+    D3D12_RESOURCE_DESC bd = {};
+    bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, bd.Width = 16 * kTimeRing, bd.Height = 1, bd.DepthOrArraySize = 1;
+    bd.MipLevels = 1, bd.SampleDesc.Count = 1, bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    D3D12_RANGE none = {0, 0};
+    if (hz && SUCCEEDED(dev_->CreateQueryHeap(&hd, IID_PPV_ARGS(&timeQ_))) &&
+        SUCCEEDED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&timeRb_))) &&
+        SUCCEEDED(timeRb_->Map(0, &none, (void **)&timeMap_)))
+        tickMs_ = 1000.0 / (double)hz;
+    ditto_overlay_install(dev_);
 }
 
 DittoSR::~DittoSR() {
     releaseTextures();
+    if (timeRb_) timeRb_->Release();
+    if (timeQ_) timeQ_->Release();
     if (psoConvert_) psoConvert_->Release();
     if (psoMotion_) psoMotion_->Release();
     if (psoUpscale_) psoUpscale_->Release();
@@ -364,6 +384,14 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
         bs[i].Transition.StateBefore = uses[i].from, bs[i].Transition.StateAfter = uses[i].to;
     }
     if (nu) cl->ResourceBarrier(nu, bs);
+    // (the passes' GPU time: the slot written kTimeRing - 1 frames ago read, this frame's started; a compute or direct
+    // list both take timestamps)
+    uint32_t ts = (uint32_t)(frames_ % kTimeRing);
+    if (tickMs_ > 0.0) {
+        uint64_t a = timeMap_[2 * ts], b = timeMap_[2 * ts + 1];
+        if (frames_ >= kTimeRing && b > a && (b - a) * tickMs_ < 1000.0) g_stats.upscaleMs = (float)((b - a) * tickMs_);
+        cl->EndQuery(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, 2 * ts);
+    }
 
     // the constants
     DittoConstants k;
@@ -465,6 +493,10 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     ub.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV, ub.UAV.pResource = out;
     cl->ResourceBarrier(1, &ub);
     if (nu) cl->ResourceBarrier(nu, bs);
+    if (tickMs_ > 0.0) {
+        cl->EndQuery(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, 2 * ts + 1);
+        cl->ResolveQueryData(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, 2 * ts, 2, timeRb_, 16 * ts);
+    }
     frames_++;
     return true;
 }

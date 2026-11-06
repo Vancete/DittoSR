@@ -118,6 +118,18 @@ The upscale's GPU time (`scripts\bench.ps1`, the median of 400), RTX 5070 Ti:
 | 2560x1440 | 0.35 ms            | 0.33 ms              |
 | 3840x2160 | —                  | 0.75 ms              |
 
+## In-game menu
+
+**F7** opens a side panel on the left of the game (DirectX 12): DittoSR's GPU time and the frame time as a graph, the upscaler
+(DittoSR or the game's own, and the side-by-side comparison), sharpness, frame weight, anti-shimmer, motion detail, auto
+reactive, the debug views and the indicator. Changes apply at once; **Save** writes them to
+`dittosr.ini` (only what differs from the defaults, besides sharpness and frame weight), **Defaults** restores the
+defaults, **Revert** reads the file again.
+
+Arrows select and adjust, Enter resets a slider to its default or switches an option, Backspace or F7 closes it. While
+it is open the arrows and Enter don't reach the game; where the game shows a mouse cursor, the panel takes clicks and
+drags too. `menu_key` changes the key (`0`: no menu).
+
 ## Settings (`dittosr.ini`)
 
 **F9** reads the file again while playing.
@@ -129,14 +141,15 @@ The upscale's GPU time (`scripts\bench.ps1`, the median of 400), RTX 5070 Ti:
 | `[dittosr]` | `sharpness`    | `0` soft, `0.6` (default) as reconstructed, `1` sharpened |
 | `[dittosr]` | `frame_weight` | each new frame's weight, 0.25 to 4 (default 2): lower is steadier and smoother, higher is crisper in motion with more shimmer |
 | `[debug]`   | `enabled`      | `1`: F10 switches DittoSR ↔ AMD's FSR live, and the log describes the first upscales in full |
-| `[debug]`   | `indicator`    | `1`: a small green square in the top-left corner while DittoSR upscales |
+| `[debug]`   | `indicator`    | `1`: a small pink DittoSR face in the top-left corner while DittoSR upscales |
 
 `dittosr.log`, next to the DLL, records the context's creation and `DittoSR ran (frame 1)`.
 
 **Advanced keys**, not in the shipped file but read from `[dittosr]` when added (`src/dittosr.h` describes each with its default):
 
 - `ratio_quality`, `ratio_balanced`, `ratio_performance`, `ratio_ultra_performance`: the ratio each quality mode gets (1 to 4), e.g. `ratio_ultra_performance=2.5`. FidelityFX API only.
-- `compare=1` or **F7** (`compare_key`): DittoSR on the left half, the game's own upscaler on the right (needs the game's DLL alongside).
+- `compare=1`, the menu, or a key of its own (`compare_key`, none by default): DittoSR on the left half, the game's own upscaler on the right (needs the game's DLL alongside).
+- `menu_key` (`0x76`, F7; `0` off): the in-game menu's key.
 - `anti_shimmer` (0.4 up to 2x, 0.2 at 3x, DirectX 12; `0` off), `auto_reactive` (0.5; `0` off), `stab_step`: steadiness against responsiveness.
 - `history_sharpen` (1; `0` off): how far the history's resampling blur is made up in motion (fine moving detail).
 - `history_10bit`, `fp16`: performance (see above).

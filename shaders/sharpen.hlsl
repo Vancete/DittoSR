@@ -63,6 +63,7 @@ void main(uint2 id : SV_DispatchThreadID) {
     hf3 mrg = (hf)(0.25 * (1.0 - saturate(ratio - 2.0))) * (mx - mn);
     r = lerp(r, clamp(r, mn - mrg, mx + mrg), (hf)mv);
     float3 o = dec((float3)r, e);
-    if (indicator > 0.5 && id.x < 12 && id.y < 12) o = float3(0.0, 1.0, 0.0) / e;
+    float3 ic;
+    if (indicator > 0.5 && indicatorAt(id, e, ic)) o = ic;
     Output[id] = float4(o, 1.0);
 }

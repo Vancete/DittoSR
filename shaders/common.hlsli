@@ -26,7 +26,7 @@ cbuffer C : register(b0) {
     float hasExposure;    // 1: t5 holds the game's 1x1 exposure
     float hasReactive;    // 1: t6 holds the game's reactive mask
     float debugView;      // 1: the motion as colour; 2: the new frame's share; 3: the stability level; 4: r = the clip (t - 1), g = cut, b = confidence
-    float indicator;      // 1: a small green square in the corner (DittoSR is running)
+    float indicator;      // 1: DittoSR's face in the corner (DittoSR is running; common.hlsli indicatorAt)
     float motionGamma;    // the history clip width while moving (0.9 originally)
     float motionShare;    // the new frame's base share while moving (0.3)
     float motionMinMax;   // how far the box is held within the samples' min / max while moving (1)
@@ -127,6 +127,26 @@ hf3 ycch(hf3 c) { return hf3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * (c.r - c
 #define ench enc
 #define ycch ycc
 #endif
+
+// The indicator ([debug] indicator): DittoSR's icon in hard pixels - a pink rounded square, white eyes and smile - in
+// the top-left corner, 12 x 12 cells of 1 pixel at 1080p, 2 at 1440p, 3 at 2160p. true: id is one of its pixels, c
+// its colour in the game's output domain (linear when HDR, then / the exposure as the output is)
+bool indicatorAt(uint2 id, float e, out float3 c) {
+    c = 0.0;
+    uint cell = max(1u, (uint)(os.y / 720.0));
+    int2 p = int2(id / cell) - 1;  // (a cell's margin)
+    if (any(p < 0) || any(p >= 12)) return false;
+    static const uint shape[12] = {0x3FC, 0x7FE, 0xFFF, 0xFFF, 0xFFF, 0xFFF, 0xFFF, 0xFFF, 0xFFF, 0xFFF, 0x7FE, 0x3FC};
+    static const uint white[12] = {0, 0, 0, 0, 0x090, 0, 0, 0x108, 0x0F0, 0, 0, 0};  // (the eyes one pixel, the smile within)
+    uint bit = 1u << (uint)p.x;
+    if (!(shape[p.y] & bit)) return false;
+    // (the icon's gradient, F6BFE6 at the top to E89CD6 at the bottom)
+    float3 pink = lerp(float3(0.965, 0.749, 0.902), float3(0.910, 0.612, 0.839), p.y / 11.0);
+    c = (white[p.y] & bit) ? float3(1.0, 1.0, 1.0) : pink;
+    if (hdr > 0.5) c = c * c * (0.3 + 0.7 * c);  // (about sRGB's decoding: linear)
+    c /= e;
+    return true;
+}
 
 // A history store: RGB10A2 rounds to 1/1023, and a stable pixel moves by 0.035 x the difference a frame - a difference
 // under ~14 steps would never close. Half a step of noise (interleaved gradient noise, a new pattern each frame by the

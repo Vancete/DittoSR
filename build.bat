@@ -32,6 +32,9 @@ for %%s in (upscale sharpen) do (
 rem the anti-shimmer variants of the upscale (D3D12; picked when anti_shimmer > 0 - none of its cost otherwise)
 %DXC% -nologo -T cs_6_0 -D ANTI_SHIMMER=1 -E main -O3 -Fh "%OUT%\gen\cs_upscale_as.h" -Vn g_cs_upscale_as "%ROOT%shaders\upscale.hlsl" || exit /b 1
 %DXC% -nologo -T cs_6_2 -enable-16bit-types -D DITTO_FP16=1 -D ANTI_SHIMMER=1 -E main -O3 -Fh "%OUT%\gen\cs_upscale16_as.h" -Vn g_cs_upscale16_as "%ROOT%shaders\upscale.hlsl" || exit /b 1
+rem the in-game menu (overlay.cpp): a vertex and a pixel shader
+%DXC% -nologo -T vs_6_0 -E vs -O3 -Fh "%OUT%\gen\ov_vs.h" -Vn g_ov_vs "%ROOT%shaders\overlay.hlsl" || exit /b 1
+%DXC% -nologo -T ps_6_0 -E ps -O3 -Fh "%OUT%\gen\ov_ps.h" -Vn g_ov_ps "%ROOT%shaders\overlay.hlsl" || exit /b 1
 rem Vulkan (SPIR-V): one descriptor set - b0 the constants at 0, t0-t6 at 10, u0-u1 at 20, s0 at 30 (dittosr_vk.cpp)
 set SPVF=-nologo -spirv -fspv-target-env=vulkan1.1 -fvk-b-shift 0 0 -fvk-t-shift 10 0 -fvk-u-shift 20 0 -fvk-s-shift 30 0 -D DITTO_VK=1 -T cs_6_0 -E main -O3
 for %%s in (convert motion upscale) do (
@@ -43,14 +46,15 @@ for %%f in (rgba16f rgba8 rgb10a2 r11g11b10f rgba32f) do (
 )
 
 cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /LD /I"%ROOT%src" /I"%OUT%\gen" /I"%ROOT%third_party\vulkan\include" "%ROOT%src\ffx_dll.cpp" ^
-   "%ROOT%src\dittosr.cpp" "%ROOT%src\dittosr_vk.cpp" "%ROOT%src\common.cpp" /Fo"%OUT%\obj\\" /Fe"%OUT%\amd_fidelityfx_dx12.dll" ^
-   /link d3d12.lib dxgi.lib user32.lib || exit /b 1
+   "%ROOT%src\dittosr.cpp" "%ROOT%src\dittosr_vk.cpp" "%ROOT%src\common.cpp" "%ROOT%src\overlay.cpp" /Fo"%OUT%\obj\\" ^
+   /Fe"%OUT%\amd_fidelityfx_dx12.dll" ^
+   /link d3d12.lib dxgi.lib user32.lib gdi32.lib || exit /b 1
 copy /y "%OUT%\amd_fidelityfx_dx12.dll" "%OUT%\amd_fidelityfx_loader_dx12.dll" >nul || exit /b 1
 copy /y "%OUT%\amd_fidelityfx_dx12.dll" "%OUT%\amd_fidelityfx_vk.dll" >nul || exit /b 1
 rem the libxess.dll proxy (XeSS on D3D12; the game's own XeSS renamed libxess_orig.dll behind it)
 if not exist "%OUT%\obj_xess" mkdir "%OUT%\obj_xess"
 cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /LD /I"%ROOT%src" /I"%OUT%\gen" "%ROOT%src\xess_dll.cpp" "%ROOT%src\dittosr.cpp" ^
-   "%ROOT%src\common.cpp" /Fo"%OUT%\obj_xess\\" /Fe"%OUT%\libxess.dll" /link d3d12.lib dxgi.lib user32.lib || exit /b 1
+   "%ROOT%src\common.cpp" "%ROOT%src\overlay.cpp" /Fo"%OUT%\obj_xess\\" /Fe"%OUT%\libxess.dll" /link d3d12.lib dxgi.lib user32.lib gdi32.lib || exit /b 1
 
 cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /I"%ROOT%src" /I"%ROOT%test" "%ROOT%test\harness.cpp" ^
    /Fo"%OUT%\obj\\" /Fe"%OUT%\harness.exe" /link d3d12.lib dxgi.lib || exit /b 1

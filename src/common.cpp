@@ -7,9 +7,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <mutex>
+
 #include "dittosr.h"
 
 DittoConfig g_cfg;
+DittoStats g_stats;
+volatile long g_reqToggle, g_reqCompare;
+static std::mutex g_sMu;  // (g_cfg.s: the upscale's thread and the menu's, the game's present thread)
+static volatile long g_menuChanged, g_reqReload;
 char g_dir[260];
 static char g_logName[32] = "dittosr";
 static FILE *g_log;
@@ -53,6 +59,7 @@ static void load_config() {
     GetPrivateProfileStringA("dittosr", "reload_key", "0x78", b, sizeof b, ini);
     c.reloadKey = (int)strtol(b, nullptr, 0);  // (always: the values tuned live)
     c.logDispatches = GetPrivateProfileIntA("dittosr", "log_dispatches", c.debug ? 3 : 0, ini);
+    std::lock_guard<std::mutex> lk(g_sMu);
     DittoSettings &s = c.s;
     s = DittoSettings();
     s.frameWeight = ini_float(ini, "frame_weight", s.frameWeight);
@@ -87,8 +94,10 @@ static void load_config() {
     c.ratio[1] = ini_float(ini, "ratio_balanced", 0.0f);
     c.ratio[2] = ini_float(ini, "ratio_performance", 0.0f);
     c.ratio[3] = ini_float(ini, "ratio_ultra_performance", 0.0f);
-    GetPrivateProfileStringA("dittosr", "compare_key", "0x76", b, sizeof b, ini);
+    GetPrivateProfileStringA("dittosr", "compare_key", "0", b, sizeof b, ini);
     c.compareKey = (int)strtol(b, nullptr, 0);
+    GetPrivateProfileStringA("dittosr", "menu_key", "0x76", b, sizeof b, ini);
+    c.menuKey = (int)strtol(b, nullptr, 0);
     c.compare = GetPrivateProfileIntA("dittosr", "compare", 0, ini) != 0;
     c.gameSharpness = GetPrivateProfileIntA("dittosr", "game_sharpness", -1, ini);
     s.indicator = GetPrivateProfileIntA("debug", "indicator", GetPrivateProfileIntA("dittosr", "indicator", 0, ini), ini) != 0;
@@ -108,10 +117,56 @@ static void load_config() {
 bool ditto_poll_reload() {
     static bool down;
     bool now = g_cfg.reloadKey && (GetAsyncKeyState(g_cfg.reloadKey) & 0x8000);
-    bool pressed = now && !down;
+    bool pressed = (now && !down) || InterlockedExchange(&g_reqReload, 0);
     down = now;
     if (pressed) ditto_log("reload: dittosr.ini\n"), load_config();
-    return pressed;
+    return pressed || InterlockedExchange(&g_menuChanged, 0);
+}
+
+DittoSettings ditto_settings() {
+    std::lock_guard<std::mutex> lk(g_sMu);
+    return g_cfg.s;
+}
+
+void ditto_set_settings(const DittoSettings &s) {
+    {
+        std::lock_guard<std::mutex> lk(g_sMu);
+        g_cfg.s = s;
+    }
+    InterlockedExchange(&g_menuChanged, 1);
+}
+
+void ditto_request_reload() { InterlockedExchange(&g_reqReload, 1); }
+
+// The menu's Save: each setting it shows into [dittosr] - sharpness and frame_weight always (the shipped file's), the
+// others only when they differ from the defaults (removed when back at them: the file keeps its shipped keys alone)
+bool ditto_save_settings() {
+    char ini[MAX_PATH];
+    snprintf(ini, sizeof ini, "%sdittosr.ini", g_dir);
+    DittoSettings s = ditto_settings(), d;
+    auto put = [&](const char *key, float v, float def, bool always) {
+        char b[32];
+        snprintf(b, sizeof b, "%g", v);
+        bool keep = always || v != def;
+        return WritePrivateProfileStringA("dittosr", key, keep ? b : nullptr, ini) != 0 || !keep;
+    };
+    bool ok = put("sharpness", s.sharpness, d.sharpness, true);
+    ok = put("frame_weight", s.frameWeight, d.frameWeight, true) && ok;
+    ok = put("anti_shimmer", s.antiShimmer, d.antiShimmer, false) && ok;
+    ok = put("history_sharpen", s.historySharpen, d.historySharpen, false) && ok;
+    ok = put("auto_reactive", s.autoReactive, d.autoReactive, false) && ok;
+    ok = put("debug_view", (float)s.debugView, (float)d.debugView, false) && ok;
+    ok = WritePrivateProfileStringA("debug", "indicator", s.indicator ? "1" : "0", ini) != 0 && ok;
+    ditto_log("menu: settings saved to dittosr.ini%s\n", ok ? "" : " (failed)");
+    return ok;
+}
+
+void ditto_stats_update(int api, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, bool active, bool compare, bool hasReal) {
+    g_stats.api = api, g_stats.rw = rw, g_stats.rh = rh, g_stats.ow = ow, g_stats.oh = oh;
+    g_stats.active = active, g_stats.compare = compare, g_stats.hasReal = hasReal;
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    g_stats.lastQpc = t.QuadPart;
 }
 
 void ditto_init(void *module, const char *logName) {

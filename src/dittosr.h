@@ -7,7 +7,7 @@
 #include "ffx_api/ffx_upscale.h"
 
 // the version both front ends report (the FidelityFX API provider, the libxess.dll proxy)
-#define DITTOSR_VERSION "0.3.1"
+#define DITTOSR_VERSION "0.4.0"
 #define DITTOSR_VERSION_NAME "DittoSR " DITTOSR_VERSION
 
 struct DittoSettings {
@@ -133,6 +133,12 @@ private:
     bool texValid_ = false;
     uint64_t frames_ = 0;
     float prevJit_[2] = {0, 0};
+    // the passes' GPU time (the menu's graph): two timestamps a frame into a ring, read back kTimeRing frames later
+    static constexpr uint32_t kTimeRing = 8;
+    ID3D12QueryHeap *timeQ_ = nullptr;
+    ID3D12Resource *timeRb_ = nullptr;
+    const uint64_t *timeMap_ = nullptr;
+    double tickMs_ = 0.0;  // (ms per timestamp tick; 0: no timing)
 };
 
 // An FSR 3.1 upscale dispatch as a DittoFrame (false: a resource missing)
@@ -151,9 +157,10 @@ struct DittoConfig {
     int toggleKey = 0x79;
     int reloadKey = 0x78;  // (F9: dittosr.ini read again while playing)
     int logDispatches = 3;
-    // F7: the comparison - the game's own upscaler (AMD's FSR, Intel's XeSS) on the output's right half, DittoSR on the
-    // left; it needs the game's DLL alongside (<name>.orig.dll, libxess_orig.dll)
-    int compareKey = 0x76;
+    // the comparison's key (0: none - the in-game menu switches it): the game's own upscaler (AMD's FSR, Intel's XeSS) on
+    // the output's right half, DittoSR on the left; it needs the game's DLL alongside (<name>.orig.dll, libxess_orig.dll)
+    int compareKey = 0;
+    int menuKey = 0x76;  // (F7: the in-game menu, D3D12 - overlay.cpp)
     bool compare = false;  // ([dittosr] compare=1: from the start)
     // the ratios the FidelityFX API answers the quality modes with: quality, balanced, performance, ultra performance
     // (0: FSR 3.1's 1.5, 1.7, 2, 3) - games that ask, not those that work them out themselves
@@ -166,5 +173,26 @@ struct DittoConfig {
 extern DittoConfig g_cfg;
 extern char g_dir[260];  // (this DLL's folder, with the trailing backslash)
 void ditto_init(void *module, const char *logName);
-// the reload key pressed this frame: g_cfg read again from dittosr.ini (enabled and the keys included)
+// the reload key pressed this frame, or the menu changed the settings: g_cfg read again from dittosr.ini (enabled and
+// the keys included) or the menu's settings taken
 bool ditto_poll_reload();
+// The settings, shared with the menu (it runs on the game's present thread): a copy under a lock
+DittoSettings ditto_settings();
+void ditto_set_settings(const DittoSettings &s);  // (the menu: taken by the next upscale)
+void ditto_request_reload();                      // (the menu: dittosr.ini read again by the next upscale)
+bool ditto_save_settings();                       // (the menu: written to dittosr.ini - only what differs from the defaults)
+
+// What the upscale shows the menu (written each upscale, read on the present thread: single values, no lock)
+struct DittoStats {
+    volatile float upscaleMs = 0.0f;  // (DittoSR's passes on the GPU, a few frames late; 0: unknown)
+    volatile uint32_t rw = 0, rh = 0, ow = 0, oh = 0;
+    volatile int api = 0;  // 1 the FidelityFX API (AMD's FSR), 2 XeSS
+    volatile bool active = false, compare = false, hasReal = false;
+    volatile int64_t lastQpc = 0;  // (QueryPerformanceCounter at the last upscale)
+};
+extern DittoStats g_stats;
+// The menu's requests, taken by the next upscale: the other upscaler (the toggle), the comparison
+extern volatile long g_reqToggle, g_reqCompare;
+void ditto_stats_update(int api, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, bool active, bool compare, bool hasReal);
+// The in-game menu (overlay.cpp, D3D12): hooks DXGI's Present once per process, on the game's device
+void ditto_overlay_install(ID3D12Device *device);

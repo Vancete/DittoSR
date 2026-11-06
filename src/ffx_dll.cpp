@@ -315,7 +315,8 @@ FFX_API_ENTRY ffxReturnCode_t ffxDispatch(ffxContext *context, const ffxDispatch
     static bool down;
     bool now = g_cfg.toggleKey && (GetAsyncKeyState(g_cfg.toggleKey) & 0x8000);
     bool switched = false;
-    if (now && !down && (c->ditto || c->dittoVk) && c->real) {
+    bool req = InterlockedExchange(&g_reqToggle, 0) != 0;  // (the menu's)
+    if (((now && !down) || req) && (c->ditto || c->dittoVk) && c->real) {
         c->useDitto = !c->useDitto, switched = true;
         if (!c->useDitto) c->resetReal = true;
         ditto_log("toggle: %s from dispatch %llu\n", c->useDitto ? "DittoSR" : "AMD's FSR", (unsigned long long)c->dispatches);
@@ -324,7 +325,8 @@ FFX_API_ENTRY ffxReturnCode_t ffxDispatch(ffxContext *context, const ffxDispatch
     // the comparison (a key press, or compare=1): AMD's FSR draws the whole output first, DittoSR then its left half
     static bool cdown;
     bool cnow = g_cfg.compareKey && (GetAsyncKeyState(g_cfg.compareKey) & 0x8000);
-    if (cnow && !cdown && (c->ditto || c->dittoVk) && c->real) {
+    bool creq = InterlockedExchange(&g_reqCompare, 0) != 0;
+    if (((cnow && !cdown) || creq) && (c->ditto || c->dittoVk) && c->real) {
         c->compare = !c->compare;
         if (c->compare) c->resetReal = true;
         ditto_log("comparison %s from dispatch %llu (DittoSR left, AMD's FSR right)\n", c->compare ? "on" : "off", (unsigned long long)c->dispatches);
@@ -334,7 +336,7 @@ FFX_API_ENTRY ffxReturnCode_t ffxDispatch(ffxContext *context, const ffxDispatch
     // sharpness from the dispatch when it enables sharpening and comes from the user (OptiScaler's slider)
     ditto_poll_reload();
     {
-        DittoSettings s = g_cfg.s;
+        DittoSettings s = ditto_settings();
         float fw = frame_weight_of(c);
         if (fw >= 0.0f) s.frameWeight = fw;
         bool gs = g_cfg.gameSharpness > 0 || (g_cfg.gameSharpness < 0 && from_optiscaler());
@@ -365,6 +367,8 @@ FFX_API_ENTRY ffxReturnCode_t ffxDispatch(ffxContext *context, const ffxDispatch
         log_res("reactive", d->reactive, vk), log_res("transp/comp", d->transparencyAndComposition, vk), log_res("output", d->output, vk);
     }
     c->dispatches++;
+    ditto_stats_update(1, d->renderSize.width, d->renderSize.height, d->upscaleSize.width, d->upscaleSize.height,
+                       c->useDitto && (c->ditto || c->dittoVk), c->compare && c->real, c->real != nullptr);
     if (c->useDitto && (c->ditto || c->dittoVk)) {
         bool cmp = c->compare && c->real;
         if (cmp) {  // (AMD's FSR first, on the whole output: DittoSR's left half then goes over it)
