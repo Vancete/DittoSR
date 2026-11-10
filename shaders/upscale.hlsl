@@ -1,10 +1,10 @@
 // DittoSR's upscale. Output size.
 // t0 = the previous history, t1 = the convert pass's (xy motion in NDC), t2 = the colour, t3 = the motion
 // pass's (the motion checks, the derived reactive mask), t4 = the change's 1 x 1, t6 = the game's reactive mask
-// (optional), t7 = the previous stability levels (D3D12).
-// u0 = the history (rgb in DittoSR's encoded domain; a = the stability level on Vulkan, its RGBA16F alpha), u1 = the
-// game's output (the colour decoded back to the game's domain; a debug view only - the sharpening writes it), u2 = the
-// stability levels (D3D12: R8, the RGB10A2 history's alpha has 2 bits).
+// (optional), t7 = the previous stability levels.
+// u0 = the history (rgb in DittoSR's encoded domain), u1 = the game's output (the colour decoded back to the game's
+// domain; fused or a debug view - else the sharpening writes it), u2 = the stability levels (R8 - the RGB10A2 history's
+// alpha has 2 bits -, R8G8 with the anti-shimmer's state).
 //   The current frame: the 3x3 render samples around the pixel, each where its jitter put it, weighted by a round
 //   Gaussian of its distance in output pixels (narrow) and by a wider one in render pixels (smooth). (Once the narrow one
 //   was stretched along the samples' edges, and widened while moving, a thin line's lock besides: on the Ally no visible
@@ -20,19 +20,17 @@ Texture2D<float4> InputColor : register(t2);
 Texture2D<float4> Motion : register(t3);
 Texture2D<float> Change : register(t4);
 Texture2D<float> Reactive : register(t6);
-VKFMT("rgba16f") RWTexture2D<float4> History : register(u0);
-#if !DITTO_VK
+VKFMT(HISTFMT) RWTexture2D<float4> History : register(u0);
 #if ANTI_SHIMMER
 Texture2D<float2> PrevStab : register(t7);  // (x the stability level, y the anti-shimmer's running sign)
 #else
 Texture2D<float> PrevStab : register(t7);
 #endif
-RWTexture2D<float4> Output : register(u1);  // (Vulkan: the sharpening pass writes the output, sharpness 0 or not)
+VKFMT(OUTFMT) RWTexture2D<float4> Output : register(u1);
 #if ANTI_SHIMMER
-RWTexture2D<float2> StabOut : register(u2);
+VKFMT("rg8") RWTexture2D<float2> StabOut : register(u2);
 #else
-RWTexture2D<float> StabOut : register(u2);
-#endif
+VKFMT("r8") RWTexture2D<float> StabOut : register(u2);
 #endif
 
 float3 hist(float2 uv, out float3 low) {  // (Catmull-Rom in 5 bilinear taps; low: their plain mean, ~3 pixels wide)
@@ -59,7 +57,6 @@ void put(uint2 id, float3 g, float2 stab, float e, float3 shown) {
     // plus the sharpening's own term: a still pixel's frame-to-frame wobble below a step stays hidden as it did; the
     // unrounded value showed it, the shimmer at rest up 10 %)
     if (history10 > 0.5) shown = round(hs.rgb * 1023.0) / 1023.0 + (shown - g);
-#if !DITTO_VK
 #if ANTI_SHIMMER
     StabOut[id] = stab;
 #else
@@ -70,7 +67,6 @@ void put(uint2 id, float3 g, float2 stab, float e, float3 shown) {
     float3 ic;
     if (indicator > 0.5 && indicatorAt(id, e, ic)) o = ic;
     Output[id] = float4(o, 1.0);
-#endif
 }
 void put(uint2 id, float3 g, float2 stab, float e) { put(id, g, stab, e, g); }
 
@@ -219,16 +215,12 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     }
     float3 hl, hy = ycc(hist(puv, hl));
     hl = ycc(hl);
-    // (the stability level where the pixel was: D3D12 its own texture, Vulkan the history's alpha)
-#if DITTO_VK
-    float sp = PrevOutput.SampleLevel(linearClamp, puv, 0.0).a, up = 0.0;
-#else
+    // (the stability level where the pixel was)
 #if ANTI_SHIMMER
     float2 sp2 = PrevStab.SampleLevel(linearClamp, puv, 0.0);
     float sp = sp2.x, up = sp2.y * 2.0 - 1.0;
 #else
     float sp = PrevStab.SampleLevel(linearClamp, puv, 0.0);
-#endif
 #endif
     // (the share of the image that changed against its history - the change pass's one pixel)
     float gch = changeScale * smoothstep(0.2, 0.5, Change.Load(int3(0, 0, 0)));
@@ -327,16 +319,12 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
 #endif
     if (debugView > 1.5) {  // (the history as usual, the output a view of the decision)
         float3 v = debugView < 2.5 ? saturate(a).xxx : debugView < 3.5 ? sp.xxx : float3(saturate(t - 1.0), cut ? 1.0 : 0.0, cf);
-#if DITTO_VK
-        History[id] = float4(v, 0.0);  // (Vulkan: the view through the history and the sharpening pass - approximate)
-#else
         History[id] = hstore(id, res, stab);
         StabOut[id] = stab2;
         Output[id] = float4(v, 1.0);
-#endif
         return;
     }
-    // the fused sharpening (fusedSharpen > 0, D3D12): the output, not the history - the blend's detail (the history's over
+    // the fused sharpening (fusedSharpen > 0): the output, not the history - the blend's detail (the history's over
     // its low frequencies, the new frame's narrow estimate over its smooth one, by the frame's share) added to the luma
     // by sharpen.hlsl's strength (at rest by the sharpness and the stability, moving 0.1 x sharpness), within the
     // samples' luma range and a quarter beyond moving; not on very bright pixels (the decoding blows a little up)

@@ -17,9 +17,7 @@ Texture2D<float4> Color : register(t2);
 Texture2D<float4> Hist : register(t3);
 VKFMT("rgba16f") RWTexture2D<float4> Out : register(u0);
 VKFMT("r32f") RWTexture2D<float> ChangeOut : register(u1);
-#if !DITTO_VK
-RWTexture2D<float> ExposureOut : register(u2);  // (D3D12; Vulkan: not yet)
-#endif
+VKFMT("r32f") RWTexture2D<float> ExposureOut : register(u2);  // (the auto exposure's 1 x 1)
 
 float depthAt(int2 p, int2 ds) {
     float d = InputDepth.Load(int3(clamp(p, int2(0, 0), ds), 0));
@@ -81,7 +79,6 @@ void change(uint li) {
     ChangeOut[uint2(0, 0)] = reset > 0.5 ? 0.0 : s / 16.0;
 }
 
-#if !DITTO_VK
 groupshared float gsLog[64];
 
 // The auto exposure (the game set FSR's auto exposure flag and gave no exposure): FSR 3.1's, 1 / (9.6 x the scene's
@@ -111,15 +108,12 @@ void autoexp(uint li) {
     bool fresh = reset > 0.5 || !(prev > 1e-12 && prev < 1e12);
     ExposureOut[uint2(0, 0)] = exp2(fresh ? target : lerp(log2(prev), target, 0.1));
 }
-#endif
 
 [numthreads(8, 8, 1)]
 void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_GroupIndex) {
     if (gid.y == (uint(rs.y) + 7) / 8) {  // (the extra row: its first group the change, its second the exposure)
         if (gid.x == 0) change(li);
-#if !DITTO_VK
         else if (gid.x == 1 && autoExposure > 0.5) autoexp(li);
-#endif
         return;
     }
     if (any(id >= (uint2)rs)) return;

@@ -7,7 +7,7 @@
 #include "ffx_api/ffx_upscale.h"
 
 // the version both front ends report (the FidelityFX API provider, the libxess.dll proxy)
-#define DITTOSR_VERSION "0.4.0"
+#define DITTOSR_VERSION "0.4.1"
 #define DITTOSR_VERSION_NAME "DittoSR " DITTOSR_VERSION
 
 struct DittoSettings {
@@ -46,10 +46,10 @@ struct DittoSettings {
     // the reactive mask derived where the game gives none (particles, transparencies, flashes: more of the new frame),
     // its strength; 0: off
     float autoReactive = 0.5f;  // (1 until 0.3.0: at 0.5 the image gets sharp again a little sooner after a turn)
-    // the history's stability level: the step a pixel climbs each frame a sample lands near it (1: stable). D3D12 keeps it
-    // in its own R8 texture (the RGB10A2 history's alpha has 2 bits), Vulkan in the RGBA16F history's alpha
+    // the history's stability level: the step a pixel climbs each frame a sample lands near it (1: stable). Kept in its
+    // own R8 texture (the RGB10A2 history's alpha has 2 bits; R8G8 with the anti-shimmer's state, always on Vulkan)
     float stabStep = 0.34f;
-    // the anti-shimmer (D3D12; 0 off; -1, the default: 0.4 up to 2x, 0.2 from 3x): where the sign of the new frame's
+    // the anti-shimmer (0 off; -1, the default: 0.4 up to 2x, 0.2 from 3x): where the sign of the new frame's
     // difference from the history keeps alternating
     // (the jittered samples' aliasing), up to this share less of the new frame. Less shimmer (-10..-25 %), a little
     // softer fine detail in motion. The stability texture becomes R8G8 (the sign's running mean in .y)
@@ -57,7 +57,7 @@ struct DittoSettings {
     // the history's detail made up for its resampling blur in motion (upscale.hlsl): x its default strength (0.03 up to
     // 2x, 0.05 from 3x); 0 off
     float historySharpen = 1.0f;
-    // the sharpening in the upscale, its own pass skipped (D3D12, up to 2.5x - above it the separate pass): the gain
+    // the sharpening in the upscale, its own pass skipped (up to 2.5x - above it the separate pass): the gain
     // of the detail term; 0 the separate pass. On the ROG Ally 0.3 ms less at 1080p 2x
     float fusedSharpen = 1.0f;
     bool indicator = false;
@@ -163,7 +163,7 @@ struct DittoConfig {
     // the comparison's key (0: none - the in-game menu switches it): the game's own upscaler (AMD's FSR, Intel's XeSS) on
     // the output's right half, DittoSR on the left; it needs the game's DLL alongside (<name>.orig.dll, libxess_orig.dll)
     int compareKey = 0;
-    int menuKey = 0x76;  // (F7: the in-game menu, D3D12 - overlay.cpp)
+    int menuKey = 0x76;  // (F7: the in-game menu - overlay.cpp)
     bool compare = false;  // ([dittosr] compare=1: from the start)
     // the ratios the FidelityFX API answers the quality modes with: quality, balanced, performance, ultra performance
     // (0: FSR 3.1's 1.5, 1.7, 2, 3) - games that ask, not those that work them out themselves
@@ -197,5 +197,8 @@ extern DittoStats g_stats;
 // The menu's requests, taken by the next upscale: the other upscaler (the toggle), the comparison
 extern volatile long g_reqToggle, g_reqCompare;
 void ditto_stats_update(int api, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, bool active, bool compare, bool hasReal);
-// The in-game menu (overlay.cpp, D3D12): hooks DXGI's Present once per process, on the game's device
+// The in-game menu (overlay.cpp), once per process. D3D12: DXGI's Present hooked, the menu drawn into the game's frame.
+// Vulkan: a layered window of its own over the game's, drawn on the CPU; the upscale ticks its frame times.
 void ditto_overlay_install(ID3D12Device *device);
+void ditto_overlay_install_window();
+void ditto_overlay_tick();

@@ -1,5 +1,8 @@
-// DittoSR's in-game menu (D3D12): F7 (menu_key) opens a side panel on the left of the game - the upscale's settings changed live,
+// DittoSR's in-game menu: F7 (menu_key) opens a side panel on the left of the game - the upscale's settings changed live,
 // the frame time and DittoSR's own GPU time as a graph.
+//   D3D12: drawn into the game's frame, as below. Vulkan: a Vulkan game's present cannot be hooked once its device exists
+// (this DLL loads with the FidelityFX context, long after) - the same panel is drawn on the CPU into a layered window of
+// its own, topmost over the game's client area while the game is in front (the window section at the end).
 //   DXGI's Present is hooked in the swap chain's vtable (shared by every swap chain of its class: a dummy one on the
 // game's device finds it), once per process, and ID3D12CommandQueue::ExecuteCommandLists likewise: a D3D12 swap chain
 // does not tell its queue, so the menu draws on the direct queue the presenting thread last executed on - the game's
@@ -18,7 +21,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <algorithm>
 #include <mutex>
+#include <thread>
+#include <utility>
 #include <vector>
 
 #include "dittosr.h"
@@ -143,6 +149,15 @@ bool build_atlas(float scale, FontData *fonts, std::vector<uint8_t> &pix, int &a
     return true;
 }
 
+// the atlas the menu measures and draws with (D3D12: copied into a texture; the window: sampled on the CPU)
+struct FontAtlas {
+    FontData f[F_COUNT];
+    std::vector<uint8_t> pix;
+    int w = 0, h = 0;
+    float scale = 0.0f;
+};
+FontAtlas g_font;
+
 // ---- the renderer ----
 
 constexpr int kSlots = 3, kMaxQuads = 8192;
@@ -156,10 +171,7 @@ struct Gfx {
     ID3D12Resource *font = nullptr, *fontUp = nullptr;
     bool fontPending = false;
     UINT64 fontUpFence = 0;
-    int atlasW = 0, atlasH = 0;
     float fontScale = 0.0f;
-    FontData fonts[F_COUNT];
-    std::vector<uint8_t> atlas;
     struct Slot { ID3D12CommandAllocator *alloc = nullptr; ID3D12Resource *buf = nullptr; Quad *map = nullptr; UINT64 fence = 0; } slot[kSlots];
     ID3D12GraphicsCommandList *cl = nullptr;
     ID3D12Fence *fence = nullptr;
@@ -270,17 +282,20 @@ bool ensure_font(float scale) {
     if (g_gfx.font && fabsf(g_gfx.fontScale - scale) < 0.01f) return true;
     wait_fence(g_gfx.fenceVal);
     rel(g_gfx.font), rel(g_gfx.fontUp);
-    if (!build_atlas(scale, g_gfx.fonts, g_gfx.atlas, g_gfx.atlasW, g_gfx.atlasH)) return false;
+    if (fabsf(g_font.scale - scale) >= 0.01f || g_font.pix.empty()) {
+        if (!build_atlas(scale, g_font.f, g_font.pix, g_font.w, g_font.h)) return false;
+        g_font.scale = scale;
+    }
     D3D12_HEAP_PROPERTIES hp = {D3D12_HEAP_TYPE_DEFAULT};
     D3D12_RESOURCE_DESC td = {};
-    td.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D, td.Width = g_gfx.atlasW, td.Height = g_gfx.atlasH, td.DepthOrArraySize = 1;
+    td.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D, td.Width = g_font.w, td.Height = g_font.h, td.DepthOrArraySize = 1;
     td.MipLevels = 1, td.Format = DXGI_FORMAT_R8_UNORM, td.SampleDesc.Count = 1;
     if (FAILED(g_gfx.dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&g_gfx.font))))
         return false;
-    g_gfx.fontUp = buffer(g_gfx.dev, (UINT64)g_gfx.atlasW * g_gfx.atlasH, D3D12_HEAP_TYPE_UPLOAD);  // (1024 wide: rows 256-aligned)
+    g_gfx.fontUp = buffer(g_gfx.dev, (UINT64)g_font.w * g_font.h, D3D12_HEAP_TYPE_UPLOAD);  // (1024 wide: rows 256-aligned)
     void *m = nullptr;
     if (!g_gfx.fontUp || FAILED(g_gfx.fontUp->Map(0, nullptr, &m))) return false;
-    memcpy(m, g_gfx.atlas.data(), g_gfx.atlas.size());
+    memcpy(m, g_font.pix.data(), g_font.pix.size());
     g_gfx.fontUp->Unmap(0, nullptr);
     D3D12_SHADER_RESOURCE_VIEW_DESC sd = {};
     sd.Format = DXGI_FORMAT_R8_UNORM, sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -307,12 +322,12 @@ struct Ui {
     void box(float x0, float y0, float x1, float y1, C4 c, float radius) { box(x0, y0, x1, y1, c, c, radius); }
     float measure(int f, const char *t, float track = 0.0f) const {
         float w = 0.0f;
-        while (*t) w += g_gfx.fonts[f].g[glyph_index(next_cp(t))].adv + track;
+        while (*t) w += g_font.f[f].g[glyph_index(next_cp(t))].adv + track;
         return w;
     }
     // text with its top at y; returns the pen's end
     float text(int f, float x, float y, const char *t, C4 c, float track = 0.0f) {
-        const FontData &fd = g_gfx.fonts[f];
+        const FontData &fd = g_font.f[f];
         x = floorf(x + dx + 0.5f) - dx, y = floorf(y + dy + 0.5f) - dy;
         while (*t) {
             const Glyph &g = fd.g[glyph_index(next_cp(t))];
@@ -325,12 +340,12 @@ struct Ui {
         }
         return x;
     }
-    float h(int f) const { return g_gfx.fonts[f].height; }
+    float h(int f) const { return g_font.f[f].height; }
 };
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHARP, I_WEIGHT, I_SHIMMER, I_HSHARP, I_AREACT, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHARP, I_WEIGHT, I_SHIMMER, I_HSHARP, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -338,15 +353,8 @@ struct Key {
     double next = 0.0;
 };
 
-struct Menu {
-    bool open = false;
-    float anim = 0.0f;  // (0 hidden - 1 shown)
-    int sel = I_SHARP, btn = 0;
-    float scroll = 0.0f;
-    double toastUntil = 0.0;
-    char toast[64] = "";
-    bool toastOk = true;
-    // the frame times (ms) and DittoSR's GPU time, a ring
+// the frame times (ms) and DittoSR's GPU time, a ring; their averages over half a second
+struct Perf {
     static constexpr int kRing = 256;
     float frameMs[kRing] = {}, upMs[kRing] = {};
     int head = 0, count = 0;
@@ -354,6 +362,16 @@ struct Menu {
     int fpsN = 0;
     float fps = 0.0f, avgFrame = 0.0f, avgUp = 0.0f;
     double fpsT = 0.0;
+};
+
+struct Menu : Perf {  // (its Perf: a copy of g_perf, taken before each draw)
+    bool open = false;
+    float anim = 0.0f;  // (0 hidden - 1 shown)
+    int sel = I_SHARP, btn = 0;
+    float scroll = 0.0f;
+    double toastUntil = 0.0;
+    char toast[64] = "";
+    bool toastOk = true;
     Key kMenu{0}, kUp{VK_UP}, kDown{VK_DOWN}, kLeft{VK_LEFT}, kRight{VK_RIGHT}, kEnter{VK_RETURN}, kBack{VK_BACK};
     bool lmb = false;
     int drag = -1;  // (the slider the mouse holds)
@@ -370,11 +388,47 @@ struct Menu {
 Menu g_m;
 double g_qpcMs = 0.0;
 volatile bool g_menuShown = false;  // (the window procedure's: keep the arrows from the game)
+Perf g_perf;
+std::mutex g_perfMu;  // (g_perf's alone: the frame records it without waiting on a draw)
 
 double now_ms() {
     LARGE_INTEGER t;
     QueryPerformanceCounter(&t);
     return t.QuadPart * g_qpcMs;
+}
+
+// One frame: its time since the last, DittoSR's GPU time
+void record_frame() {
+    std::lock_guard<std::mutex> lk(g_perfMu);
+    LARGE_INTEGER q;
+    QueryPerformanceCounter(&q);
+    static int64_t last;
+    if (last) {
+        Perf &p = g_perf;
+        double t = q.QuadPart * g_qpcMs;
+        float ms = (float)((q.QuadPart - last) * g_qpcMs);
+        double age = (q.QuadPart - g_stats.lastQpc) * g_qpcMs;
+        p.frameMs[p.head] = ms, p.upMs[p.head] = age < 500.0 && g_stats.active ? g_stats.upscaleMs : 0.0f;
+        p.head = (p.head + 1) % Perf::kRing, p.count = p.count < Perf::kRing ? p.count + 1 : p.count;
+        p.fpsAcc += ms, p.fpsN++;
+        if (t - p.fpsT > 500.0 && p.fpsN) {
+            p.avgFrame = (float)(p.fpsAcc / p.fpsN), p.fps = 1000.0f / p.avgFrame;
+            float su = 0.0f;
+            int nu = 0;
+            for (int i = 0; i < p.fpsN && i < Perf::kRing; i++) {
+                float v = p.upMs[(p.head - 1 - i + Perf::kRing) % Perf::kRing];
+                if (v > 0.0f) su += v, nu++;
+            }
+            p.avgUp = nu ? su / nu : 0.0f;
+            p.fpsAcc = 0.0, p.fpsN = 0, p.fpsT = t;
+        }
+    }
+    last = q.QuadPart;
+}
+
+void take_perf() {
+    std::lock_guard<std::mutex> lk(g_perfMu);
+    static_cast<Perf &>(g_m) = g_perf;
 }
 
 bool key_pressed(Key &k, double t, bool repeat) {
@@ -395,7 +449,6 @@ Range range_of(int i) {
     case I_SHARP: return {0.0f, 1.0f, 0.05f};
     case I_WEIGHT: return {0.25f, 4.0f, 0.25f};
     case I_HSHARP: return {0.0f, 2.0f, 0.25f};
-    case I_AREACT: return {0.0f, 1.0f, 0.1f};
     default: return {0, 1, 1};
     }
 }
@@ -404,7 +457,6 @@ float *slider_of(DittoSettings &s, int i) {
     case I_SHARP: return &s.sharpness;
     case I_WEIGHT: return &s.frameWeight;
     case I_HSHARP: return &s.historySharpen;
-    case I_AREACT: return &s.autoReactive;
     default: return nullptr;
     }
 }
@@ -424,7 +476,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
     switch (i) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
-    case I_SHARP: case I_WEIGHT: case I_HSHARP: case I_AREACT: {
+    case I_SHARP: case I_WEIGHT: case I_HSHARP: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
         if (dir == 0) *v = *slider_of(d, i);  // (Enter: back to the default)
@@ -464,6 +516,8 @@ void press_button(DittoSettings &s, int b, bool &changed) {
 }
 
 float ease(float t) { return 1.0f - powf(1.0f - t, 3.0f); }
+
+void subclass(HWND h);
 
 const char *api_name() { return g_stats.api == 2 ? "XeSS" : "FSR"; }
 
@@ -651,7 +705,6 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         choice_row(I_SHIMMER, "Anti-shimmer", b);
     }
     slider_row(I_HSHARP, "Motion detail", nullptr);
-    slider_row(I_AREACT, "Auto reactive", nullptr);
     y += 10 * S;
     section("ADVANCED");
     choice_row(I_DEBUG, "Debug view", kDebugNames[s.debugView < 0 || s.debugView > 4 ? 0 : s.debugView]);
@@ -764,6 +817,46 @@ void input(DittoSettings &s, bool &changed, double t) {
     }
 }
 
+// The menu's frame: its input (the game in front), the scroll, the panel into u (scale: pixels per unit)
+void make_panel(Ui &u, float W, float H, float scale, double t, bool focus) {
+    take_perf();
+    DittoSettings s = ditto_settings();
+    bool changed = false;
+    if (g_m.open && focus) input(s, changed, t);
+    if (changed) ditto_set_settings(s);
+    u.s = scale, u.alpha = ease(g_m.anim), u.dx = -(1.0f - ease(g_m.anim)) * 420.0f * scale;
+    u.q.reserve(2048);
+    // (the scroll: the selected row kept in view)
+    float viewTop = 16 * scale, viewBottom = H - 16 * scale - 48 * scale;
+    if (g_m.rowH[g_m.sel] > 0) {
+        float ry0 = g_m.rowY[g_m.sel] + g_m.scroll, ry1 = ry0 + g_m.rowH[g_m.sel];
+        if (ry1 > viewBottom) g_m.scroll -= ry1 - viewBottom;
+        if (ry0 < viewTop + 40 * scale) g_m.scroll += viewTop + 40 * scale - ry0;
+        if (g_m.sel == step_sel(I_COUNT - 1, 1)) g_m.scroll = 0.0f;  // (the first row: the header in view)
+        g_m.scroll = fminf(g_m.scroll, 0.0f);
+    }
+    u.dy = g_m.scroll;
+    float content = build(u, s, W, H);
+    if (content <= H - 32 * scale) g_m.scroll = 0.0f;
+}
+
+// The menu key (the game in front) and the panel's slide; false: nothing to draw
+bool menu_state(double t, bool focus, HWND gameWnd) {
+    g_m.kMenu.vk = g_cfg.menuKey;
+    if (g_cfg.menuKey && focus && key_pressed(g_m.kMenu, t, false)) {
+        g_m.open = !g_m.open;
+        ditto_log("menu: %s\n", g_m.open ? "open" : "closed");
+        if (g_m.open) subclass(gameWnd);
+    }
+    if (!focus && g_m.open) g_m.kMenu.down = false;
+    static double lastT = t;
+    float dt = (float)(t - lastT);
+    lastT = t;
+    g_m.anim = fminf(fmaxf(g_m.anim + (g_m.open ? 1.0f : -1.0f) * dt / 160.0f, 0.0f), 1.0f);
+    g_menuShown = g_m.open;
+    return g_m.anim > 0.0f;
+}
+
 // ---- the window procedure: the menu's keys kept from the game while it shows ----
 
 WNDPROC g_origProc = nullptr;
@@ -860,45 +953,11 @@ void on_present(IDXGISwapChain *sc) {
     }
     g_m.mainArea = area, g_m.mainT = t, g_m.bbW = d.BufferDesc.Width, g_m.bbH = d.BufferDesc.Height;
     g_m.hwnd = d.OutputWindow;
-    // the frame time
-    LARGE_INTEGER q;
-    QueryPerformanceCounter(&q);
-    static int64_t last;
-    if (last) {
-        float ms = (float)((q.QuadPart - last) * g_qpcMs);
-        double age = (q.QuadPart - g_stats.lastQpc) * g_qpcMs;
-        g_m.frameMs[g_m.head] = ms, g_m.upMs[g_m.head] = age < 500.0 && g_stats.active ? g_stats.upscaleMs : 0.0f;
-        g_m.head = (g_m.head + 1) % Menu::kRing, g_m.count = g_m.count < Menu::kRing ? g_m.count + 1 : g_m.count;
-        g_m.fpsAcc += ms, g_m.fpsN++;
-        if (t - g_m.fpsT > 500.0 && g_m.fpsN) {
-            g_m.avgFrame = (float)(g_m.fpsAcc / g_m.fpsN), g_m.fps = 1000.0f / g_m.avgFrame;
-            float su = 0.0f;
-            int nu = 0;
-            for (int i = 0; i < g_m.fpsN && i < Menu::kRing; i++) {
-                float v = g_m.upMs[(g_m.head - 1 - i + Menu::kRing) % Menu::kRing];
-                if (v > 0.0f) su += v, nu++;
-            }
-            g_m.avgUp = nu ? su / nu : 0.0f;
-            g_m.fpsAcc = 0.0, g_m.fpsN = 0, g_m.fpsT = t;
-        }
-    }
-    last = q.QuadPart;
+    record_frame();
     // the keys (the game's window in front)
     HWND fg = GetForegroundWindow();
     bool focus = fg && (fg == d.OutputWindow || GetAncestor(d.OutputWindow, GA_ROOT) == fg);
-    g_m.kMenu.vk = g_cfg.menuKey;
-    if (g_cfg.menuKey && focus && key_pressed(g_m.kMenu, t, false)) {
-        g_m.open = !g_m.open;
-        ditto_log("menu: %s\n", g_m.open ? "open" : "closed");
-        if (g_m.open) subclass(d.OutputWindow);
-    }
-    if (!focus && g_m.open) g_m.kMenu.down = false;
-    static double lastT = t;
-    float dt = (float)(t - lastT);
-    lastT = t;
-    g_m.anim = fminf(fmaxf(g_m.anim + (g_m.open ? 1.0f : -1.0f) * dt / 160.0f, 0.0f), 1.0f);
-    g_menuShown = g_m.open;
-    if (g_m.anim <= 0.0f) return;
+    if (!menu_state(t, focus, d.OutputWindow)) return;
 
     // the queue: the direct queue this thread last executed on (the swap chain's own is not to be asked for), or the
     // last any thread did
@@ -949,25 +1008,8 @@ void on_present(IDXGISwapChain *sc) {
     }
 
     // the menu: input, then the panel
-    DittoSettings s = ditto_settings();
-    bool changed = false;
-    if (g_m.open && focus) input(s, changed, t);
-    if (changed) ditto_set_settings(s);
     Ui u;
-    u.s = scale, u.alpha = ease(g_m.anim), u.dx = -(1.0f - ease(g_m.anim)) * 420.0f * scale;
-    u.q.reserve(2048);
-    // (the scroll: the selected row kept in view)
-    float viewTop = 16 * scale, viewBottom = H - 16 * scale - 48 * scale;
-    if (g_m.rowH[g_m.sel] > 0) {
-        float ry0 = g_m.rowY[g_m.sel] + g_m.scroll, ry1 = ry0 + g_m.rowH[g_m.sel];
-        if (ry1 > viewBottom) g_m.scroll -= ry1 - viewBottom;
-        if (ry0 < viewTop + 40 * scale) g_m.scroll += viewTop + 40 * scale - ry0;
-        if (g_m.sel == step_sel(I_COUNT - 1, 1)) g_m.scroll = 0.0f;  // (the first row: the header in view)
-        g_m.scroll = fminf(g_m.scroll, 0.0f);
-    }
-    u.dy = g_m.scroll;
-    float content = build(u, s, W, H);
-    if (content <= H - 32 * scale) g_m.scroll = 0.0f;
+    make_panel(u, W, H, scale, t, focus);
     if (u.q.empty()) return;
 
     // the draw, on the swap chain's queue before the game's Present
@@ -986,7 +1028,7 @@ void on_present(IDXGISwapChain *sc) {
     if (g_gfx.fontPending) {
         D3D12_TEXTURE_COPY_LOCATION dst = {g_gfx.font, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX}, src = {g_gfx.fontUp, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
         dst.SubresourceIndex = 0;
-        src.PlacedFootprint.Footprint = {DXGI_FORMAT_R8_UNORM, (UINT)g_gfx.atlasW, (UINT)g_gfx.atlasH, 1, (UINT)g_gfx.atlasW};
+        src.PlacedFootprint.Footprint = {DXGI_FORMAT_R8_UNORM, (UINT)g_font.w, (UINT)g_font.h, 1, (UINT)g_font.w};
         cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         b[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION, b[1].Transition.pResource = g_gfx.font;
         b[1].Transition.Subresource = 0;
@@ -1023,6 +1065,238 @@ void on_present(IDXGISwapChain *sc) {
     sl.fence = g_gfx.fenceVal;
     if (g_gfx.fontPending) g_gfx.fontPending = false, g_gfx.fontUpFence = g_gfx.fenceVal;
     g_gfx.cur = (g_gfx.cur + 1) % kSlots;
+}
+
+// ---- the window (Vulkan): the panel drawn on the CPU into a layered window over the game ----
+
+struct Win {
+    HWND wnd = nullptr;   // (ours: layered, click-through, topmost, never activated)
+    HWND game = nullptr;  // (the game's: this process's largest visible top-level window)
+    double findT = -1e9, drawT = -1e9, topT = -1e9;
+    HDC mem = nullptr;
+    HBITMAP bmp = nullptr;
+    uint32_t *bits = nullptr;
+    int bw = 0, bh = 0;
+    POINT org = {};
+    std::vector<float> acc;  // (premultiplied RGBA, bw x bh)
+    std::vector<Quad> last;  // (the last panel drawn: an unchanged one is not drawn again)
+    bool shown = false;
+};
+Win g_win;
+volatile bool g_winMode = false;  // (the window draws the menu: the upscale records the frame times)
+
+BOOL CALLBACK find_proc(HWND h, LPARAM l) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    if (pid != GetCurrentProcessId() || h == g_win.wnd || !IsWindowVisible(h) || IsIconic(h)) return TRUE;
+    if (GetWindowLongPtrW(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) return TRUE;
+    RECT rc;
+    if (!GetClientRect(h, &rc)) return TRUE;
+    auto *best = (std::pair<HWND, LONG> *)l;
+    LONG area = rc.right * rc.bottom;
+    if (area > best->second) *best = {h, area};
+    return TRUE;
+}
+
+HWND find_game_window() {
+    std::pair<HWND, LONG> best = {nullptr, 64 * 64};
+    EnumWindows(find_proc, (LPARAM)&best);
+    return best.first;
+}
+
+// the atlas, bilinear (D3D12's sampler: texel centres at + 0.5, the edges clamped)
+float font_at(float u, float v) {
+    float x = u * g_font.w - 0.5f, y = v * g_font.h - 0.5f;
+    int x0 = (int)floorf(x), y0 = (int)floorf(y);
+    float fx = x - x0, fy = y - y0;
+    auto at = [](int x, int y) {
+        x = x < 0 ? 0 : x >= g_font.w ? g_font.w - 1 : x;
+        y = y < 0 ? 0 : y >= g_font.h ? g_font.h - 1 : y;
+        return g_font.pix[(size_t)y * g_font.w + x] * (1.0f / 255.0f);
+    };
+    float a = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * fx, b = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * fx;
+    return a + (b - a) * fy;
+}
+
+// The draw list into acc (premultiplied RGBA, bw wide), rows y0c - y1c: overlay.hlsl's quads, SDR, on the CPU. A box's
+// distance is worked out only near its edge - inside, a fill covers fully and an outline not at all; a glyph on whole
+// pixels reads its texels as they are (the atlas is drawn at the screen's scale), a spaced one (the capitals) bilinear
+void raster(const std::vector<Quad> &qs, float *acc, int bw, int y0c, int y1c) {
+    auto blend = [](float *o, const float *c, float a) {
+        float sa = c[3] * a, ia = 1.0f - sa;
+        o[0] = o[0] * ia + c[0] * sa, o[1] = o[1] * ia + c[1] * sa, o[2] = o[2] * ia + c[2] * sa, o[3] = o[3] * ia + sa;
+    };
+    for (const Quad &q : qs) {
+        bool glyph = q.p[1] == 1.0f, outline = q.p[1] == 2.0f;
+        float pad = glyph ? 0.0f : 1.0f;  // (a box: a pixel more around, for its antialiased edge)
+        float ax = q.rect[0] - pad, ay = q.rect[1] - pad, bx = q.rect[2] + pad, by = q.rect[3] + pad;
+        // (the pixels whose centres the quad covers)
+        int x0 = (int)ceilf(ax - 0.5f), x1 = (int)ceilf(bx - 0.5f), y0 = (int)ceilf(ay - 0.5f), y1 = (int)ceilf(by - 0.5f);
+        x0 = x0 < 0 ? 0 : x0, x1 = x1 > bw ? bw : x1, y0 = y0 < y0c ? y0c : y0, y1 = y1 > y1c ? y1c : y1;
+        if (x0 >= x1 || y0 >= y1) continue;
+        float cx = 0.5f * (q.rect[0] + q.rect[2]), cy = 0.5f * (q.rect[1] + q.rect[3]);
+        float hx = 0.5f * (q.rect[2] - q.rect[0]), hy = 0.5f * (q.rect[3] - q.rect[1]);
+        float r = fminf(q.p[0], fminf(hx, hy)), gh = fmaxf(q.rect[3] - q.rect[1], 1.0f);
+        // (an outline: nothing deeper inside than its width and a pixel)
+        float m = outline ? q.p[2] + 1.0f : 0.5f;
+        for (int y = y0; y < y1; y++) {
+            float py = y + 0.5f, t = fminf(fmaxf((py - q.rect[1]) / gh, 0.0f), 1.0f);
+            float c[4];
+            for (int k = 0; k < 4; k++) c[k] = q.c0[k] + (q.c1[k] - q.c0[k]) * t;
+            if (c[3] <= 0.0f) continue;
+            float *row = acc + (size_t)y * bw * 4;
+            if (glyph && (fabsf(ax - roundf(ax)) > 1e-3f || fabsf(ay - roundf(ay)) > 1e-3f)) {
+                float v = q.uv[1] + (q.uv[3] - q.uv[1]) * (py - ay) / (by - ay);
+                for (int x = x0; x < x1; x++) {
+                    float a = font_at(q.uv[0] + (q.uv[2] - q.uv[0]) * (x + 0.5f - ax) / (bx - ax), v);
+                    if (a > 0.0f) blend(row + x * 4, c, a);
+                }
+                continue;
+            }
+            if (glyph) {
+                int tx0 = (int)(q.uv[0] * g_font.w + (x0 + 0.5f - ax)), ty = (int)(q.uv[1] * g_font.h + (py - ay));
+                if (ty < 0 || ty >= g_font.h) continue;
+                const uint8_t *src = g_font.pix.data() + (size_t)ty * g_font.w;
+                for (int x = x0; x < x1; x++) {
+                    int tx = tx0 + (x - x0);
+                    uint8_t a8 = tx >= 0 && tx < g_font.w ? src[tx] : 0;
+                    if (a8) blend(row + x * 4, c, a8 * (1.0f / 255.0f));
+                }
+                continue;
+            }
+            float ady = fabsf(py - cy), dy2 = ady - hy + r;
+            // the core: |px - cx| <= half, the coverage certain - a fill 1, an outline 0
+            float half = ady <= hy - r - m ? hx - m : ady <= hy - m ? hx - r - m : -1.0f;
+            int xa = x1, xb = x1;
+            if (half > 0.0f) {
+                xa = (int)ceilf(cx - half - 0.5f), xb = (int)floorf(cx + half - 0.5f) + 1;
+                xa = xa < x0 ? x0 : xa > x1 ? x1 : xa, xb = xb < xa ? xa : xb > x1 ? x1 : xb;
+            }
+            auto edge = [&](int x) {  // (the rounded box's distance: a square root only in its corners)
+                float dx2 = fabsf(x + 0.5f - cx) - hx + r;
+                float d = (dx2 > 0.0f && dy2 > 0.0f) ? sqrtf(dx2 * dx2 + dy2 * dy2) - r : fmaxf(dx2, dy2) - r;
+                float a = fminf(fmaxf(0.5f - d, 0.0f), 1.0f);
+                if (outline) a *= fminf(fmaxf(0.5f + d + q.p[2], 0.0f), 1.0f);
+                if (a > 0.0f) blend(row + x * 4, c, a);
+            };
+            for (int x = x0; x < xa; x++) edge(x);
+            if (!outline)
+                for (int x = xa; x < xb; x++) blend(row + x * 4, c, 1.0f);
+            for (int x = xb; x < x1; x++) edge(x);
+        }
+    }
+}
+
+// The panel into bits (premultiplied BGRA, pitch pixels a row; bw x bh of it, the rest left as it is), through acc
+// (bw x bh premultiplied RGBA): in bands of rows across the CPU's cores. Only the panel's rows are touched - as D3D12's
+// scissor, its rows scrolling under the header's and footer's edges; those outside stay as made: transparent
+void paint(const std::vector<Quad> &q, float *acc, uint32_t *bits, int pitch, int bw, int bh, float scale) {
+    int y0 = (int)fmaxf(g_m.panel[1], 0.0f), y1 = (int)fminf(g_m.panel[3] + 24 * scale, (float)bh);
+    if (y0 >= y1) return;
+    auto band = [&](int b0, int b1) {
+        memset(acc + (size_t)b0 * bw * 4, 0, (size_t)(b1 - b0) * bw * 4 * sizeof(float));
+        raster(q, acc, bw, b0, b1);
+        for (int y = b0; y < b1; y++) {
+            const float *a = acc + (size_t)y * bw * 4;
+            uint32_t *o = bits + (size_t)y * pitch;
+            for (int x = 0; x < bw; x++, a += 4) {
+                auto b8 = [](float v) { return (uint32_t)(fminf(fmaxf(v, 0.0f), 1.0f) * 255.0f + 0.5f); };
+                o[x] = b8(a[3]) << 24 | b8(a[0]) << 16 | b8(a[1]) << 8 | b8(a[2]);
+            }
+        }
+    };
+    // (half the cores, 2 - 8: the game keeps its own)
+    int n = (int)std::thread::hardware_concurrency() / 2;
+    n = n < 2 ? 2 : n > 8 ? 8 : n;
+    std::vector<std::thread> th;
+    int step = (y1 - y0 + n - 1) / n;
+    for (int b = y0 + step; b < y1; b += step) th.emplace_back(band, b, b + step < y1 ? b + step : y1);
+    band(y0, y0 + step < y1 ? y0 + step : y1);
+    for (auto &t : th) t.join();
+}
+
+void win_hide() {
+    if (g_win.shown) ShowWindow(g_win.wnd, SW_HIDE), g_win.shown = false, g_win.last.clear();
+}
+
+// One turn of the window's thread: the key, the panel, drawn when it changed (30 a second at most, but sliding)
+void win_frame() {
+    double t = now_ms();
+    if (!g_win.game || !IsWindow(g_win.game) || t - g_win.findT > 1000.0) g_win.game = find_game_window(), g_win.findT = t;
+    HWND game = g_win.game, fg = GetForegroundWindow();
+    bool focus = game && fg && (fg == game || GetAncestor(game, GA_ROOT) == fg);
+    std::lock_guard<std::mutex> lk(g_mu);
+    // (out of the game - another window in front -, the menu hides with it)
+    if (!menu_state(t, focus, game) || !focus || IsIconic(game)) return win_hide();
+    RECT rc;
+    POINT org = {0, 0};
+    if (!GetClientRect(game, &rc) || !ClientToScreen(game, &org) || rc.right < 64 || rc.bottom < 64) return win_hide();
+    float W = (float)rc.right, H = (float)rc.bottom;
+    float scale = fminf(fmaxf(H / 1080.0f, 0.75f), 3.0f);
+    if (fabsf(g_font.scale - scale) >= 0.01f || g_font.pix.empty()) {
+        if (!build_atlas(scale, g_font.f, g_font.pix, g_font.w, g_font.h)) return (void)skip("the font"), win_hide();
+        g_font.scale = scale;
+    }
+    g_m.hwnd = game, g_m.bbW = (UINT)rc.right, g_m.bbH = (UINT)rc.bottom;
+    Ui u;
+    make_panel(u, W, H, scale, t, focus);
+    int bw = (int)fminf(ceilf(420.0f * scale), W), bh = (int)H;
+    bool same = g_win.shown && bw == g_win.bw && bh == g_win.bh && org.x == g_win.org.x && org.y == g_win.org.y &&
+                u.q.size() == g_win.last.size() && !memcmp(u.q.data(), g_win.last.data(), u.q.size() * sizeof(Quad));
+    if (same || (g_win.shown && g_m.anim >= 1.0f && t - g_win.drawT < 33.0)) return;
+    // the bitmap (a top-down 32-bit DIB, premultiplied BGRA), at the panel's size
+    if (bw != g_win.bw || bh != g_win.bh || !g_win.bmp) {
+        if (g_win.bmp) DeleteObject(g_win.bmp), g_win.bmp = nullptr;
+        if (!g_win.mem) g_win.mem = CreateCompatibleDC(nullptr);
+        BITMAPINFO bi = {};
+        bi.bmiHeader.biSize = sizeof bi.bmiHeader, bi.bmiHeader.biWidth = bw, bi.bmiHeader.biHeight = -bh;
+        bi.bmiHeader.biPlanes = 1, bi.bmiHeader.biBitCount = 32, bi.bmiHeader.biCompression = BI_RGB;
+        void *bits = nullptr;
+        g_win.bmp = g_win.mem ? CreateDIBSection(g_win.mem, &bi, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
+        if (!g_win.bmp) return (void)skip("its bitmap"), win_hide();
+        SelectObject(g_win.mem, g_win.bmp);
+        g_win.bits = (uint32_t *)bits, g_win.bw = bw, g_win.bh = bh;
+        memset(g_win.bits, 0, (size_t)bw * bh * 4);  // (the rows the panel never reaches: transparent)
+        g_win.acc.assign((size_t)bw * bh * 4, 0.0f);
+        ditto_log("menu: drawn on a window over the game, %dx%d\n", rc.right, rc.bottom);
+    }
+    paint(u.q, g_win.acc.data(), g_win.bits, bw, bw, bh, scale);
+    POINT src = {0, 0};
+    SIZE sz = {bw, bh};
+    BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    HDC screen = GetDC(nullptr);
+    BOOL ok = UpdateLayeredWindow(g_win.wnd, screen, &org, &sz, g_win.mem, &src, 0, &bf, ULW_ALPHA);
+    ReleaseDC(nullptr, screen);
+    if (!ok) return (void)skip("UpdateLayeredWindow failed"), win_hide();
+    if (!g_win.shown) ShowWindow(g_win.wnd, SW_SHOWNOACTIVATE), g_win.shown = true, g_win.topT = -1e9;
+    // (kept above the game - a fullscreen window may be topmost itself)
+    if (t - g_win.topT > 1000.0)
+        SetWindowPos(g_win.wnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER), g_win.topT = t;
+    g_win.org = org, g_win.drawT = t;
+    g_win.last.swap(u.q);
+}
+
+DWORD WINAPI win_thread(void *) {
+    // (per-monitor DPI aware: the game's client area in physical pixels)
+    typedef void *(WINAPI * SetDpiCtx)(void *);
+    if (auto f = (SetDpiCtx)GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetThreadDpiAwarenessContext")) f((void *)-4);
+    WNDCLASSEXW wc = {sizeof wc};
+    wc.lpfnWndProc = DefWindowProcW, wc.hInstance = GetModuleHandleW(nullptr), wc.lpszClassName = L"DittoSRMenu";
+    RegisterClassExW(&wc);
+    g_win.wnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                                wc.lpszClassName, L"DittoSR", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, wc.hInstance, nullptr);
+    if (!g_win.wnd) {
+        ditto_log("menu: could not make its window\n");
+        g_winMode = false;
+        return 0;
+    }
+    ditto_log("menu: ready (F7, menu_key) - drawn on a window of its own over the game (Vulkan)\n");
+    for (;;) {
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) TranslateMessage(&msg), DispatchMessageW(&msg);
+        win_frame();
+        Sleep(g_m.anim > 0.0f ? 8 : 30);
+    }
 }
 
 // ---- the hooks ----
@@ -1081,22 +1355,30 @@ template <class T> bool patch(void **vt, int i, void *hook, T *orig) {
 
 }  // namespace
 
-void ditto_overlay_install(ID3D12Device *device) {
-    static bool tried;
-    if (tried || !device || !g_cfg.menuKey) return;
-    tried = true;
-    // (once per process: the FidelityFX DLL and the XeSS proxy may both be loaded)
+// The menu, once per process: the FidelityFX DLL and the XeSS proxy may both be loaded, a game may have a D3D12 and a
+// Vulkan context (false: another has it, or there is no menu key)
+static bool claim_menu() {
+    static int claimed = -1;
+    if (claimed >= 0) return false;
+    claimed = 0;
+    if (!g_cfg.menuKey) return false;
     char name[64];
     snprintf(name, sizeof name, "Local\\DittoSR_menu_%lu", GetCurrentProcessId());
     HANDLE mx = CreateMutexA(nullptr, FALSE, name);
     if (!mx || GetLastError() == ERROR_ALREADY_EXISTS) {
         if (mx) CloseHandle(mx);
         ditto_log("menu: another DittoSR in this process has it\n");
-        return;
+        return false;
     }
     LARGE_INTEGER f;
     QueryPerformanceFrequency(&f);
     g_qpcMs = 1000.0 / (double)f.QuadPart;
+    claimed = 1;
+    return true;
+}
+
+void ditto_overlay_install(ID3D12Device *device) {
+    if (!device || !claim_menu()) return;
     // a dummy swap chain on the game's device: its vtable is the game's swap chain's
     WNDCLASSEXW wc = {sizeof wc};
     wc.lpfnWndProc = DefWindowProcW, wc.hInstance = GetModuleHandleW(nullptr), wc.lpszClassName = L"DittoSRMenuProbe";
@@ -1126,4 +1408,46 @@ void ditto_overlay_install(ID3D12Device *device) {
     if (q) q->Release();
     if (fac) fac->Release();
     if (hw) DestroyWindow(hw);
+}
+
+void ditto_overlay_install_window() {
+    if (!claim_menu()) return;
+    // (pinned: the window's thread runs in this DLL)
+    HMODULE self;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, (LPCWSTR)&ditto_overlay_install_window, &self);
+    g_winMode = true;
+    HANDLE th = CreateThread(nullptr, 0, win_thread, nullptr, 0, nullptr);
+    if (th) CloseHandle(th);
+    else g_winMode = false, ditto_log("menu: could not start its thread\n");
+}
+
+void ditto_overlay_tick() {
+    if (g_winMode) record_frame();
+}
+
+// The harness' look at the window's menu (menu=1): the panel open at W x H, the row sel selected, drawn as the window
+// draws it - premultiplied BGRA into bgra (W x H). 0: no font
+extern "C" __declspec(dllexport) int DittoSRMenuSnapshot(int W, int H, int sel, uint32_t *bgra) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (g_qpcMs <= 0.0) {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        g_qpcMs = 1000.0 / (double)f.QuadPart;
+    }
+    float scale = fminf(fmaxf(H / 1080.0f, 0.75f), 3.0f);
+    if (fabsf(g_font.scale - scale) >= 0.01f || g_font.pix.empty()) {
+        if (!build_atlas(scale, g_font.f, g_font.pix, g_font.w, g_font.h)) return 0;
+        g_font.scale = scale;
+    }
+    Menu keep = g_m;
+    g_m.open = true, g_m.anim = 1.0f, g_m.sel = sel;
+    Ui u;
+    make_panel(u, (float)W, (float)H, scale, now_ms(), false);
+    // (as the window: its own strip, its buffer kept)
+    int bw = (int)fminf(ceilf(420.0f * scale), (float)W);
+    static std::vector<float> acc;
+    acc.resize((size_t)bw * H * 4);
+    paint(u.q, acc.data(), bgra, W, bw, H, scale);
+    g_m = keep;
+    return 1;
 }

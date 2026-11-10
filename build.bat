@@ -35,14 +35,17 @@ rem the anti-shimmer variants of the upscale (D3D12; picked when anti_shimmer > 
 rem the in-game menu (overlay.cpp): a vertex and a pixel shader
 %DXC% -nologo -T vs_6_0 -E vs -O3 -Fh "%OUT%\gen\ov_vs.h" -Vn g_ov_vs "%ROOT%shaders\overlay.hlsl" || exit /b 1
 %DXC% -nologo -T ps_6_0 -E ps -O3 -Fh "%OUT%\gen\ov_ps.h" -Vn g_ov_ps "%ROOT%shaders\overlay.hlsl" || exit /b 1
-rem Vulkan (SPIR-V): one descriptor set - b0 the constants at 0, t0-t6 at 10, u0-u1 at 20, s0 at 30 (dittosr_vk.cpp)
+rem Vulkan (SPIR-V): one descriptor set - b0 the constants at 0, t0-t7 at 10, u0-u2 at 20, s0 at 30 (dittosr_vk.cpp)
 set SPVF=-nologo -spirv -fspv-target-env=vulkan1.1 -fvk-b-shift 0 0 -fvk-t-shift 10 0 -fvk-u-shift 20 0 -fvk-s-shift 30 0 -D DITTO_VK=1 -T cs_6_0 -E main -O3
-for %%s in (convert motion upscale) do (
+for %%s in (convert motion) do (
   "%SPV%" %SPVF% -Fh "%OUT%\gen\spv_%%s.h" -Vn g_spv_%%s "%ROOT%shaders\%%s.hlsl" || exit /b 1
 )
-rem the sharpening pass writes the game's output: once per output format
+rem the upscale (fused, or a debug view) and the sharpening write the game's output: once per output format, the upscale
+rem once more per history format (RGB10A2, RGBA16F) - always with the anti-shimmer (its strength 0 turns it off)
 for %%f in (rgba16f rgba8 rgb10a2 r11g11b10f rgba32f) do (
   "%SPV%" %SPVF% -DOUTFMT=\"%%f\" -Fh "%OUT%\gen\spv_sharpen_%%f.h" -Vn g_spv_sharpen_%%f "%ROOT%shaders\sharpen.hlsl" || exit /b 1
+  "%SPV%" %SPVF% -DANTI_SHIMMER=1 -DHISTFMT=\"rgb10a2\" -DOUTFMT=\"%%f\" -Fh "%OUT%\gen\spv_upscale_h10_%%f.h" -Vn g_spv_upscale_h10_%%f "%ROOT%shaders\upscale.hlsl" || exit /b 1
+  "%SPV%" %SPVF% -DANTI_SHIMMER=1 -DHISTFMT=\"rgba16f\" -DOUTFMT=\"%%f\" -Fh "%OUT%\gen\spv_upscale_h16_%%f.h" -Vn g_spv_upscale_h16_%%f "%ROOT%shaders\upscale.hlsl" || exit /b 1
 )
 
 cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /LD /I"%ROOT%src" /I"%OUT%\gen" /I"%ROOT%third_party\vulkan\include" "%ROOT%src\ffx_dll.cpp" ^
@@ -56,7 +59,7 @@ if not exist "%OUT%\obj_xess" mkdir "%OUT%\obj_xess"
 cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /LD /I"%ROOT%src" /I"%OUT%\gen" "%ROOT%src\xess_dll.cpp" "%ROOT%src\dittosr.cpp" ^
    "%ROOT%src\common.cpp" "%ROOT%src\overlay.cpp" /Fo"%OUT%\obj_xess\\" /Fe"%OUT%\libxess.dll" /link d3d12.lib dxgi.lib user32.lib gdi32.lib || exit /b 1
 
-cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /I"%ROOT%src" /I"%ROOT%test" "%ROOT%test\harness.cpp" ^
+cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /I"%ROOT%src" /I"%ROOT%test" /I"%ROOT%third_party\vulkan\include" "%ROOT%test\harness.cpp" ^
    /Fo"%OUT%\obj\\" /Fe"%OUT%\harness.exe" /link d3d12.lib dxgi.lib || exit /b 1
 call "%ROOT%loader\build.bat" || exit /b 1
 echo built %OUT%\amd_fidelityfx_dx12.dll, amd_fidelityfx_loader_dx12.dll, amd_fidelityfx_vk.dll, libxess.dll, harness.exe

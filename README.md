@@ -84,8 +84,9 @@ What changed from GSR 2's upscale, in short:
 
 On integrated GPUs the history is stored as RGB10A2 (`history_10bit`, on by default) and, up to 2.5x, the sharpening
 runs inside the upscale instead of a pass of its own (`fused_sharpen`). Half precision (`fp16`) is off by default: on
-the ROG Ally it was slower than full precision. The Vulkan path runs the same passes from the same HLSL, with only Vulkan 1.1 core: its
-history is RGBA16F and its shaders FP32.
+the ROG Ally it was slower than full precision. The Vulkan path runs the same passes from the same HLSL, with only Vulkan 1.1
+core (no extension, no optional feature) and the same results as DirectX 12, auto exposure, anti-shimmer, 10-bit history
+and fused sharpening included; its shaders are FP32.
 
 ## Results
 
@@ -121,15 +122,18 @@ The upscale's GPU time (`scripts\bench.ps1`, the median of 400), RTX 5070 Ti:
 
 ## In-game menu
 
-**F7** opens a side panel on the left of the game (DirectX 12): DittoSR's GPU time and the frame time as a graph, the upscaler
-(DittoSR or the game's own, and the side-by-side comparison), sharpness, frame weight, anti-shimmer, motion detail, auto
-reactive, the debug views and the indicator. Changes apply at once; **Save** writes them to
+**F7** opens a side panel on the left of the game: DittoSR's GPU time and the frame time as a graph, the upscaler
+(DittoSR or the game's own, and the side-by-side comparison), sharpness, frame weight, anti-shimmer, motion detail, the
+debug views and the indicator. Changes apply at once; **Save** writes them to
 `dittosr.ini` (only what differs from the defaults, besides sharpness and frame weight), **Defaults** restores the
 defaults, **Revert** reads the file again.
 
 Arrows select and adjust, Enter resets a slider to its default or switches an option, Backspace or F7 closes it. While
 it is open the arrows and Enter don't reach the game; where the game shows a mouse cursor, the panel takes clicks and
 drags too. `menu_key` changes the key (`0`: no menu).
+
+On DirectX 12 the panel is drawn into the game's frame. On Vulkan it is a window of its own over the game's, shown while
+the game is in front: a game in exclusive fullscreen may hide it - borderless or windowed shows it.
 
 ## Settings (`dittosr.ini`)
 
@@ -151,9 +155,9 @@ drags too. `menu_key` changes the key (`0`: no menu).
 - `ratio_quality`, `ratio_balanced`, `ratio_performance`, `ratio_ultra_performance`: the ratio each quality mode gets (1 to 4), e.g. `ratio_ultra_performance=2.5`. FidelityFX API only.
 - `compare=1`, the menu, or a key of its own (`compare_key`, none by default): DittoSR on the left half, the game's own upscaler on the right (needs the game's DLL alongside).
 - `menu_key` (`0x76`, F7; `0` off): the in-game menu's key.
-- `anti_shimmer` (0.4 up to 2x, 0.2 at 3x, DirectX 12; `0` off), `auto_reactive` (0.5; `0` off), `stab_step`: steadiness against responsiveness.
+- `anti_shimmer` (0.4 up to 2x, 0.2 at 3x; `0` off), `auto_reactive` (0.5; `0` off), `stab_step`: steadiness against responsiveness.
 - `history_sharpen` (1; `0` off): how far the history's resampling blur is made up in motion (fine moving detail).
-- `history_10bit`, `fp16`, `fused_sharpen` (1; `0`: the separate sharpening pass): performance (see above).
+- `history_10bit`, `fp16` (DirectX 12), `fused_sharpen` (1; `0`: the separate sharpening pass): performance (see above).
 - `game_sharpness`: the sharpness sent with the upscale call in place of the ini's: `-1` (default) only from OptiScaler's custom folder, `1` always, `0` never.
 - `toggle_key`, `reload_key`, `debug_view`, `log_dispatches`: diagnosis.
 - The reconstruction's knobs: `width`, `conf`, `share_far`, `share_near`, `alpha_rest`, `gamma_rest`, `motion_gamma`, `motion_share`, `motion_minmax`, `motion_near`, `split_clip`, `react`, `change_scale`, `exposure_scale`, `encode_power`, `reactive_scale`, `jitter_sign_x`, `jitter_sign_y`, `mv_sign`.
@@ -172,8 +176,8 @@ build.bat
 `amd_fidelityfx_vk.dll`), `libxess.dll`, `harness.exe` and `DittoSRLoader.exe`. `scripts\package.ps1` packs them into
 `build\DittoSR.zip`.
 
-`build\harness.exe <folder> <png prefix> [key=value ...]` runs the offline test against the DLL in `<folder>`; its
-options (scenes, ratio, speed, the GPU) are listed at the top of `test/harness.cpp`.
+`build\harness.exe <folder> <png prefix> [key=value ...]` runs the offline test against the DLL in `<folder>`, on
+DirectX 12 or on Vulkan (`api=vk`); its options (scenes, ratio, speed, the GPU) are listed at the top of `test/harness.cpp`.
 
 ## License
 

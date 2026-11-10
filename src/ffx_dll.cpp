@@ -231,6 +231,7 @@ FFX_API_ENTRY ffxReturnCode_t ffxCreateContext(ffxContext *context, ffxCreateCon
     } else {
         c->dittoVk = new DittoSRVk(bv->vkDevice, bv->vkPhysicalDevice, bv->vkDeviceProcAddr, c->ci, g_cfg.s);
         if (!c->dittoVk->ok()) ditto_log("DittoSR (Vulkan): setup failed%s\n", c->real ? ", AMD's FSR instead" : ""), delete c->dittoVk, c->dittoVk = nullptr;
+        else ditto_overlay_install_window();  // (the D3D12 menu installs with its DittoSR)
     }
     if (!c->ditto && !c->dittoVk && !c->real) return delete c, FFX_API_RETURN_ERROR_RUNTIME_ERROR;
     c->useDitto = c->ditto || c->dittoVk;
@@ -367,6 +368,7 @@ FFX_API_ENTRY ffxReturnCode_t ffxDispatch(ffxContext *context, const ffxDispatch
         log_res("reactive", d->reactive, vk), log_res("transp/comp", d->transparencyAndComposition, vk), log_res("output", d->output, vk);
     }
     c->dispatches++;
+    if (c->dittoVk) ditto_overlay_tick();  // (Vulkan: the menu's frame times - an upscale a frame)
     ditto_stats_update(1, d->renderSize.width, d->renderSize.height, d->upscaleSize.width, d->upscaleSize.height,
                        c->useDitto && (c->ditto || c->dittoVk), c->compare && c->real, c->real != nullptr);
     if (c->useDitto && (c->ditto || c->dittoVk)) {

@@ -27,6 +27,9 @@
 //     mvs=1           the motion vectors handed to the upscaler x this (0.8: 20 % short - a game's imprecise ones; the
 //                     clip has to catch what they miss)
 //     out=1440x810    the output size (the render: out / ratio); psnr=0: the GPU time alone (no reference, no PNGs)
+//     api=dx12        or vk: the upscaler on Vulkan (dll=amd_fidelityfx_vk.dll) - a device with no extension and no
+//                     optional feature, as the least a game may hand over; gpu= its physical device's index
+//     outfmt=rgba16f  or rgba8: the output's format (the Vulkan passes are compiled per output format)
 // Reported: the upscale's GPU time (timestamps either side of its dispatch, the median); PSNR against the scene
 // supersampled 4x4 at output size (in a perceptual domain: sqrt of Reinhard), at the
 // middle and last frames, PNGs of both; with an integer pan (grass), the shimmer - the mean difference between frame t
@@ -47,6 +50,9 @@
 
 #include "ffx_api/ffx_api.h"
 #include "ffx_api/ffx_upscale.h"
+#define VK_NO_PROTOTYPES
+#include <vulkan/vulkan.h>
+#include "ffx_api/vk/ffx_api_vk.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
@@ -344,6 +350,391 @@ static FfxApiResource res(ID3D12Resource *r, uint32_t state) {
     return a;
 }
 
+// ---- the graphics API the upscaler runs on: D3D12 (api=dx12) or Vulkan (api=vk) ----
+enum Kind { K_COLOR, K_DEPTH, K_MV, K_OUT };
+static uint32_t ffx_format(Kind k, bool out8) {
+    return k == K_COLOR ? FFX_API_SURFACE_FORMAT_R16G16B16A16_FLOAT : k == K_DEPTH ? FFX_API_SURFACE_FORMAT_R32_FLOAT
+           : k == K_MV ? FFX_API_SURFACE_FORMAT_R16G16_FLOAT : out8 ? FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM
+                                                                     : FFX_API_SURFACE_FORMAT_R16G16B16A16_FLOAT;
+}
+struct Tex {
+    void *r = nullptr;
+    Kind k;
+    uint32_t w, h;
+    bool out8 = false;
+    int layout = 0;  // (Vulkan: 0 undefined, 1 its working layout)
+};
+struct Api {
+    virtual ~Api() {}
+    virtual bool init(int gpu) = 0;
+    virtual const char *adapter() = 0;
+    virtual ffxCreateContextDescHeader *backend() = 0;  // (the context's backend description)
+    virtual void *device() = 0;
+    virtual Tex texture(uint32_t w, uint32_t h, Kind k, bool out8) = 0;
+    // the render's three inputs (rows of w texels: 8, 4 and 4 bytes) uploaded, submitted, waited for
+    virtual void upload(Tex *const in[3], const void *const data[3], uint32_t w, uint32_t h) = 0;
+    virtual void *begin() = 0;  // the dispatch's command list, its first timestamp written
+    virtual void end(Tex &out, bool grab) = 0;  // the second timestamp, the output copied (grab), submitted, waited for
+    virtual double gpu_ms() = 0;
+    virtual const uint8_t *map(size_t *pitch) = 0;  // (the output end(grab) copied)
+    virtual void unmap() = 0;
+    virtual bool lost() = 0;
+    double wallMs = 0.0;  // (the last end()'s submit to idle)
+    FfxApiResource res(const Tex &t) {
+        FfxApiResource a = {};
+        a.resource = t.r;
+        a.state = t.k == K_OUT ? FFX_API_RESOURCE_STATE_UNORDERED_ACCESS : FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ;
+        a.description.type = FFX_API_RESOURCE_TYPE_TEXTURE2D, a.description.width = t.w, a.description.height = t.h;
+        a.description.depth = 1, a.description.mipCount = 1, a.description.format = ffx_format(t.k, t.out8);
+        if (t.k == K_OUT) a.description.usage = FFX_API_RESOURCE_USAGE_UAV;
+        return a;
+    }
+};
+static double qpc_ms() {
+    LARGE_INTEGER t, f;
+    QueryPerformanceCounter(&t), QueryPerformanceFrequency(&f);
+    return 1000.0 * t.QuadPart / f.QuadPart;
+}
+
+struct Dx12 : Api {
+    Gpu g = {};
+    ffxCreateBackendDX12Desc be = {};
+    ID3D12Resource *up = nullptr, *rb = nullptr, *qrb = nullptr;
+    ID3D12QueryHeap *qh = nullptr;
+    UINT64 tsFreq = 1;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT ofp = {};
+    char name[256] = "";
+    const D3D12_RESOURCE_STATES SRV = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    bool first = true;
+    bool init(int gpu) override {
+        // the GPU with the most memory (not the integrated one), or gpu=: DXGI's adapter index
+        IDXGIFactory6 *fac;
+        CHECK(CreateDXGIFactory2(0, IID_PPV_ARGS(&fac)));
+        IDXGIAdapter1 *best = nullptr, *a;
+        SIZE_T bestMem = 0;
+        for (UINT i = 0; fac->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; i++) {
+            DXGI_ADAPTER_DESC1 d;
+            a->GetDesc1(&d);
+            if (gpu >= 0 ? (int)i == gpu : !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) && d.DedicatedVideoMemory > bestMem)
+                best = a, bestMem = d.DedicatedVideoMemory;
+        }
+        if (!best) return false;
+        DXGI_ADAPTER_DESC1 ad;
+        best->GetDesc1(&ad);
+        snprintf(name, sizeof name, "%ls (D3D12)", ad.Description);
+        CHECK(D3D12CreateDevice(best, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&g.dev)));
+        D3D12_COMMAND_QUEUE_DESC qd = {D3D12_COMMAND_LIST_TYPE_DIRECT};
+        CHECK(g.dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&g.q)));
+        CHECK(g.dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&g.ca)));
+        CHECK(g.dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g.ca, nullptr, IID_PPV_ARGS(&g.cl)));
+        CHECK(g.dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g.fence)));
+        g.ev = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+        g.cl->Close();
+        be = {{FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12, nullptr}, g.dev};
+        up = buffer(g, 96ull << 20, D3D12_HEAP_TYPE_UPLOAD);
+        D3D12_QUERY_HEAP_DESC qhd = {D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 2};
+        CHECK(g.dev->CreateQueryHeap(&qhd, IID_PPV_ARGS(&qh)));
+        qrb = buffer(g, 16, D3D12_HEAP_TYPE_READBACK);
+        g.q->GetTimestampFrequency(&tsFreq);
+        return true;
+    }
+    const char *adapter() override { return name; }
+    ffxCreateContextDescHeader *backend() override { return &be.header; }
+    void *device() override { return g.dev; }
+    Tex texture(uint32_t w, uint32_t h, Kind k, bool out8) override {
+        Tex t;
+        t.k = k, t.w = w, t.h = h, t.out8 = out8;
+        DXGI_FORMAT f = k == K_COLOR ? DXGI_FORMAT_R16G16B16A16_FLOAT : k == K_DEPTH ? DXGI_FORMAT_R32_TYPELESS
+                        : k == K_MV ? DXGI_FORMAT_R16G16_FLOAT : out8 ? DXGI_FORMAT_R8G8B8A8_UNORM : DXGI_FORMAT_R16G16B16A16_FLOAT;
+        ID3D12Resource *r = tex(g, w, h, f, k == K_OUT, k == K_OUT ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_COPY_DEST);
+        t.r = r;
+        if (k == K_OUT) {
+            D3D12_RESOURCE_DESC od = r->GetDesc();
+            UINT64 obytes;
+            g.dev->GetCopyableFootprints(&od, 0, 1, 0, &ofp, nullptr, nullptr, &obytes);
+            rb = buffer(g, obytes, D3D12_HEAP_TYPE_READBACK);
+        }
+        return t;
+    }
+    void upload(Tex *const in[3], const void *const data[3], uint32_t w, uint32_t h) override {
+        g.ca->Reset();
+        g.cl->Reset(g.ca, nullptr);
+        if (!first)
+            for (int i = 0; i < 3; i++) barrier(g.cl, (ID3D12Resource *)in[i]->r, SRV, D3D12_RESOURCE_STATE_COPY_DEST);
+        UINT64 off = 0;
+        const uint32_t bpp[3] = {8, 4, 4};
+        for (int i = 0; i < 3; i++) ::upload(g, up, off, (ID3D12Resource *)in[i]->r, data[i], w, h, bpp[i]);
+        for (int i = 0; i < 3; i++) barrier(g.cl, (ID3D12Resource *)in[i]->r, D3D12_RESOURCE_STATE_COPY_DEST, SRV);
+        CHECK(g.cl->Close());
+        ID3D12CommandList *lists[1] = {g.cl};
+        g.q->ExecuteCommandLists(1, lists);
+        g.wait();
+        first = false;
+    }
+    void *begin() override {
+        g.ca->Reset();
+        g.cl->Reset(g.ca, nullptr);
+        g.cl->EndQuery(qh, D3D12_QUERY_TYPE_TIMESTAMP, 0);
+        return g.cl;
+    }
+    void end(Tex &out, bool grab) override {
+        ID3D12Resource *o = (ID3D12Resource *)out.r;
+        g.cl->EndQuery(qh, D3D12_QUERY_TYPE_TIMESTAMP, 1);
+        g.cl->ResolveQueryData(qh, D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, qrb, 0);
+        if (grab) {
+            barrier(g.cl, o, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            D3D12_TEXTURE_COPY_LOCATION s = {o, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX}, d = {rb, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+            d.PlacedFootprint = ofp;
+            g.cl->CopyTextureRegion(&d, 0, 0, 0, &s, nullptr);
+            barrier(g.cl, o, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        }
+        CHECK(g.cl->Close());
+        ID3D12CommandList *lists[1] = {g.cl};
+        double t0 = qpc_ms();
+        g.q->ExecuteCommandLists(1, lists);
+        g.wait();
+        wallMs = qpc_ms() - t0;
+    }
+    double gpu_ms() override {
+        UINT64 *ts;
+        D3D12_RANGE rr = {0, 16};
+        qrb->Map(0, &rr, (void **)&ts);
+        double ms = 1000.0 * (double)(ts[1] - ts[0]) / (double)tsFreq;
+        qrb->Unmap(0, nullptr);
+        return ms;
+    }
+    const uint8_t *map(size_t *pitch) override {
+        uint8_t *mp;
+        rb->Map(0, nullptr, (void **)&mp);
+        *pitch = ofp.Footprint.RowPitch;
+        return mp;
+    }
+    void unmap() override { rb->Unmap(0, nullptr); }
+    bool lost() override {
+        if (g.dev->GetDeviceRemovedReason() == S_OK) return false;
+        printf("device removed 0x%08x\n", (unsigned)g.dev->GetDeviceRemovedReason());
+        return true;
+    }
+};
+
+#define VKCHECK(x) do { VkResult r_ = (x); if (r_ != VK_SUCCESS) { printf("%s failed %d (line %d)\n", #x, (int)r_, __LINE__); exit(1); } } while (0)
+// (AMD's FSR on Vulkan - as <dll>.orig.dll, the comparison - needs device features this bare device lacks: DittoSR alone)
+struct Vk : Api {
+    PFN_vkGetInstanceProcAddr gipa = nullptr;
+    PFN_vkGetDeviceProcAddr gdpa = nullptr;
+#define VKI(n) PFN_##n n = nullptr;
+    VKI(vkCreateInstance) VKI(vkEnumeratePhysicalDevices) VKI(vkGetPhysicalDeviceProperties) VKI(vkGetPhysicalDeviceQueueFamilyProperties)
+    VKI(vkGetPhysicalDeviceMemoryProperties) VKI(vkCreateDevice) VKI(vkEnumerateInstanceLayerProperties)
+    VKI(vkGetDeviceQueue) VKI(vkCreateCommandPool) VKI(vkAllocateCommandBuffers) VKI(vkBeginCommandBuffer) VKI(vkEndCommandBuffer)
+    VKI(vkQueueSubmit) VKI(vkQueueWaitIdle) VKI(vkResetCommandPool) VKI(vkCreateImage) VKI(vkGetImageMemoryRequirements)
+    VKI(vkAllocateMemory) VKI(vkBindImageMemory) VKI(vkCreateBuffer) VKI(vkGetBufferMemoryRequirements) VKI(vkBindBufferMemory)
+    VKI(vkMapMemory) VKI(vkCmdPipelineBarrier) VKI(vkCmdCopyBufferToImage) VKI(vkCmdCopyImageToBuffer) VKI(vkCreateQueryPool)
+    VKI(vkCmdResetQueryPool) VKI(vkCmdWriteTimestamp) VKI(vkGetQueryPoolResults)
+#undef VKI
+    VkInstance inst = VK_NULL_HANDLE;
+    VkPhysicalDevice phys = VK_NULL_HANDLE;
+    VkDevice dev = VK_NULL_HANDLE;
+    VkQueue q = VK_NULL_HANDLE;
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkCommandBuffer cb = VK_NULL_HANDLE;
+    VkQueryPool qp = VK_NULL_HANDLE;
+    double tickMs = 0.0;
+    VkPhysicalDeviceMemoryProperties mp = {};
+    uint8_t *upMap = nullptr, *rbMap = nullptr;
+    VkBuffer up = VK_NULL_HANDLE, rb = VK_NULL_HANDLE;
+    size_t rbPitch = 0;
+    ffxCreateBackendVKDesc be = {};
+    char name[300] = "";
+
+    uint32_t memtype(uint32_t bits, VkMemoryPropertyFlags want) {
+        for (uint32_t i = 0; i < mp.memoryTypeCount; i++)
+            if ((bits & (1u << i)) && (mp.memoryTypes[i].propertyFlags & want) == want) return i;
+        printf("no memory type 0x%x\n", (unsigned)want), exit(1);
+    }
+    VkDeviceMemory alloc(VkMemoryRequirements mr, VkMemoryPropertyFlags want) {
+        VkMemoryAllocateInfo ai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = mr.size, ai.memoryTypeIndex = memtype(mr.memoryTypeBits, want);
+        VkDeviceMemory m;
+        VKCHECK(vkAllocateMemory(dev, &ai, nullptr, &m));
+        return m;
+    }
+    uint8_t *hostBuffer(VkDeviceSize size, VkBufferUsageFlags use, VkBuffer *b) {
+        VkBufferCreateInfo bc = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bc.size = size, bc.usage = use;
+        VKCHECK(vkCreateBuffer(dev, &bc, nullptr, b));
+        VkMemoryRequirements mr;
+        vkGetBufferMemoryRequirements(dev, *b, &mr);
+        VkDeviceMemory m = alloc(mr, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VKCHECK(vkBindBufferMemory(dev, *b, m, 0));
+        void *p;
+        VKCHECK(vkMapMemory(dev, m, 0, VK_WHOLE_SIZE, 0, &p));
+        return (uint8_t *)p;
+    }
+    bool init(int gpu) override {
+        HMODULE lib = LoadLibraryA("vulkan-1.dll");
+        if (!lib || !(gipa = (PFN_vkGetInstanceProcAddr)GetProcAddress(lib, "vkGetInstanceProcAddr"))) return printf("no vulkan-1.dll\n"), false;
+#define G(n) n = (PFN_##n)gipa(inst, #n);
+        G(vkCreateInstance) G(vkEnumerateInstanceLayerProperties)
+        VkApplicationInfo app = {VK_STRUCTURE_TYPE_APPLICATION_INFO};
+        app.pApplicationName = "DittoSR harness", app.apiVersion = VK_API_VERSION_1_1;
+        VkInstanceCreateInfo ic = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+        ic.pApplicationInfo = &app;
+        // (the validation layer where it is installed - the Vulkan SDK's)
+        const char *val = "VK_LAYER_KHRONOS_validation";
+        uint32_t nl = 0;
+        vkEnumerateInstanceLayerProperties(&nl, nullptr);
+        std::vector<VkLayerProperties> lp(nl);
+        vkEnumerateInstanceLayerProperties(&nl, lp.data());
+        for (auto &l : lp)
+            if (!strcmp(l.layerName, val)) ic.enabledLayerCount = 1, ic.ppEnabledLayerNames = &val, printf("validation layer on\n");
+        VKCHECK(vkCreateInstance(&ic, nullptr, &inst));
+        G(vkEnumeratePhysicalDevices) G(vkGetPhysicalDeviceProperties) G(vkGetPhysicalDeviceQueueFamilyProperties)
+        G(vkGetPhysicalDeviceMemoryProperties) G(vkCreateDevice)
+#undef G
+        gdpa = (PFN_vkGetDeviceProcAddr)gipa(inst, "vkGetDeviceProcAddr");
+        uint32_t n = 0;
+        vkEnumeratePhysicalDevices(inst, &n, nullptr);
+        std::vector<VkPhysicalDevice> pd(n);
+        vkEnumeratePhysicalDevices(inst, &n, pd.data());
+        // (the discrete GPU, or gpu=: the physical device's index)
+        VkPhysicalDeviceProperties pp = {};
+        for (uint32_t i = 0; i < n; i++) {
+            VkPhysicalDeviceProperties p;
+            vkGetPhysicalDeviceProperties(pd[i], &p);
+            if (gpu >= 0 ? (int)i == gpu : (!phys || p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) && pp.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+                phys = pd[i], pp = p;
+        }
+        if (!phys) return printf("no Vulkan device\n"), false;
+        snprintf(name, sizeof name, "%s (Vulkan %u.%u)", pp.deviceName, VK_VERSION_MAJOR(pp.apiVersion), VK_VERSION_MINOR(pp.apiVersion));
+        tickMs = pp.limits.timestampPeriod * 1e-6;
+        vkGetPhysicalDeviceMemoryProperties(phys, &mp);
+        uint32_t nq = 0, qf = UINT32_MAX;
+        vkGetPhysicalDeviceQueueFamilyProperties(phys, &nq, nullptr);
+        std::vector<VkQueueFamilyProperties> qfp(nq);
+        vkGetPhysicalDeviceQueueFamilyProperties(phys, &nq, qfp.data());
+        for (uint32_t i = 0; i < nq && qf == UINT32_MAX; i++)
+            if ((qfp[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) == (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) qf = i;
+        float prio = 1.0f;
+        VkDeviceQueueCreateInfo qc = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+        qc.queueFamilyIndex = qf, qc.queueCount = 1, qc.pQueuePriorities = &prio;
+        VkDeviceCreateInfo dc = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+        dc.queueCreateInfoCount = 1, dc.pQueueCreateInfos = &qc;  // (no extension, no feature)
+        VKCHECK(vkCreateDevice(phys, &dc, nullptr, &dev));
+#define D(n) n = (PFN_##n)gdpa(dev, #n);
+        D(vkGetDeviceQueue) D(vkCreateCommandPool) D(vkAllocateCommandBuffers) D(vkBeginCommandBuffer) D(vkEndCommandBuffer)
+        D(vkQueueSubmit) D(vkQueueWaitIdle) D(vkResetCommandPool) D(vkCreateImage) D(vkGetImageMemoryRequirements)
+        D(vkAllocateMemory) D(vkBindImageMemory) D(vkCreateBuffer) D(vkGetBufferMemoryRequirements) D(vkBindBufferMemory)
+        D(vkMapMemory) D(vkCmdPipelineBarrier) D(vkCmdCopyBufferToImage) D(vkCmdCopyImageToBuffer) D(vkCreateQueryPool)
+        D(vkCmdResetQueryPool) D(vkCmdWriteTimestamp) D(vkGetQueryPoolResults)
+#undef D
+        vkGetDeviceQueue(dev, qf, 0, &q);
+        VkCommandPoolCreateInfo pc = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pc.queueFamilyIndex = qf;
+        VKCHECK(vkCreateCommandPool(dev, &pc, nullptr, &pool));
+        VkCommandBufferAllocateInfo ca = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        ca.commandPool = pool, ca.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, ca.commandBufferCount = 1;
+        VKCHECK(vkAllocateCommandBuffers(dev, &ca, &cb));
+        VkQueryPoolCreateInfo qpc = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        qpc.queryType = VK_QUERY_TYPE_TIMESTAMP, qpc.queryCount = 2;
+        VKCHECK(vkCreateQueryPool(dev, &qpc, nullptr, &qp));
+        upMap = hostBuffer(96ull << 20, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &up);
+        be = {{FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_VK, nullptr}, dev, phys, gdpa};
+        return true;
+    }
+    const char *adapter() override { return name; }
+    ffxCreateContextDescHeader *backend() override { return &be.header; }
+    void *device() override { return dev; }
+    Tex texture(uint32_t w, uint32_t h, Kind k, bool out8) override {
+        Tex t;
+        t.k = k, t.w = w, t.h = h, t.out8 = out8;
+        VkImageCreateInfo ic = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ic.imageType = VK_IMAGE_TYPE_2D, ic.extent = {w, h, 1}, ic.mipLevels = 1, ic.arrayLayers = 1, ic.samples = VK_SAMPLE_COUNT_1_BIT;
+        ic.format = k == K_COLOR ? VK_FORMAT_R16G16B16A16_SFLOAT : k == K_DEPTH ? VK_FORMAT_R32_SFLOAT : k == K_MV ? VK_FORMAT_R16G16_SFLOAT
+                    : out8 ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R16G16B16A16_SFLOAT;
+        ic.tiling = VK_IMAGE_TILING_OPTIMAL, ic.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        ic.usage = VK_IMAGE_USAGE_SAMPLED_BIT | (k == K_OUT ? VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT : VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        VkImage im;
+        VKCHECK(vkCreateImage(dev, &ic, nullptr, &im));
+        VkMemoryRequirements mr;
+        vkGetImageMemoryRequirements(dev, im, &mr);
+        VKCHECK(vkBindImageMemory(dev, im, alloc(mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT), 0));
+        t.r = (void *)im;
+        if (k == K_OUT) rbPitch = (size_t)w * (out8 ? 4 : 8), rbMap = hostBuffer(rbPitch * h, VK_BUFFER_USAGE_TRANSFER_DST_BIT, &rb);
+        return t;
+    }
+    void layout(Tex &t, VkImageLayout from, VkImageLayout to) {
+        VkImageMemoryBarrier b = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT, b.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        b.oldLayout = from, b.newLayout = to, b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = (VkImage)t.r, b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    }
+    void record() {
+        VKCHECK(vkResetCommandPool(dev, pool, 0));
+        VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        VKCHECK(vkBeginCommandBuffer(cb, &bi));
+    }
+    void submit() {
+        VKCHECK(vkEndCommandBuffer(cb));
+        VkSubmitInfo si = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        si.commandBufferCount = 1, si.pCommandBuffers = &cb;
+        VKCHECK(vkQueueSubmit(q, 1, &si, VK_NULL_HANDLE));
+        VKCHECK(vkQueueWaitIdle(q));
+    }
+    void upload(Tex *const in[3], const void *const data[3], uint32_t w, uint32_t h) override {
+        record();
+        const uint32_t bpp[3] = {8, 4, 4};
+        VkDeviceSize off = 0;
+        for (int i = 0; i < 3; i++) {
+            Tex &t = *in[i];
+            memcpy(upMap + off, data[i], (size_t)w * h * bpp[i]);
+            layout(t, t.layout ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            VkBufferImageCopy c = {};
+            c.bufferOffset = off, c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, c.imageExtent = {w, h, 1};
+            vkCmdCopyBufferToImage(cb, up, (VkImage)t.r, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+            layout(t, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            t.layout = 1;
+            off = (off + (VkDeviceSize)w * h * bpp[i] + 255) & ~255ull;
+        }
+        submit();
+    }
+    Tex *outTex = nullptr;
+    void *begin() override {
+        record();
+        vkCmdResetQueryPool(cb, qp, 0, 2);
+        vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, qp, 0);
+        return (void *)cb;
+    }
+    void end(Tex &out, bool grab) override {
+        vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, qp, 1);
+        if (grab) {
+            layout(out, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            VkBufferImageCopy c = {};
+            c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, c.imageExtent = {out.w, out.h, 1};
+            vkCmdCopyImageToBuffer(cb, (VkImage)out.r, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb, 1, &c);
+            layout(out, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+        }
+        double t0 = qpc_ms();
+        submit();
+        wallMs = qpc_ms() - t0;
+    }
+    // (the output: GENERAL from the start, as the dispatch is told it is - UNORDERED_ACCESS)
+    void prepare(Tex &out) {
+        record();
+        layout(out, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        submit();
+    }
+    double gpu_ms() override {
+        uint64_t ts[2] = {};
+        if (vkGetQueryPoolResults(dev, qp, 0, 2, sizeof ts, ts, 8, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) != VK_SUCCESS) return 0.0;
+        return (double)(ts[1] - ts[0]) * tickMs;
+    }
+    const uint8_t *map(size_t *pitch) override { return *pitch = rbPitch, rbMap; }
+    void unmap() override {}
+    bool lost() override { return false; }  // (a lost device fails the next submit: VKCHECK)
+};
+
 static const char *opt(int argc, char **argv, const char *key, const char *def) {
     size_t n = strlen(key);
     for (int i = 3; i < argc; i++)
@@ -354,7 +745,9 @@ static const char *opt(int argc, char **argv, const char *key, const char *def) 
 int main(int argc, char **argv) {
     if (argc < 3) return printf("harness.exe <dir> <png prefix> [dll=] [scene=tiles|grass] [frames=] [out=WxH] [ratio=] [vel=] [dense=] [wobble=] [blur=] [mvs=] [light=] [sharpen=] [psnr=1] [flick=0] [gpu=index]\n"), 1;
     const char *dir = argv[1], *prefix = argv[2];
-    const char *dll = opt(argc, argv, "dll", "amd_fidelityfx_dx12.dll");
+    bool vk = !strcmp(opt(argc, argv, "api", "dx12"), "vk");
+    bool out8 = !strcmp(opt(argc, argv, "outfmt", "rgba16f"), "rgba8");
+    const char *dll = opt(argc, argv, "dll", vk ? "amd_fidelityfx_vk.dll" : "amd_fidelityfx_dx12.dll");
     int frames = atoi(opt(argc, argv, "frames", "64"));
     sscanf(opt(argc, argv, "out", "1440x810"), "%ux%u", &OW, &OH);
     bool measure = atoi(opt(argc, argv, "psnr", "1")) != 0;
@@ -391,30 +784,10 @@ int main(int argc, char **argv) {
         if (!lag && (k == 1 || !g_wobble) && fabsf(g_vel * k - roundf(g_vel * k)) < 1e-4f) lag = k;
     bool shimmer = (g_grass || g_glints) && lag > 0 && !g_light && !g_spec && g_wind <= 0.0f;  // (the light breaks the pan's shift: no shimmer then)
 
-    Gpu g = {};
-    // the GPU with the most memory (not the integrated one), or gpu=: DXGI's adapter index
-    int gpu = atoi(opt(argc, argv, "gpu", "-1"));
-    IDXGIFactory6 *fac;
-    CHECK(CreateDXGIFactory2(0, IID_PPV_ARGS(&fac)));
-    IDXGIAdapter1 *best = nullptr, *a;
-    SIZE_T bestMem = 0;
-    for (UINT i = 0; fac->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; i++) {
-        DXGI_ADAPTER_DESC1 d;
-        a->GetDesc1(&d);
-        if (gpu >= 0 ? (int)i == gpu : !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) && d.DedicatedVideoMemory > bestMem)
-            best = a, bestMem = d.DedicatedVideoMemory;
-    }
-    DXGI_ADAPTER_DESC1 ad;
-    best->GetDesc1(&ad);
-    printf("adapter: %ls; %s, %s scene, %ux%u -> %ux%u\n", ad.Description, dll, g_glints ? "glints" : g_grass ? "grass" : "tiles", RW, RH, OW, OH);
-    CHECK(D3D12CreateDevice(best, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&g.dev)));
-    D3D12_COMMAND_QUEUE_DESC qd = {D3D12_COMMAND_LIST_TYPE_DIRECT};
-    CHECK(g.dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&g.q)));
-    CHECK(g.dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&g.ca)));
-    CHECK(g.dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g.ca, nullptr, IID_PPV_ARGS(&g.cl)));
-    CHECK(g.dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g.fence)));
-    g.ev = CreateEventA(nullptr, FALSE, FALSE, nullptr);
-    g.cl->Close();
+    Api *api = vk ? (Api *)new Vk() : (Api *)new Dx12();
+    if (!api->init(atoi(opt(argc, argv, "gpu", "-1")))) return printf("no GPU\n"), 1;
+    printf("adapter: %s; %s, %s scene, %ux%u -> %ux%u%s\n", api->adapter(), dll, g_glints ? "glints" : g_grass ? "grass" : "tiles", RW, RH,
+           OW, OH, out8 ? ", RGBA8 output" : "");
 
     char p[MAX_PATH];
     SetDllDirectoryA(dir);  // (AMD's loader, as <dll>.orig.dll, loads its upscaler DLL by name: the folder, as a game's)
@@ -428,9 +801,8 @@ int main(int argc, char **argv) {
     auto dispatch = (PfnFfxDispatch)GetProcAddress(m, "ffxDispatch");
     auto query = (PfnFfxQuery)GetProcAddress(m, "ffxQuery");
     if (!create || !destroy || !dispatch || !query) return printf("FidelityFX API exports missing\n"), 1;
-    ffxCreateBackendDX12Desc be = {{FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12, nullptr}, g.dev};
     ffxCreateContextDescUpscale cd = {};
-    cd.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE, cd.header.pNext = &be.header;
+    cd.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE, cd.header.pNext = api->backend();
     cd.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_DEPTH_INVERTED | FFX_UPSCALE_ENABLE_DEPTH_INFINITE;
     if (atoi(opt(argc, argv, "autoexp", "0"))) cd.flags |= FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;  // (no exposure given: the upscaler's own)
     cd.maxRenderSize = {RW, RH}, cd.maxUpscaleSize = {OW, OH};
@@ -451,7 +823,7 @@ int main(int argc, char **argv) {
     // (the upscaler's providers, as a game lists them before choosing one)
     uint64_t nv = 8, ids[8];
     const char *names[8];
-    ffxQueryDescGetVersions gv = {{FFX_API_QUERY_DESC_TYPE_GET_VERSIONS}, FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE, g.dev, &nv, ids, names};
+    ffxQueryDescGetVersions gv = {{FFX_API_QUERY_DESC_TYPE_GET_VERSIONS}, FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE, api->device(), &nv, ids, names};
     if (query(nullptr, &gv.header) == FFX_API_RETURN_OK) {
         printf("providers:");
         for (uint64_t i = 0; i < nv && i < 8; i++) printf(" %s (0x%llx)", names[i] ? names[i] : "?", (unsigned long long)ids[i]);
@@ -460,24 +832,9 @@ int main(int argc, char **argv) {
     ffxQueryGetProviderVersion pv = {{FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION}};
     if (query(&ctx, &pv.header) == FFX_API_RETURN_OK && pv.versionName) printf("provider: %s\n", pv.versionName);
 
-    ID3D12Resource *color = tex(g, TW, TH, DXGI_FORMAT_R16G16B16A16_FLOAT, false, D3D12_RESOURCE_STATE_COPY_DEST);
-    ID3D12Resource *depth = tex(g, TW, TH, DXGI_FORMAT_R32_TYPELESS, false, D3D12_RESOURCE_STATE_COPY_DEST);
-    ID3D12Resource *mv = tex(g, TW, TH, DXGI_FORMAT_R16G16_FLOAT, false, D3D12_RESOURCE_STATE_COPY_DEST);
-    ID3D12Resource *out = tex(g, OW, OH, DXGI_FORMAT_R16G16B16A16_FLOAT, true, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    ID3D12Resource *up = buffer(g, 96ull << 20, D3D12_HEAP_TYPE_UPLOAD);
-    D3D12_PLACED_SUBRESOURCE_FOOTPRINT ofp;
-    D3D12_RESOURCE_DESC od = out->GetDesc();
-    UINT64 obytes;
-    g.dev->GetCopyableFootprints(&od, 0, 1, 0, &ofp, nullptr, nullptr, &obytes);
-    ID3D12Resource *rb = buffer(g, obytes, D3D12_HEAP_TYPE_READBACK);
-    const D3D12_RESOURCE_STATES SRV = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-    // the upscale's GPU time: timestamps either side of its dispatch
-    ID3D12QueryHeap *qh;
-    D3D12_QUERY_HEAP_DESC qhd = {D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 2};
-    CHECK(g.dev->CreateQueryHeap(&qhd, IID_PPV_ARGS(&qh)));
-    ID3D12Resource *qrb = buffer(g, 16, D3D12_HEAP_TYPE_READBACK);
-    UINT64 tsFreq = 1;
-    g.q->GetTimestampFrequency(&tsFreq);
+    Tex color = api->texture(TW, TH, K_COLOR, false), depth = api->texture(TW, TH, K_DEPTH, false), mv = api->texture(TW, TH, K_MV, false);
+    Tex out = api->texture(OW, OH, K_OUT, out8);
+    if (vk) ((Vk *)api)->prepare(out);
     std::vector<double> gpuMs;
 
     std::vector<uint16_t> cbuf(TW * TH * 4), mbuf(TW * TH * 2, 0);
@@ -521,51 +878,25 @@ int main(int argc, char **argv) {
                 mbuf[i * 2] = f2h(g_mvs * s.mv[0] / OW), mbuf[i * 2 + 1] = f2h(g_mvs * s.mv[1] / OH);
             }
         if (!measure && t < kCached) cc[t] = cbuf, dc[t] = dbuf, mc[t] = mbuf;
-        g.ca->Reset();
-        g.cl->Reset(g.ca, nullptr);
-        if (t) {
-            barrier(g.cl, color, SRV, D3D12_RESOURCE_STATE_COPY_DEST);
-            barrier(g.cl, depth, SRV, D3D12_RESOURCE_STATE_COPY_DEST);
-            barrier(g.cl, mv, SRV, D3D12_RESOURCE_STATE_COPY_DEST);
+        {
+            Tex *in[3] = {&color, &depth, &mv};
+            const void *data[3] = {cbuf.data(), dbuf.data(), mbuf.data()};
+            api->upload(in, data, TW, TH);
         }
-        UINT64 off = 0;
-        upload(g, up, off, color, cbuf.data(), TW, TH, 8);
-        upload(g, up, off, depth, dbuf.data(), TW, TH, 4);
-        upload(g, up, off, mv, mbuf.data(), TW, TH, 4);
-        barrier(g.cl, color, D3D12_RESOURCE_STATE_COPY_DEST, SRV);
-        barrier(g.cl, depth, D3D12_RESOURCE_STATE_COPY_DEST, SRV);
-        barrier(g.cl, mv, D3D12_RESOURCE_STATE_COPY_DEST, SRV);
-        CHECK(g.cl->Close());
-        ID3D12CommandList *lists[1] = {g.cl};
-        g.q->ExecuteCommandLists(1, lists);
-        g.wait();
         // the upscale alone in its own command list (its wall-clock time)
-        g.ca->Reset();
-        g.cl->Reset(g.ca, nullptr);
         {
             ffxDispatchDescUpscale dd = {};
             dd.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
-            dd.commandList = g.cl;
-            dd.color = res(color, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-            dd.depth = res(depth, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-            dd.motionVectors = res(mv, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-            dd.output = res(out, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
-            dd.color.description.format = FFX_API_SURFACE_FORMAT_R16G16B16A16_FLOAT;
-            dd.depth.description.format = FFX_API_SURFACE_FORMAT_R32_FLOAT;
-            dd.motionVectors.description.format = FFX_API_SURFACE_FORMAT_R16G16_FLOAT;
-            dd.output.description.format = FFX_API_SURFACE_FORMAT_R16G16B16A16_FLOAT;
-            dd.output.description.usage = FFX_API_RESOURCE_USAGE_UAV;
+            dd.commandList = api->begin();
+            dd.color = api->res(color), dd.depth = api->res(depth), dd.motionVectors = api->res(mv), dd.output = api->res(out);
             dd.jitterOffset = {jx, jy};
             dd.motionVectorScale = {(float)RW, (float)RH};
             dd.renderSize = {RW, RH}, dd.upscaleSize = {OW, OH};
             dd.enableSharpening = sharpen, dd.sharpness = sharpen ? 0.5f : 0.0f;
             dd.frameTimeDelta = 16.6f, dd.preExposure = 1.0f, dd.reset = t == 0;
             dd.cameraNear = 0.1f, dd.cameraFar = 1e6f, dd.cameraFovAngleVertical = 1.0f, dd.viewSpaceToMetersFactor = 1.0f;
-            g.cl->EndQuery(qh, D3D12_QUERY_TYPE_TIMESTAMP, 0);
             ffxReturnCode_t rc = dispatch(&ctx, &dd.header);
             if (rc != FFX_API_RETURN_OK) return printf("ffxDispatch failed %u at frame %d\n", rc, t), 1;
-            g.cl->EndQuery(qh, D3D12_QUERY_TYPE_TIMESTAMP, 1);
-            g.cl->ResolveQueryData(qh, D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, qrb, 0);
         }
         // (with stop=: also the frames 1, 2, 4, 8 ... after the pan stopped)
         int ts = t - g_stop;
@@ -573,41 +904,23 @@ int main(int argc, char **argv) {
         bool shimFrame = shimmer && t >= frames - 16 - lag;
         bool flickFrame = measure && flick && t >= frames - FLICK_N;
         bool grab = psnrFrame || shimFrame || flickFrame;
-        if (grab) {
-            barrier(g.cl, out, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-            D3D12_TEXTURE_COPY_LOCATION s = {out, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX}, d = {rb, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
-            d.PlacedFootprint = ofp;
-            g.cl->CopyTextureRegion(&d, 0, 0, 0, &s, nullptr);
-            barrier(g.cl, out, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        }
-        CHECK(g.cl->Close());
-        LARGE_INTEGER t0, t1, fq;
-        QueryPerformanceCounter(&t0);
-        g.q->ExecuteCommandLists(1, lists);
-        g.wait();
-        QueryPerformanceCounter(&t1), QueryPerformanceFrequency(&fq);
-        if (t >= 8) {
-            upMs += 1000.0 * (t1.QuadPart - t0.QuadPart) / fq.QuadPart;
-            UINT64 *ts;
-            D3D12_RANGE rr = {0, 16};
-            qrb->Map(0, &rr, (void **)&ts);
-            gpuMs.push_back(1000.0 * (double)(ts[1] - ts[0]) / (double)tsFreq);
-            qrb->Unmap(0, nullptr);
-        }
-        if (g.dev->GetDeviceRemovedReason() != S_OK) return printf("device removed 0x%08x\n", (unsigned)g.dev->GetDeviceRemovedReason()), 1;
+        api->end(out, grab);
+        if (t >= 8) upMs += api->wallMs, gpuMs.push_back(api->gpu_ms());
+        if (api->lost()) return 1;
         if (!grab) continue;
-        uint8_t *mp;
-        rb->Map(0, nullptr, (void **)&mp);
+        size_t pitch;
+        const uint8_t *mp = api->map(&pitch);
         for (uint32_t y = 0; y < OH; y++) {
-            const uint16_t *row = (const uint16_t *)(mp + (size_t)y * ofp.Footprint.RowPitch);
+            const uint16_t *row = (const uint16_t *)(mp + (size_t)y * pitch);
+            const uint8_t *row8 = mp + (size_t)y * pitch;
             for (uint32_t x = 0; x < OW; x++)
                 for (int c = 0; c < 3; c++) {
-                    float v = h2f(row[x * 4 + c]) / g_radiance;
+                    float v = (out8 ? row8[x * 4 + c] / 255.0f : h2f(row[x * 4 + c])) / g_radiance;
                     if (!(v == v) || v > 1e30f) v = -1.0f;  // (NaN or infinite: counted as black, as a tonemapper shows it)
                     cur[((size_t)y * OW + x) * 3 + c] = perceptual(v), curLin[((size_t)y * OW + x) * 3 + c] = v;
                 }
         }
-        rb->Unmap(0, nullptr);
+        api->unmap();
         // the shimmer: this frame against the one lag frames back, shifted by the pan (away from the borders)
         if (shimFrame && t >= frames - 16) {
             const std::vector<float> &prev = ring[t % lag];
@@ -704,6 +1017,36 @@ int main(int argc, char **argv) {
     if (flickN) printf("flicker %.2f, ", 1000.0 * flickSum / flickN);
     if (sparkN) printf("sparkle %.3f (%.3f %% px, worst x%.2f), ", 1000.0 * sparkSum / sparkN, sparkPx / sparkN, sparkMax);
     printf("%.3f ms GPU an upscale (median; %.3f ms wall clock)\n", gmed, upMs / (frames - 8));
+    // menu=WxH: the in-game menu as the Vulkan window draws it (its frame times those of these upscales), over a grey
+    // checkerboard - <prefix>_menu.png
+    if (const char *mo = opt(argc, argv, "menu", nullptr)) {
+        typedef int (*SnapFn)(int, int, int, uint32_t *);
+        auto snap = (SnapFn)GetProcAddress(m, "DittoSRMenuSnapshot");
+        int mw = 1920, mh = 1080, sel = atoi(opt(argc, argv, "menusel", "2"));
+        sscanf(mo, "%dx%d", &mw, &mh);
+        std::vector<uint32_t> px((size_t)mw * mh);
+        double s0 = qpc_ms();
+        bool got = snap && snap(mw, mh, sel, px.data());  // (the first: the atlas built too)
+        double atlasMs = qpc_ms() - s0;
+        s0 = qpc_ms();
+        for (int i = 0; got && i < 4; i++) snap(mw, mh, sel, px.data());
+        double snapMs = (qpc_ms() - s0) / 4;
+        if (!got) printf("no menu snapshot\n");
+        else {
+            std::vector<uint8_t> img((size_t)mw * mh * 3);
+            for (int y = 0; y < mh; y++)
+                for (int x = 0; x < mw; x++) {
+                    uint32_t p = px[(size_t)y * mw + x];
+                    float a = (p >> 24) / 255.0f, bg = ((x / 16 + y / 16) & 1) ? 0.55f : 0.45f;
+                    for (int c = 0; c < 3; c++)
+                        img[((size_t)y * mw + x) * 3 + c] = (uint8_t)fminf(((p >> (16 - 8 * c)) & 255) + bg * 255.0f * (1.0f - a) + 0.5f, 255.0f);
+                }
+            char f[MAX_PATH];
+            snprintf(f, sizeof f, "%s_menu.png", prefix);
+            stbi_write_png(f, mw, mh, 3, img.data(), mw * 3);
+            printf("menu: %s (%.1f ms a draw; the first, with the font atlas, %.1f ms)\n", f, snapMs, atlasMs);
+        }
+    }
     destroy(&ctx, nullptr);
     return 0;
 }

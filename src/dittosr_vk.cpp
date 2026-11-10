@@ -1,7 +1,8 @@
-// DittoSR on Vulkan (dittosr_vk.h): convert (render size; with the change against the history in an extra group) ->
-// motion (render size) -> upscale (output size) -> sharpen (output size; always - it writes the game's output). One
-// descriptor set per pass, from a ring rewritten kRing frames later (as the D3D12 descriptor ring), the constants in a
-// uniform buffer ring alongside. The internal images stay in GENERAL; the game's are moved to what the passes need and
+// DittoSR on Vulkan (dittosr_vk.h), as dittosr.cpp on D3D12: convert (render size; with the change against the history
+// and the auto exposure in an extra row of groups) -> motion (render size) -> upscale (output size) -> sharpen (output
+// size; skipped when the upscale writes the output itself: fused, or a debug view). One descriptor set per pass, from a
+// ring rewritten kRing frames later (as the D3D12 descriptor ring), the constants in a uniform buffer ring alongside.
+// The internal images stay in GENERAL (cleared on their first use); the game's are moved to what the passes need and
 // back to the layouts they came in.
 #include "dittosr_vk.h"
 
@@ -20,14 +21,25 @@
 #include "spv_sharpen_rgba16f.h"
 #include "spv_sharpen_rgba32f.h"
 #include "spv_sharpen_rgba8.h"
-#include "spv_upscale.h"
+#include "spv_upscale_h10_r11g11b10f.h"
+#include "spv_upscale_h10_rgb10a2.h"
+#include "spv_upscale_h10_rgba16f.h"
+#include "spv_upscale_h10_rgba32f.h"
+#include "spv_upscale_h10_rgba8.h"
+#include "spv_upscale_h16_r11g11b10f.h"
+#include "spv_upscale_h16_rgb10a2.h"
+#include "spv_upscale_h16_rgba16f.h"
+#include "spv_upscale_h16_rgba32f.h"
+#include "spv_upscale_h16_rgba8.h"
+
+#include <initializer_list>
 
 namespace {
 
 constexpr uint32_t kRing = 64;          // (frames before a descriptor set, a constants slot or a view is reused)
 constexpr uint32_t kSetsPerFrame = 4;   // convert, motion, upscale, sharpen
 constexpr uint32_t kUbosPerFrame = 1;   // the constants
-constexpr uint32_t kSampled = 7, kStorage = 2;
+constexpr uint32_t kSampled = 8, kStorage = 3;
 constexpr uint32_t kBindUbo = 0, kBindSampled = 10, kBindStorage = 20, kBindSampler = 30;  // (build.bat's -fvk-*-shift)
 
 bool is_depth(VkFormat f) {
@@ -133,9 +145,10 @@ struct DittoSRVk::Fns {
     F(vkDestroyPipelineLayout) F(vkCreateComputePipelines) F(vkDestroyPipeline) F(vkCreateDescriptorPool)
     F(vkDestroyDescriptorPool) F(vkAllocateDescriptorSets) F(vkUpdateDescriptorSets) F(vkCreateSampler)
     F(vkDestroySampler) F(vkCmdBindPipeline) F(vkCmdBindDescriptorSets) F(vkCmdDispatch) F(vkCmdPipelineBarrier)
-    F(vkDeviceWaitIdle)
+    F(vkDeviceWaitIdle) F(vkCmdClearColorImage) F(vkCreateQueryPool) F(vkDestroyQueryPool) F(vkCmdResetQueryPool)
+    F(vkCmdWriteTimestamp) F(vkGetQueryPoolResults)
     // (instance-level, through the loader's exports: the same physical device handle)
-    F(vkGetPhysicalDeviceMemoryProperties) F(vkGetPhysicalDeviceProperties)
+    F(vkGetPhysicalDeviceMemoryProperties) F(vkGetPhysicalDeviceProperties) F(vkGetPhysicalDeviceFormatProperties)
 #undef F
     VkPhysicalDeviceMemoryProperties mem = {};
 };
@@ -153,13 +166,15 @@ DittoSRVk::DittoSRVk(VkDevice device, VkPhysicalDevice phys, PFN_vkGetDeviceProc
     F(vkDestroyPipelineLayout) F(vkCreateComputePipelines) F(vkDestroyPipeline) F(vkCreateDescriptorPool)
     F(vkDestroyDescriptorPool) F(vkAllocateDescriptorSets) F(vkUpdateDescriptorSets) F(vkCreateSampler)
     F(vkDestroySampler) F(vkCmdBindPipeline) F(vkCmdBindDescriptorSets) F(vkCmdDispatch) F(vkCmdPipelineBarrier)
-    F(vkDeviceWaitIdle)
+    F(vkDeviceWaitIdle) F(vkCmdClearColorImage) F(vkCreateQueryPool) F(vkDestroyQueryPool) F(vkCmdResetQueryPool)
+    F(vkCmdWriteTimestamp) F(vkGetQueryPoolResults)
 #undef F
     HMODULE vk = GetModuleHandleA("vulkan-1.dll");
     if (!vk) vk = LoadLibraryA("vulkan-1.dll");
     if (vk) {
         fn_->vkGetPhysicalDeviceMemoryProperties = (PFN_vkGetPhysicalDeviceMemoryProperties)GetProcAddress(vk, "vkGetPhysicalDeviceMemoryProperties");
         fn_->vkGetPhysicalDeviceProperties = (PFN_vkGetPhysicalDeviceProperties)GetProcAddress(vk, "vkGetPhysicalDeviceProperties");
+        fn_->vkGetPhysicalDeviceFormatProperties = (PFN_vkGetPhysicalDeviceFormatProperties)GetProcAddress(vk, "vkGetPhysicalDeviceFormatProperties");
     }
     if (!fn_->vkGetPhysicalDeviceMemoryProperties) ditto_log("vulkan: vulkan-1.dll's vkGetPhysicalDeviceMemoryProperties missing\n"), all = false;
     ok_ = all && init();
@@ -170,10 +185,15 @@ DittoSRVk::~DittoSRVk() {
     if (fn_->vkDeviceWaitIdle) fn_->vkDeviceWaitIdle(dev_);  // (the game destroys the context with the GPU idle; to be sure)
     if (ok_ || fn_->vkDestroyImage) {
         collect(true);
-        for (Img *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &change1_, &dummy_}) dropImage(*t);
+        for (Img *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &expo_[0], &expo_[1],
+                       &change1_, &dummy_})
+            dropImage(*t);
         collect(true);
-        VkPipeline ps[] = {psoConvert_, psoMotion_, psoUpscale_, psoSharpen_[0], psoSharpen_[1], psoSharpen_[2], psoSharpen_[3], psoSharpen_[4]};
+        std::vector<VkPipeline> ps = {psoConvert_, psoMotion_};
+        for (auto &h : psoUpscale_) ps.insert(ps.end(), h, h + 5);
+        ps.insert(ps.end(), psoSharpen_, psoSharpen_ + 5);
         for (VkPipeline p : ps) if (p) fn_->vkDestroyPipeline(dev_, p, nullptr);
+        if (timeQ_) fn_->vkDestroyQueryPool(dev_, timeQ_, nullptr);
         if (pipeLayout_) fn_->vkDestroyPipelineLayout(dev_, pipeLayout_, nullptr);
         if (setLayout_) fn_->vkDestroyDescriptorSetLayout(dev_, setLayout_, nullptr);
         if (pool_) fn_->vkDestroyDescriptorPool(dev_, pool_, nullptr);
@@ -199,13 +219,26 @@ bool DittoSRVk::init() {
         ditto_log("GPU: %s (vendor 0x%04x, Vulkan %u.%u)\n", p.deviceName, p.vendorID, VK_VERSION_MAJOR(p.apiVersion), VK_VERSION_MINOR(p.apiVersion));
         uint32_t a = (uint32_t)p.limits.minUniformBufferOffsetAlignment;
         if (a > uboStride_) uboStride_ = a;
+        // (the timestamps: every graphics and compute queue has them where timestampComputeAndGraphics - the game's
+        // queue is not ours to ask)
+        if (p.limits.timestampComputeAndGraphics && p.limits.timestampPeriod > 0.0f) tickMs_ = p.limits.timestampPeriod * 1e-6;
     }
+    // the extended storage formats the passes write: the stability levels (R8G8), the history RGB10A2 (else RGBA16F)
+    auto storage = [&](VkFormat f) {
+        if (!fn_->vkGetPhysicalDeviceFormatProperties) return true;
+        VkFormatProperties fp = {};
+        fn_->vkGetPhysicalDeviceFormatProperties(phys_, f, &fp);
+        return (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
+    };
+    if (!storage(VK_FORMAT_R8G8_UNORM)) return ditto_log("vulkan: R8G8 is not a storage format on this GPU (the stability levels)\n"), false;
+    hist10_ = storage(VK_FORMAT_A2B10G10R10_UNORM_PACK32);
+    if (!hist10_) ditto_log("vulkan: RGB10A2 is not a storage format on this GPU - the history RGBA16F\n");
     VkSamplerCreateInfo sc = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sc.magFilter = sc.minFilter = VK_FILTER_LINEAR, sc.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     sc.addressModeU = sc.addressModeV = sc.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sc.maxLod = VK_LOD_CLAMP_NONE;
     if (fn_->vkCreateSampler(dev_, &sc, nullptr, &sampler_) != VK_SUCCESS) return ditto_log("vulkan: vkCreateSampler failed\n"), false;
-    // the set: the constants, 7 sampled images, 2 storage images, the sampler (build.bat's register shifts)
+    // the set: the constants, 8 sampled images, 3 storage images, the sampler (build.bat's register shifts)
     VkDescriptorSetLayoutBinding b[1 + kSampled + kStorage + 1] = {};
     uint32_t n = 0;
     b[n++] = {kBindUbo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
@@ -221,7 +254,16 @@ bool DittoSRVk::init() {
     struct { const unsigned char *code; size_t size; VkPipeline *pso; const char *name; } cs[] = {
         {g_spv_convert, sizeof g_spv_convert, &psoConvert_, "convert"},
         {g_spv_motion, sizeof g_spv_motion, &psoMotion_, "motion"},
-        {g_spv_upscale, sizeof g_spv_upscale, &psoUpscale_, "upscale"},
+        {g_spv_upscale_h10_rgba16f, sizeof g_spv_upscale_h10_rgba16f, &psoUpscale_[0][0], "upscale h10 rgba16f"},
+        {g_spv_upscale_h10_rgba8, sizeof g_spv_upscale_h10_rgba8, &psoUpscale_[0][1], "upscale h10 rgba8"},
+        {g_spv_upscale_h10_rgb10a2, sizeof g_spv_upscale_h10_rgb10a2, &psoUpscale_[0][2], "upscale h10 rgb10a2"},
+        {g_spv_upscale_h10_r11g11b10f, sizeof g_spv_upscale_h10_r11g11b10f, &psoUpscale_[0][3], "upscale h10 r11g11b10f"},
+        {g_spv_upscale_h10_rgba32f, sizeof g_spv_upscale_h10_rgba32f, &psoUpscale_[0][4], "upscale h10 rgba32f"},
+        {g_spv_upscale_h16_rgba16f, sizeof g_spv_upscale_h16_rgba16f, &psoUpscale_[1][0], "upscale h16 rgba16f"},
+        {g_spv_upscale_h16_rgba8, sizeof g_spv_upscale_h16_rgba8, &psoUpscale_[1][1], "upscale h16 rgba8"},
+        {g_spv_upscale_h16_rgb10a2, sizeof g_spv_upscale_h16_rgb10a2, &psoUpscale_[1][2], "upscale h16 rgb10a2"},
+        {g_spv_upscale_h16_r11g11b10f, sizeof g_spv_upscale_h16_r11g11b10f, &psoUpscale_[1][3], "upscale h16 r11g11b10f"},
+        {g_spv_upscale_h16_rgba32f, sizeof g_spv_upscale_h16_rgba32f, &psoUpscale_[1][4], "upscale h16 rgba32f"},
         {g_spv_sharpen_rgba16f, sizeof g_spv_sharpen_rgba16f, &psoSharpen_[0], "sharpen rgba16f"},
         {g_spv_sharpen_rgba8, sizeof g_spv_sharpen_rgba8, &psoSharpen_[1], "sharpen rgba8"},
         {g_spv_sharpen_rgb10a2, sizeof g_spv_sharpen_rgb10a2, &psoSharpen_[2], "sharpen rgb10a2"},
@@ -229,6 +271,7 @@ bool DittoSRVk::init() {
         {g_spv_sharpen_rgba32f, sizeof g_spv_sharpen_rgba32f, &psoSharpen_[4], "sharpen rgba32f"},
     };
     for (auto &c : cs) {
+        if (c.pso >= &psoUpscale_[0][0] && c.pso < &psoUpscale_[1][0] && !hist10_) continue;  // (no RGB10A2 history here)
         std::vector<uint32_t> words((c.size + 3) / 4);
         memcpy(words.data(), c.code, c.size);
         VkShaderModuleCreateInfo mc = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
@@ -267,6 +310,11 @@ bool DittoSRVk::init() {
     if (fn_->vkMapMemory(dev_, uboMem_, 0, VK_WHOLE_SIZE, 0, (void **)&uboMap_) != VK_SUCCESS) return ditto_log("vulkan: map failed\n"), false;
     // (a 1 x 1 image for the sampled bindings a pass leaves empty)
     if (!makeImage(dummy_, 1, 1, VK_FORMAT_R16G16B16A16_SFLOAT)) return false;
+    if (tickMs_ > 0.0) {
+        VkQueryPoolCreateInfo qc = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        qc.queryType = VK_QUERY_TYPE_TIMESTAMP, qc.queryCount = 2 * kTimeRing;
+        if (fn_->vkCreateQueryPool(dev_, &qc, nullptr, &timeQ_) != VK_SUCCESS) timeQ_ = VK_NULL_HANDLE, tickMs_ = 0.0;
+    }
     return true;
 }
 
@@ -274,7 +322,8 @@ bool DittoSRVk::makeImage(Img &t, uint32_t w, uint32_t h, VkFormat f) {
     VkImageCreateInfo ic = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ic.imageType = VK_IMAGE_TYPE_2D, ic.format = f, ic.extent = {w, h, 1}, ic.mipLevels = 1, ic.arrayLayers = 1;
     ic.samples = VK_SAMPLE_COUNT_1_BIT, ic.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ic.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, ic.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    ic.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    ic.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     if (fn_->vkCreateImage(dev_, &ic, nullptr, &t.image) != VK_SUCCESS) return ditto_log("vulkan: image %ux%u failed\n", w, h), false;
     VkMemoryRequirements mr;
     fn_->vkGetImageMemoryRequirements(dev_, t.image, &mr);
@@ -309,16 +358,20 @@ void DittoSRVk::collect(bool all) {
     garbage_.resize(keep);
 }
 
-bool DittoSRVk::ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, bool *made) {
+bool DittoSRVk::ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, VkFormat histFmt, bool *made) {
     *made = false;
-    if (texValid_ && mda_[0].w == rw && mda_[0].h == rh && hist_[0].w == ow && hist_[0].h == oh) return true;
+    if (texValid_ && mda_[0].w == rw && mda_[0].h == rh && hist_[0].w == ow && hist_[0].h == oh && hist_[0].format == histFmt) return true;
     *made = true;
-    for (Img *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &change1_}) dropImage(*t);
-    texValid_ = makeImage(mda_[0], rw, rh, VK_FORMAT_R16G16B16A16_SFLOAT) && makeImage(mda_[1], rw, rh, VK_FORMAT_R16G16B16A16_SFLOAT) &&
-                makeImage(hist_[0], ow, oh, VK_FORMAT_R16G16B16A16_SFLOAT) && makeImage(hist_[1], ow, oh, VK_FORMAT_R16G16B16A16_SFLOAT) &&
-                makeImage(aux_[0], rw, rh, VK_FORMAT_R8G8B8A8_UNORM) && makeImage(aux_[1], rw, rh, VK_FORMAT_R8G8B8A8_UNORM) &&
-                makeImage(change1_, 1, 1, VK_FORMAT_R32_SFLOAT);
-    if (texValid_) ditto_log("textures: render %ux%u, output %ux%u, history RGBA16F (Vulkan)\n", rw, rh, ow, oh);
+    for (Img *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &expo_[0], &expo_[1], &change1_})
+        dropImage(*t);
+    const VkFormat F16 = VK_FORMAT_R16G16B16A16_SFLOAT, S = VK_FORMAT_R8G8_UNORM, R32 = VK_FORMAT_R32_SFLOAT;
+    texValid_ = makeImage(mda_[0], rw, rh, F16) && makeImage(mda_[1], rw, rh, F16) && makeImage(hist_[0], ow, oh, histFmt) &&
+                makeImage(hist_[1], ow, oh, histFmt) && makeImage(aux_[0], rw, rh, VK_FORMAT_R8G8B8A8_UNORM) &&
+                makeImage(aux_[1], rw, rh, VK_FORMAT_R8G8B8A8_UNORM) && makeImage(stab_[0], ow, oh, S) && makeImage(stab_[1], ow, oh, S) &&
+                makeImage(expo_[0], 1, 1, R32) && makeImage(expo_[1], 1, 1, R32) && makeImage(change1_, 1, 1, R32);
+    if (texValid_)
+        ditto_log("textures: render %ux%u, output %ux%u, history %s, stability R8G8 (Vulkan)\n", rw, rh, ow, oh,
+                  histFmt == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ? "RGB10A2" : "RGBA16F");
     return texValid_;
 }
 
@@ -372,8 +425,10 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
     }
     collect(false);
     uint32_t rw = fr.rw, rh = fr.rh, ow = fr.ow, oh = fr.oh;
+    // (the history RGB10A2 where the device writes it - half the bandwidth -, as on D3D12; else RGBA16F)
+    VkFormat hfmt = s_.history10 && hist10_ ? VK_FORMAT_A2B10G10R10_UNORM_PACK32 : VK_FORMAT_R16G16B16A16_SFLOAT;
     bool resized;
-    if (!ensureTextures(rw, rh, ow, oh, &resized)) return false;
+    if (!ensureTextures(rw, rh, ow, oh, hfmt, &resized)) return false;
     bool reset = fr.reset || forceReset || resized;
     VkCommandBuffer cb = fr.cb;
 
@@ -393,8 +448,9 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
         uses[nu++] = {&i, to};
     };
     use(fr.color, false), use(fr.depth, false), use(fr.mv, false), use(fr.exposure, false), use(fr.reactive, false), use(fr.output, true);
+    Img *internal[] = {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &expo_[0], &expo_[1], &change1_, &dummy_};
     auto barrier = [&](bool in) {
-        VkImageMemoryBarrier ib[6 + 6] = {};
+        VkImageMemoryBarrier ib[6 + sizeof internal / sizeof internal[0]] = {};
         uint32_t n = 0;
         for (int i = 0; i < nu; i++) {
             VkImageLayout from = in ? uses[i].i->layout : uses[i].to, to = in ? uses[i].to : uses[i].i->layout;
@@ -409,40 +465,71 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
                                                  : (VkImageAspectFlags)VK_IMAGE_ASPECT_COLOR_BIT;
             b.image = uses[i].i->image, b.subresourceRange = {asp, 0, 1, 0, 1};
         }
-        if (in)  // (the internal images' first use: UNDEFINED -> GENERAL)
-            for (Img *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &change1_, &dummy_}) {
+        bool fresh = false;
+        if (in)  // (the internal images' first use: UNDEFINED -> GENERAL, then cleared)
+            for (Img *t : internal) {
                 if (!t->fresh) continue;
                 VkImageMemoryBarrier &b = ib[n++];
                 b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                b.srcAccessMask = 0, b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+                b.srcAccessMask = 0, b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
                 b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
                 b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                 b.image = t->image, b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-                t->fresh = false;
+                fresh = true;
             }
         VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
         mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT, mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
         fn_->vkCmdPipelineBarrier(cb, in ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                  in ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, nullptr, n, ib);
+                                  in ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                  0, 1, &mb, 0, nullptr, n, ib);
+        if (!fresh) return;
+        // (zeros: the stability levels and the exposure read before anything wrote them start from nothing, not garbage)
+        VkClearColorValue zero = {};
+        VkImageSubresourceRange all = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        for (Img *t : internal)
+            if (t->fresh) fn_->vkCmdClearColorImage(cb, t->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &all), t->fresh = false;
+        VkMemoryBarrier cm = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        cm.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, cm.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        fn_->vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &cm, 0, nullptr, 0, nullptr);
     };
     barrier(true);
+    // (the passes' GPU time: the slot written kTimeRing frames ago read - not ready yet: skipped -, this frame's started)
+    uint32_t ts = (uint32_t)(frames_ % kTimeRing);
+    if (timeQ_) {
+        uint64_t t2[2] = {};
+        if (frames_ >= kTimeRing &&
+            fn_->vkGetQueryPoolResults(dev_, timeQ_, 2 * ts, 2, sizeof t2, t2, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS &&
+            t2[1] > t2[0] && (t2[1] - t2[0]) * tickMs_ < 1000.0)
+            g_stats.upscaleMs = (float)((t2[1] - t2[0]) * tickMs_);
+        fn_->vkCmdResetQueryPool(cb, timeQ_, 2 * ts, 2);
+        fn_->vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timeQ_, 2 * ts);
+    }
 
     // the constants: this frame's slot of the ring
     DittoConstants k;
-    ditto_fill_constants(k, s_, fr, reset, vExpo != VK_NULL_HANDLE, vReac != VK_NULL_HANDLE, false, prevJit_);
+    // (the auto exposure: the game set FSR's flag and gave no exposure - measured in the convert pass, its 1 x 1 the
+    // exposure the passes read)
+    bool autoExpo = !vExpo && (ci_.flags & FFX_UPSCALE_ENABLE_AUTO_EXPOSURE) && rw >= 16;
+    ditto_fill_constants(k, s_, fr, reset, vExpo != VK_NULL_HANDLE || autoExpo, vReac != VK_NULL_HANDLE,
+                         hfmt == VK_FORMAT_A2B10G10R10_UNORM_PACK32, prevJit_);
+    k.autoExposure = autoExpo ? 1.0f : 0.0f;
+    if (split_) k.splitX = (float)(ow / 2);
+    // (the sharpening in the upscale, its own pass skipped - not with the comparison, nor a debug view; up to 2.5x, as
+    // on D3D12)
+    k.fusedSharpen = !split_ && !s_.debugView && s_.fusedSharpen > 0.0f && k.ratio <= 2.55f ? s_.fusedSharpen : 0.0f;
     // (a float colour declared LDR is read as HDR: as [0, 1] colour it would be clipped at 1)
     if (!fr.hdr && float_format(fr.color.format)) {
         if (!hdrFromFormat_) ditto_log("colour: float format %d without the HDR flag - read as HDR\n", (int)fr.color.format), hdrFromFormat_ = true;
         k.hdr = 1.0f;
     }
-    if (split_) k.splitX = (float)(ow / 2);
     uint32_t slot = (uint32_t)(frames_ % kRing);
     VkDeviceSize u0 = (VkDeviceSize)uboStride_ * (slot * kUbosPerFrame);
     memcpy(uboMap_ + u0, &k, sizeof k);
 
     cur_ ^= 1;
     Img &mdaC = mda_[cur_], &mdaP = mda_[cur_ ^ 1], &histC = hist_[cur_], &histP = hist_[cur_ ^ 1];
-    Img &auxC = aux_[cur_], &auxP = aux_[cur_ ^ 1];
+    Img &auxC = aux_[cur_], &auxP = aux_[cur_ ^ 1], &stabC = stab_[cur_], &stabP = stab_[cur_ ^ 1];
+    Img &expoC = expo_[cur_], &expoP = expo_[cur_ ^ 1];
     uint32_t setIndex = slot * kSetsPerFrame;
     // one pass: its set written (sampled images - the dummy where none -, storage images, constants), then dispatched
     auto run = [&](VkPipeline pso, const VkImageView sampled[kSampled], VkImageLayout const sampledLayout[kSampled],
@@ -479,43 +566,49 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
         return VK_IMAGE_LAYOUT_GENERAL;
     };
     const VkImageLayout G = VK_IMAGE_LAYOUT_GENERAL;
-    VkImageLayout lColor = layout_of(fr.color), lDepth = layout_of(fr.depth), lMv = layout_of(fr.mv), lExpo = layout_of(fr.exposure),
-                  lReac = layout_of(fr.reactive);
+    VkImageLayout lColor = layout_of(fr.color), lDepth = layout_of(fr.depth), lMv = layout_of(fr.mv), lReac = layout_of(fr.reactive);
+    // the exposure: the game's, or the auto exposure's - the convert pass reads the last frame's and measures this one's
+    // into expoC (bound always: the shader's u2), the later passes read that
+    VkImageView eIn = vExpo ? vExpo : autoExpo ? expoP.view : VK_NULL_HANDLE, e = vExpo ? vExpo : autoExpo ? expoC.view : VK_NULL_HANDLE;
+    VkImageLayout lE = vExpo ? layout_of(fr.exposure) : G;
 
-    // convert (render size), and in its extra row's first group the change against the history: t0 depth, t1 motion,
-    // t2 colour, t3 previous history -> u0 mda, u1 change
+    // convert (render size), and in its extra row the change against the history (first group) and the auto exposure
+    // (second): t0 depth, t1 motion, t2 colour, t3 previous history, t5 exposure -> u0 mda, u1 change, u2 exposure
     {
-        VkImageView s[kSampled] = {vDepth, vMv, vColor, histP.view, VK_NULL_HANDLE, vExpo, VK_NULL_HANDLE};
-        VkImageLayout l[kSampled] = {lDepth, lMv, lColor, G, G, lExpo, G};
-        VkImageView u[kStorage] = {mdaC.view, change1_.view};
+        VkImageView s[kSampled] = {vDepth, vMv, vColor, histP.view, VK_NULL_HANDLE, eIn, VK_NULL_HANDLE, VK_NULL_HANDLE};
+        VkImageLayout l[kSampled] = {lDepth, lMv, lColor, G, G, lE, G, G};
+        VkImageView u[kStorage] = {mdaC.view, change1_.view, expoC.view};
         run(psoConvert_, s, l, u, u0, (rw + 7) / 8, (rh + 7) / 8 + 1);
     }
     compute_barrier();
     // motion (render size): t0 previous aux, t1 mda, t2 colour, t3 previous mda -> u0 aux
     {
-        VkImageView s[kSampled] = {auxP.view, mdaC.view, vColor, mdaP.view, VK_NULL_HANDLE, vExpo, VK_NULL_HANDLE};
-        VkImageLayout l[kSampled] = {G, G, lColor, G, G, lExpo, G};
-        VkImageView u[kStorage] = {auxC.view, VK_NULL_HANDLE};
+        VkImageView s[kSampled] = {auxP.view, mdaC.view, vColor, mdaP.view, VK_NULL_HANDLE, e, VK_NULL_HANDLE, VK_NULL_HANDLE};
+        VkImageLayout l[kSampled] = {G, G, lColor, G, G, lE, G, G};
+        VkImageView u[kStorage] = {auxC.view, VK_NULL_HANDLE, VK_NULL_HANDLE};
         run(psoMotion_, s, l, u, u0, (rw + 7) / 8, (rh + 7) / 8);
     }
     compute_barrier();
-    // upscale (output size): t0 previous history, t1 mda, t2 colour, t3 aux, t4 change, t6 reactive -> u0 history
+    // upscale (output size): t0 previous history, t1 mda, t2 colour, t3 aux, t4 change, t6 reactive, t7 previous
+    // stability -> u0 history, u1 the game's output (fused, or a debug view), u2 stability
     {
-        VkImageView s[kSampled] = {histP.view, mdaC.view, vColor, auxC.view, change1_.view, vExpo, vReac};
-        VkImageLayout l[kSampled] = {G, G, lColor, G, G, lExpo, lReac};
-        VkImageView u[kStorage] = {histC.view, VK_NULL_HANDLE};
-        run(psoUpscale_, s, l, u, u0, (ow + 15) / 16, (oh + 7) / 8);  // (upscale.hlsl: 16 x 8 groups)
+        VkImageView s[kSampled] = {histP.view, mdaC.view, vColor, auxC.view, change1_.view, e, vReac, stabP.view};
+        VkImageLayout l[kSampled] = {G, G, lColor, G, G, lE, lReac, G};
+        VkImageView u[kStorage] = {histC.view, vOut, stabC.view};
+        run(psoUpscale_[hfmt == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ? 0 : 1][variant], s, l, u, u0, (ow + 15) / 16, (oh + 7) / 8);  // (upscale.hlsl: 16 x 8 groups)
     }
-    compute_barrier();
-    // sharpen (output size; the game's output): t0 history, t1 mda -> u1 output
-    {
-        VkImageView s[kSampled] = {histC.view, mdaC.view, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, vExpo, VK_NULL_HANDLE};
-        VkImageLayout l[kSampled] = {G, G, G, G, G, lExpo, G};
-        VkImageView u[kStorage] = {VK_NULL_HANDLE, vOut};
+    // sharpen (output size; the game's output): t0 history, t1 mda, t7 stability -> u1 output (a debug view or fused:
+    // the upscale wrote it)
+    if (!s_.debugView && k.fusedSharpen <= 0.0f) {
+        compute_barrier();
+        VkImageView s[kSampled] = {histC.view, mdaC.view, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, e, VK_NULL_HANDLE, stabC.view};
+        VkImageLayout l[kSampled] = {G, G, G, G, G, lE, G, G};
+        VkImageView u[kStorage] = {VK_NULL_HANDLE, vOut, VK_NULL_HANDLE};
         run(psoSharpen_[variant], s, l, u, u0, (ow + 7) / 8, (oh + 7) / 8);
     }
     // the game's images back to their layouts, the output's writes done first
     barrier(false);
+    if (timeQ_) fn_->vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timeQ_, 2 * ts + 1);
     frames_++;
     return true;
 }
