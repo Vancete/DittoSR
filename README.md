@@ -49,6 +49,12 @@ OptiScaler's settings drive it:
 - The FSR 3 **presets** set the frame weight: **Stability** 1, **Default** the ini's (2), **Motion** 3. By hand, the
   **Velocity Factor** below 1 is steadier (weight 2 x it), and at 1 the **Reactive Scale** below 1 more responsive
   (up to 4).
+- A **DittoSR** tab in OptiScaler's menu (OptiScaler builds with the plugin API) holds the rest: the
+  **frame weight** (shown as the presets set it; with **Override** ticked, the slider's wins over them), the
+  **anti-shimmer**, the **motion detail**, the **debug views** and the **indicator**. They are kept in
+  `OptiScaler.ini`'s `[Plugin.DittoSR]` section, under the ini's key names (`frame_weight`, `frame_weight_override`,
+  `anti_shimmer`, `history_sharpen`, `debug_view`, `indicator`), and win over `dittosr.ini`'s;
+  **Save** in the tab (or OptiScaler's Save INI) writes them, **Defaults** removes them.
 
 ### With the scripts
 

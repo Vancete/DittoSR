@@ -339,12 +339,14 @@ FFX_API_ENTRY ffxReturnCode_t ffxDispatch(ffxContext *context, const ffxDispatch
     {
         DittoSettings s = ditto_settings();
         float fw = frame_weight_of(c);
-        if (fw >= 0.0f) s.frameWeight = fw;
+        g_stats.fsrFrameWeight = fw;
+        bool fsrWeight = fw >= 0.0f && !s.frameWeightOverride;
+        if (fsrWeight) s.frameWeight = fw;
         bool gs = g_cfg.gameSharpness > 0 || (g_cfg.gameSharpness < 0 && from_optiscaler());
         if (gs && d->enableSharpening) s.sharpness = d->sharpness < 0.0f ? 0.0f : d->sharpness > 1.0f ? 1.0f : d->sharpness;
         if (s.sharpness != c->lastSharp || s.frameWeight != c->lastWeight) {
             ditto_log("settings: sharpness %g%s, frame weight %g%s\n", s.sharpness, gs && d->enableSharpening ? " (the dispatch's)" : "",
-                      s.frameWeight, fw >= 0.0f ? " (FSR 3.1's settings')" : "");
+                      s.frameWeight, fsrWeight ? " (FSR 3.1's settings')" : s.frameWeightOverride ? " (overridden)" : "");
             c->lastSharp = s.sharpness, c->lastWeight = s.frameWeight;
         }
         if (c->ditto) c->ditto->set_settings(s);

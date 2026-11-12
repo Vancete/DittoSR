@@ -49,7 +49,8 @@ for %%f in (rgba16f rgba8 rgb10a2 r11g11b10f rgba32f) do (
 )
 
 cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /LD /I"%ROOT%src" /I"%OUT%\gen" /I"%ROOT%third_party\vulkan\include" "%ROOT%src\ffx_dll.cpp" ^
-   "%ROOT%src\dittosr.cpp" "%ROOT%src\dittosr_vk.cpp" "%ROOT%src\common.cpp" "%ROOT%src\overlay.cpp" /Fo"%OUT%\obj\\" ^
+   "%ROOT%src\dittosr.cpp" "%ROOT%src\dittosr_vk.cpp" "%ROOT%src\common.cpp" "%ROOT%src\overlay.cpp" ^
+   "%ROOT%src\opti_plugin.cpp" /Fo"%OUT%\obj\\" ^
    /Fe"%OUT%\amd_fidelityfx_dx12.dll" ^
    /link d3d12.lib dxgi.lib user32.lib gdi32.lib || exit /b 1
 copy /y "%OUT%\amd_fidelityfx_dx12.dll" "%OUT%\amd_fidelityfx_loader_dx12.dll" >nul || exit /b 1
