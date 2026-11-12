@@ -115,12 +115,24 @@ static void load_config() {
               s.motionMinMax, s.sharpness);
 }
 
+void (*g_settingsOverride)(DittoSettings &s);
+
+// dittosr.ini, then the override over it (outside the settings' lock: it calls into OptiScaler)
+static void reload_config() {
+    load_config();
+    if (!g_settingsOverride) return;
+    DittoSettings s = ditto_settings();
+    g_settingsOverride(s);
+    std::lock_guard<std::mutex> lk(g_sMu);
+    g_cfg.s = s;
+}
+
 bool ditto_poll_reload() {
     static bool down;
     bool now = g_cfg.reloadKey && (GetAsyncKeyState(g_cfg.reloadKey) & 0x8000);
     bool pressed = (now && !down) || InterlockedExchange(&g_reqReload, 0);
     down = now;
-    if (pressed) ditto_log("reload: dittosr.ini\n"), load_config();
+    if (pressed) ditto_log("reload: dittosr.ini\n"), reload_config();
     return pressed || InterlockedExchange(&g_menuChanged, 0);
 }
 

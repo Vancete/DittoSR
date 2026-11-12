@@ -25,6 +25,9 @@ struct DittoSettings {
     float motionMinMax = 1.0f; // how far the box is held within the samples' min / max while moving
     float sharpness = 0.6f;    // at rest 0 soft, 0.6 as reconstructed, 1 sharpened; moving, sharpened by it (sharpen.hlsl)
     float frameWeight = 2.0f;  // x the new frame's share, 0.25 - 4: lower, more persistence (smoother, blurrier in motion)
+    // the frame weight above wins over the one FSR 3.1's velocity factor and reactiveness scale set (OptiScaler's
+    // presets and sliders); false: those set it whenever they are not both at 1
+    bool frameWeightOverride = false;
     float changeScale = 1.0f;  // how far the share of the image that changed drives the reaction
     // the new frame's share x shareFar where no jittered sample landed close to the pixel, x shareNear where one did
     // (originally 0.6 / 1.4 - at 2.3x most frames have no sample close: their blurred estimate blurred the history)
@@ -184,6 +187,8 @@ DittoSettings ditto_settings();
 void ditto_set_settings(const DittoSettings &s);  // (the menu: taken by the next upscale)
 void ditto_request_reload();                      // (the menu: dittosr.ini read again by the next upscale)
 bool ditto_save_settings();                       // (the menu: written to dittosr.ini - only what differs from the defaults)
+// Applied over dittosr.ini's settings each time it is read (null: none) - OptiScaler's [Plugin.<name>], opti_plugin.cpp
+extern void (*g_settingsOverride)(DittoSettings &s);
 
 // What the upscale shows the menu (written each upscale, read on the present thread: single values, no lock)
 struct DittoStats {
@@ -192,6 +197,9 @@ struct DittoStats {
     volatile int api = 0;  // 1 the FidelityFX API (AMD's FSR), 2 XeSS
     volatile bool active = false, compare = false, hasReal = false;
     volatile int64_t lastQpc = 0;  // (QueryPerformanceCounter at the last upscale)
+    // the frame weight FSR 3.1's velocity factor and reactiveness scale set in place of the settings' (OptiScaler's
+    // presets and sliders; -1: none, the settings' own)
+    volatile float fsrFrameWeight = -1.0f;
 };
 extern DittoStats g_stats;
 // The menu's requests, taken by the next upscale: the other upscaler (the toggle), the comparison
