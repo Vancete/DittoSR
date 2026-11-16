@@ -70,7 +70,7 @@ static void load_config() {
     s.alphaRest = ini_float(ini, "alpha_rest", s.alphaRest);
     s.conf = ini_float(ini, "conf", s.conf);
     s.gammaRest = ini_float(ini, "gamma_rest", s.gammaRest);
-    if (s.gammaRest <= 0.0f) s.gammaRest = 1.5f;  // (0: the default, as before it had a slider)
+    if (s.gammaRest <= 0.0f) s.gammaRest = DittoSettings().gammaRest;  // (0: the default, as before it had a slider)
     s.width = ini_float(ini, "width", s.width);
     s.react = ini_float(ini, "react", s.react);
     s.reactiveScale = ini_float(ini, "reactive_scale", s.reactiveScale);

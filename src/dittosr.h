@@ -13,10 +13,10 @@
 struct DittoSettings {
     // a stable pixel's share of each new frame at rest: some 30 frames of history - what stands still is steady. What
     // moves with no motion vector of its own (grass swaying in its vertex shader) would show where it had been all that
-    // time: the envelope below finds it. (0.15 for a while after 0.4.2, for that grass: the still image shimmered)
-    float alphaRest = 0.035f;
+    // time: the envelope below finds it. (0.035 until 0.4.2; 0.15 for a while after, for that grass: the still image shimmered)
+    float alphaRest = 0.1f;
     float conf = 0.05f;        // the confidence the narrow estimate is taken alone from (originally 0.3)
-    float gammaRest = 1.5f;    // the history clip width at rest (0 in the ini: 1.5)
+    float gammaRest = 2.0f;    // the history clip width at rest (1.5 until 0.4.2; 0 in the ini: the default)
     float width = 0.8f;        // the narrow Gaussian's width from 2x (x 0.875 at 1.5x and below; originally 1.4 - at 2.3x a blur as wide as a grass blade)
     float react = 1.0f;        // the reaction to changes
     float reactiveScale = 1.0f;

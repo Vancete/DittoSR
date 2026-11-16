@@ -131,13 +131,13 @@ void draw_tab(void *) {
     a->Disabled(s.blend042);
     float ar = s.blend042 ? 0.035f : s.alphaRest, sf = s.blend042 ? 0.05f : s.shareFar, gr = s.blend042 ? 1.5f : s.gammaRest;
     if (a->SliderFloat("Rest blend", &ar, 0.01f, 0.2f, "%.3f") && !s.blend042) s.alphaRest = clampf(ar, 0.01f, 0.2f), changed = true;
-    a->ItemTooltip("Each new frame's share where nothing moves (0.035). Higher: what moves with no motion\n"
+    a->ItemTooltip("Each new frame's share where nothing moves (0.1). Higher: what moves with no motion\n"
                    "vectors follows sooner, the still image shimmers more.");
     if (a->SliderFloat("Blend with no sample", &sf, 0.0f, 1.0f, "%.2f") && !s.blend042) s.shareFar = clampf(sf, 0.0f, 1.0f), changed = true;
     a->ItemTooltip("x that share in the pixels none of the frame's samples landed near (0.05).\n"
                    "Higher: less detail kept from the earlier frames, more shimmer in a pan.");
     if (a->SliderFloat("Rest clip", &gr, 0.5f, 3.0f, "%.2f") && !s.blend042) s.gammaRest = clampf(gr, 0.5f, 3.0f), changed = true;
-    a->ItemTooltip("How far from the new frame's samples the accumulated image may stay at rest (1.5).\n"
+    a->ItemTooltip("How far from the new frame's samples the accumulated image may stay at rest (2).\n"
                    "Lower: less ghosting, more shimmer.");
     a->Disabled(false);
     if (a->Checkbox("0.4.2 blend (compare)", &s.blend042)) changed = true;  // (not kept: a comparison)

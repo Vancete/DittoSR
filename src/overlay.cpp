@@ -676,9 +676,9 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         row_bg(i, rh);
         DittoSettings d;
         float v = *slider_of(const_cast<DittoSettings &>(s), i), dv = *slider_of(d, i);
-        // (the blend's three under the 0.4.2 toggle: 0.4.2's values - the defaults - shown, dimmed; the slider's kept)
+        // (the blend's three under the 0.4.2 toggle: 0.4.2's values shown, dimmed; the slider's kept)
         bool off = s.blend042 && (i == I_AREST || i == I_SFAR || i == I_GREST);
-        if (off) v = dv;
+        if (off) v = i == I_AREST ? 0.035f : i == I_SFAR ? 0.05f : 1.5f;
         Range r = range_of(i);
         float ty = y + 8 * S;
         u.text(F_BODY, x0, ty, label, off ? kText3 : kText);
