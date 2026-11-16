@@ -160,8 +160,12 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     // the edge: the samples' luma gradient (Sobel); the narrow Gaussian stretched along it, narrow across it (r2 =
     // |d|^2 - 0.75 es dt^2, dt by steps from the centre's). 0.2.4 had it, 0.3.0 dropped it for speed; back with the
     // anti-shimmer at 0.8 it beat 0.3.1 on every 3x scene, PSNR and shimmer alike, +0.58 ms on a 2 CU RDNA 2)
-    hf lmnh = min(min(min(cc[0].x, cc[1].x), min(cc[2].x, cc[3].x)), min(min(cc[4].x, cc[5].x), min(min(cc[6].x, cc[7].x), cc[8].x)));
-    hf lmxh = max(max(max(cc[0].x, cc[1].x), max(cc[2].x, cc[3].x)), max(max(cc[4].x, cc[5].x), max(max(cc[6].x, cc[7].x), cc[8].x)));
+    // (the samples' range and moments first: the edge's luma range is theirs)
+    [unroll] for (int i = 0; i < 9; i++) {
+        ymn = min(ymn, cc[i]); ymx = max(ymx, cc[i]);
+        if (i != 4) { hf3 dc = cc[i] - cc[4]; m1h += dc; m2h += dc * dc; }
+    }
+    hf lmnh = ymn.x, lmxh = ymx.x;
     float gx = (float)((cc[2].x + (hf)2.0 * cc[5].x + cc[8].x) - (cc[0].x + (hf)2.0 * cc[3].x + cc[6].x));
     float gy = (float)((cc[6].x + (hf)2.0 * cc[7].x + cc[8].x) - (cc[0].x + (hf)2.0 * cc[1].x + cc[2].x));
     float g2 = gx * gx + gy * gy, rg = rsqrt(max(g2, 1e-10));
@@ -169,10 +173,6 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     float2 tng = g2 > 1e-10 ? float2(-gy, gx) * rg : float2(0.0, 1.0);
     float kn = -2.26 * L2E * ks * ks, ke = 0.75 * es;
     float dt0 = dot(d0, tng);
-    [unroll] for (int i = 0; i < 9; i++) {
-        ymn = min(ymn, cc[i]); ymx = max(ymx, cc[i]);
-        hf3 dc = cc[i] - cc[4]; m1h += dc; m2h += dc * dc;
-    }
     float3 m1 = (float3)m1h / 9.0, sig = sqrt(max((float3)m2h / 9.0 - m1 * m1, 0.0));
     m1 += (float3)cc[4];
     // (the smooth estimate - where no sample landed close, and with no history: the bilinear of the 4 samples around
