@@ -136,7 +136,8 @@ The upscale's GPU time (`scripts\bench.ps1`, the median of 400), RTX 5070 Ti:
 
 **F7** opens a side panel on the left of the game: DittoSR's GPU time and the frame time as a graph, the upscaler
 (DittoSR or the game's own, and the side-by-side comparison), sharpness, frame weight, anti-shimmer, motion detail, the
-debug views and the indicator. Changes apply at once; **Save** writes them to
+blend at rest (the new frame's share there, that share where none of its samples landed near, the history's clip
+width; a toggle puts 0.4.2's blend in their place, to compare), the debug views and the indicator. Changes apply at once; **Save** writes them to
 `dittosr.ini` (only what differs from the defaults, besides sharpness and frame weight), **Defaults** restores the
 defaults, **Revert** reads the file again.
 

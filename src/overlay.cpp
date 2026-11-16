@@ -345,7 +345,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHARP, I_WEIGHT, I_SHIMMER, I_HSHARP, I_DEBUG, I_INDICATOR, I_BLEND042, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHARP, I_WEIGHT, I_SHIMMER, I_HSHARP, I_AREST, I_SFAR, I_GREST, I_BLEND042, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -449,6 +449,9 @@ Range range_of(int i) {
     case I_SHARP: return {0.0f, 1.0f, 0.05f};
     case I_WEIGHT: return {0.25f, 4.0f, 0.25f};
     case I_HSHARP: return {0.0f, 2.0f, 0.25f};
+    case I_AREST: return {0.01f, 0.2f, 0.005f};
+    case I_SFAR: return {0.0f, 1.0f, 0.05f};
+    case I_GREST: return {0.5f, 3.0f, 0.1f};
     default: return {0, 1, 1};
     }
 }
@@ -457,6 +460,9 @@ float *slider_of(DittoSettings &s, int i) {
     case I_SHARP: return &s.sharpness;
     case I_WEIGHT: return &s.frameWeight;
     case I_HSHARP: return &s.historySharpen;
+    case I_AREST: return &s.alphaRest;
+    case I_SFAR: return &s.shareFar;
+    case I_GREST: return &s.gammaRest;
     default: return nullptr;
     }
 }
@@ -477,7 +483,8 @@ bool adjust(DittoSettings &s, int i, int dir) {
     switch (i) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
-    case I_SHARP: case I_WEIGHT: case I_HSHARP: {
+    case I_SHARP: case I_WEIGHT: case I_HSHARP: case I_AREST: case I_SFAR: case I_GREST: {
+        if (s.blend042 && i >= I_AREST && i <= I_GREST) return false;  // (0.4.2's values in use: the slider held)
         float *v = slider_of(s, i);
         Range r = range_of(i);
         if (dir == 0) *v = *slider_of(d, i);  // (Enter: back to the default)
@@ -669,22 +676,25 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         row_bg(i, rh);
         DittoSettings d;
         float v = *slider_of(const_cast<DittoSettings &>(s), i), dv = *slider_of(d, i);
+        // (the blend's three under the 0.4.2 toggle: 0.4.2's values - the defaults - shown, dimmed; the slider's kept)
+        bool off = s.blend042 && (i == I_AREST || i == I_SFAR || i == I_GREST);
+        if (off) v = dv;
         Range r = range_of(i);
         float ty = y + 8 * S;
-        u.text(F_BODY, x0, ty, label, kText);
+        u.text(F_BODY, x0, ty, label, off ? kText3 : kText);
         char b[32];
-        snprintf(b, sizeof b, "%.2f", v);
-        u.text(F_VALUE, x1 - u.measure(F_VALUE, b), ty, b, g_m.sel == i ? kAccent : kText);
+        snprintf(b, sizeof b, r.step < 0.01f ? "%.3f" : "%.2f", v);
+        u.text(F_VALUE, x1 - u.measure(F_VALUE, b), ty, b, off ? kText3 : g_m.sel == i ? kAccent : kText);
         if (hint) u.text(F_SMALL, x0 + u.measure(F_BODY, label) + 8 * S, ty + (lh - u.h(F_SMALL)) / 2 + 1 * S, hint, kText3);
         float ky = y + rh - 14 * S, th = 4 * S;
         float t = (v - r.lo) / (r.hi - r.lo), td = (dv - r.lo) / (r.hi - r.lo);
         float kx = x0 + t * (x1 - x0);
         u.box(x0, ky - th / 2, x1, ky + th / 2, rgba(0xFFFFFF, 0.12f), th / 2);
-        u.box(x0, ky - th / 2, kx, ky + th / 2, with_a(kAccent, 0.85f), kAccent, th / 2);
+        u.box(x0, ky - th / 2, kx, ky + th / 2, with_a(kAccent, off ? 0.25f : 0.85f), with_a(kAccent, off ? 0.3f : 1.0f), th / 2);
         float dx = x0 + td * (x1 - x0);
         u.box(dx - 1 * S, ky - 6 * S, dx + 1 * S, ky + 6 * S, rgba(0xFFFFFF, 0.25f), 1 * S);
         float k = (g_m.sel == i ? 14 : 12) * S;
-        u.box(kx - k / 2, ky - k / 2, kx + k / 2, ky + k / 2, rgba(0xFFFFFF), k / 2);
+        u.box(kx - k / 2, ky - k / 2, kx + k / 2, ky + k / 2, rgba(0xFFFFFF, off ? 0.4f : 1.0f), k / 2);
         y += rh + 2 * S;
     };
 
@@ -708,10 +718,15 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     }
     slider_row(I_HSHARP, "Motion detail", nullptr);
     y += 10 * S;
+    section("BLEND");
+    slider_row(I_AREST, "Rest blend", s.blend042 ? "0.4.2's" : nullptr);
+    slider_row(I_SFAR, "Blend with no sample", s.blend042 ? "0.4.2's" : nullptr);
+    slider_row(I_GREST, "Rest clip", s.blend042 ? "0.4.2's" : nullptr);
+    toggle_row(I_BLEND042, "0.4.2 blend (compare)", s.blend042);
+    y += 10 * S;
     section("ADVANCED");
     choice_row(I_DEBUG, "Debug view", kDebugNames[s.debugView < 0 || s.debugView > 4 ? 0 : s.debugView]);
     toggle_row(I_INDICATOR, "Indicator", s.indicator);
-    toggle_row(I_BLEND042, "0.4.2 blend (compare)", s.blend042);
     y += 12 * S;
 
     // the buttons
@@ -809,7 +824,7 @@ void input(DittoSettings &s, bool &changed, double t) {
     }
     if (float *v = slider_of(s, hit)) {
         if (click) g_m.drag = hit;
-        if (g_m.drag == hit) {
+        if (g_m.drag == hit && !(s.blend042 && hit >= I_AREST && hit <= I_GREST)) {
             Range r = range_of(hit);
             float t01 = fminf(fmaxf((mx - g_m.trackX0) / (g_m.trackX1 - g_m.trackX0), 0.0f), 1.0f);
             float nv = roundf((r.lo + t01 * (r.hi - r.lo)) / r.step) * r.step;

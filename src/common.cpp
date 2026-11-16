@@ -70,6 +70,7 @@ static void load_config() {
     s.alphaRest = ini_float(ini, "alpha_rest", s.alphaRest);
     s.conf = ini_float(ini, "conf", s.conf);
     s.gammaRest = ini_float(ini, "gamma_rest", s.gammaRest);
+    if (s.gammaRest <= 0.0f) s.gammaRest = 1.5f;  // (0: the default, as before it had a slider)
     s.width = ini_float(ini, "width", s.width);
     s.react = ini_float(ini, "react", s.react);
     s.reactiveScale = ini_float(ini, "reactive_scale", s.reactiveScale);
@@ -174,6 +175,9 @@ bool ditto_save_settings() {
     ok = put("frame_weight", s.frameWeight, d.frameWeight, true) && ok;
     ok = put("anti_shimmer", s.antiShimmer, d.antiShimmer, false) && ok;
     ok = put("history_sharpen", s.historySharpen, d.historySharpen, false) && ok;
+    ok = put("alpha_rest", s.alphaRest, d.alphaRest, false) && ok;
+    ok = put("share_far", s.shareFar, d.shareFar, false) && ok;
+    ok = put("gamma_rest", s.gammaRest, d.gammaRest, false) && ok;
     ok = put("auto_reactive", s.autoReactive, d.autoReactive, false) && ok;
     ok = put("debug_view", (float)s.debugView, (float)d.debugView, false) && ok;
     if (!held("indicator")) ok = WritePrivateProfileStringA("debug", "indicator", s.indicator ? "1" : "0", ini) != 0 && ok;

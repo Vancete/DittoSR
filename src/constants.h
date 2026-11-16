@@ -74,7 +74,7 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
     // (the envelope's cap by the ratio: half above 2x, 0.25 from 3x - there what it lets in is a coarser estimate)
     k.envCap = s.envCap * (1.0f - 0.5f * hr);
     if (s.blend042) {  // (0.4.2's blend, to compare)
-        k.alphaRest = 0.035f, k.shareFar = 0.05f, k.alphaSlow = 0.0f, k.rampLo = 0.0f, k.rampHi = 8.0f, k.envGain = 0.0f;
+        k.alphaRest = 0.035f, k.shareFar = 0.05f, k.gammaRest = 1.5f, k.alphaSlow = 0.0f, k.rampLo = 0.0f, k.rampHi = 8.0f, k.envGain = 0.0f;
         if (s.antiShimmer < 0.0f) k.antiShimmer = 0.4f - 0.2f * hr;
     }
     k.envTol = s.envTol, k.envDecay = s.envDecay, k.envGain = s.envGain, k.envRest = s.envRest;
