@@ -16,7 +16,7 @@ struct DittoSettings {
     // time: the envelope below finds it. (0.035 until 0.4.2; 0.15 for a while after, for that grass: the still image shimmered)
     float alphaRest = 0.1f;
     float conf = 0.05f;        // the confidence the narrow estimate is taken alone from (originally 0.3)
-    float gammaRest = 2.0f;    // the history clip width at rest (1.5 until 0.4.2; 0 in the ini: the default)
+    float gammaRest = 3.0f;    // the history clip width at rest (1.5 until 0.4.2; 0 in the ini: the default)
     float width = 0.8f;        // the narrow Gaussian's width from 2x (x 0.875 at 1.5x and below; originally 1.4 - at 2.3x a blur as wide as a grass blade)
     float react = 1.0f;        // the reaction to changes
     float reactiveScale = 1.0f;
@@ -38,7 +38,7 @@ struct DittoSettings {
     // then shows new in the pixels a sample reached and old in the others, a comb along its edges - The Legend of Zelda:
     // Ocarina of Time's grass at 2x, the camera still (its Longshot port) - which the envelope below takes care of; at
     // 1, tried for it, a pan's sharpness fell from 0.77 to 0.47 of the reference's and its shimmer tripled)
-    float shareFar = 0.05f;
+    float shareFar = 0.4f;  // (0.05 until 0.4.2 and a while after; 0.4 by eye, with the rest share 0.1 and the rest clip 3)
     float shareNear = 3.0f;
     float encodePower = 0.5f;  // the encoding's power after Reinhard (0.5: sqrt)
     // while moving (from 4 output pixels a frame) shareNear falls to motionNear: each frame's pattern of pixels a sample

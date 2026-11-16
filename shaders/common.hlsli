@@ -12,7 +12,7 @@ cbuffer C : register(b0) {
     float alphaRest;      // a stable pixel's share of each new frame at rest (0.1)
     float conf;           // the confidence the narrow estimate is taken alone from (0.3)
     float reset;          // 1: this frame alone
-    float gammaRest;      // the history clip width at rest (2)
+    float gammaRest;      // the history clip width at rest (3)
     float react;          // the reaction to changes (1)
     float reactiveScale;  // the game's reactive mask: how far it raises the new frame's share (1)
     float stabStep;       // the stability level's step up each frame a sample lands near the pixel (0.34)
