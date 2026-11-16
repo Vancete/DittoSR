@@ -186,7 +186,7 @@ DittoSRVk::~DittoSRVk() {
     if (ok_ || fn_->vkDestroyImage) {
         collect(true);
         for (Img *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &expo_[0], &expo_[1],
-                       &change1_, &dummy_})
+                       &env_[0], &env_[1], &change1_, &dummy_})
             dropImage(*t);
         collect(true);
         std::vector<VkPipeline> ps = {psoConvert_, psoMotion_};
@@ -362,13 +362,15 @@ bool DittoSRVk::ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t o
     *made = false;
     if (texValid_ && mda_[0].w == rw && mda_[0].h == rh && hist_[0].w == ow && hist_[0].h == oh && hist_[0].format == histFmt) return true;
     *made = true;
-    for (Img *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &expo_[0], &expo_[1], &change1_})
+    for (Img *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &expo_[0], &expo_[1], &env_[0], &env_[1],
+                   &change1_})
         dropImage(*t);
     const VkFormat F16 = VK_FORMAT_R16G16B16A16_SFLOAT, S = VK_FORMAT_R8G8_UNORM, R32 = VK_FORMAT_R32_SFLOAT;
     texValid_ = makeImage(mda_[0], rw, rh, F16) && makeImage(mda_[1], rw, rh, F16) && makeImage(hist_[0], ow, oh, histFmt) &&
                 makeImage(hist_[1], ow, oh, histFmt) && makeImage(aux_[0], rw, rh, VK_FORMAT_R8G8B8A8_UNORM) &&
                 makeImage(aux_[1], rw, rh, VK_FORMAT_R8G8B8A8_UNORM) && makeImage(stab_[0], ow, oh, S) && makeImage(stab_[1], ow, oh, S) &&
-                makeImage(expo_[0], 1, 1, R32) && makeImage(expo_[1], 1, 1, R32) && makeImage(change1_, 1, 1, R32);
+                makeImage(expo_[0], 1, 1, R32) && makeImage(expo_[1], 1, 1, R32) && makeImage(change1_, 1, 1, R32) &&
+                makeImage(env_[0], rw, rh, S) && makeImage(env_[1], rw, rh, S);  // (the luma envelope: motion.hlsl)
     if (texValid_)
         ditto_log("textures: render %ux%u, output %ux%u, history %s, stability R8G8 (Vulkan)\n", rw, rh, ow, oh,
                   histFmt == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ? "RGB10A2" : "RGBA16F");
@@ -448,7 +450,8 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
         uses[nu++] = {&i, to};
     };
     use(fr.color, false), use(fr.depth, false), use(fr.mv, false), use(fr.exposure, false), use(fr.reactive, false), use(fr.output, true);
-    Img *internal[] = {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &expo_[0], &expo_[1], &change1_, &dummy_};
+    Img *internal[] = {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &expo_[0], &expo_[1],
+                       &env_[0], &env_[1], &change1_, &dummy_};
     auto barrier = [&](bool in) {
         VkImageMemoryBarrier ib[6 + sizeof internal / sizeof internal[0]] = {};
         uint32_t n = 0;
@@ -581,11 +584,11 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
         run(psoConvert_, s, l, u, u0, (rw + 7) / 8, (rh + 7) / 8 + 1);
     }
     compute_barrier();
-    // motion (render size): t0 previous aux, t1 mda, t2 colour, t3 previous mda -> u0 aux
+    // motion (render size): t0 previous aux, t1 mda, t2 colour, t3 previous mda, t4 previous envelope -> u0 aux, u1 envelope
     {
-        VkImageView s[kSampled] = {auxP.view, mdaC.view, vColor, mdaP.view, VK_NULL_HANDLE, e, VK_NULL_HANDLE, VK_NULL_HANDLE};
+        VkImageView s[kSampled] = {auxP.view, mdaC.view, vColor, mdaP.view, env_[cur_ ^ 1].view, e, VK_NULL_HANDLE, VK_NULL_HANDLE};
         VkImageLayout l[kSampled] = {G, G, lColor, G, G, lE, G, G};
-        VkImageView u[kStorage] = {auxC.view, VK_NULL_HANDLE, VK_NULL_HANDLE};
+        VkImageView u[kStorage] = {auxC.view, env_[cur_].view, VK_NULL_HANDLE};
         run(psoMotion_, s, l, u, u0, (rw + 7) / 8, (rh + 7) / 8);
     }
     compute_barrier();

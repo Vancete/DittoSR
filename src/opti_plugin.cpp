@@ -136,6 +136,8 @@ void draw_tab(void *) {
                    "the new frame's share, the stability level, or clip (red) / cut (green) / confidence (blue).");
     if (a->Checkbox("Indicator", &s.indicator)) a->SetBool(g_plugin, kIndicator, s.indicator), changed = true;
     a->ItemTooltip("A small pink DittoSR face in the top-left corner while DittoSR upscales");
+    if (a->Checkbox("0.4.2 blend (compare)", &s.blend042)) changed = true;  // (not kept: a comparison)
+    a->ItemTooltip("0.4.2's blend in place of the new one, to compare them live. Not saved.");
 
     a->Section("Settings");
     if (g_unsaved) a->TextColored(1.0f, 0.8f, 0.0f, 1.0f, "Not saved yet: Save here, or Save INI in OptiScaler's menu");

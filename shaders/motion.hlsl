@@ -10,6 +10,8 @@ Texture2D<float4> Mda : register(t1);
 Texture2D<float4> Color : register(t2);
 Texture2D<float4> PrevMda : register(t3);
 VKFMT("rgba8") RWTexture2D<float4> Out : register(u0);
+Texture2D<float2> PrevEnv : register(t4);   // (the luma envelope where the pixel was: x its min, y its max)
+VKFMT("rg8") RWTexture2D<float2> EnvOut : register(u1);
 
 groupshared float gsLuma[100];  // (the group's 8 x 8 and a sample around: each encoded once, not by its 9 neighbours)
 
@@ -17,8 +19,9 @@ groupshared float gsLuma[100];  // (the group's 8 x 8 and a sample around: each 
 void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_GroupIndex) {
     float e = encExposure();
     int2 p = int2(id), cs = int2(rs) - 1;
-    // the colour's luma here and the 3x3's spread (the reactive test - only when it is on)
-    if (autoReactive > 0.0) {
+    // the colour's luma here and the 3x3's spread (the reactive test and the envelope - only when one is on)
+    bool lumas = autoReactive > 0.0 || envGain > 0.0;
+    if (lumas) {
         for (int i = (int)li; i < 100; i += 64) {
             int2 q = clamp(int2(gid * 8) - 1 + int2(i % 10, i / 10), int2(0, 0), cs);
             gsLuma[i] = dot(enc(Color.Load(int3(q, 0)).rgb, e), float3(0.25, 0.5, 0.25));
@@ -27,7 +30,7 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     GroupMemoryBarrierWithGroupSync();
     if (any(id >= (uint2)rs)) return;
     float lc = 0.0, lmn = 1.0, lmx = 0.0;
-    if (autoReactive > 0.0) {
+    if (lumas) {
         int2 o = p - int2(gid * 8);
         [unroll] for (int i = 0; i < 9; i++) {
             float l = gsLuma[(o.y + i / 3) * 10 + o.x + i % 3];
@@ -39,7 +42,11 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     float4 mda4 = Mda.Load(int3(p, 0));
     float2 puv = uv - 0.5 * mda4.xy;
     bool off = any(puv < 0.0) || any(puv > 1.0);
-    if (reset > 0.5 || off) { Out[id] = float4(0.0, 0.0, 0.0, lc); return; }
+    if (reset > 0.5 || off) {
+        Out[id] = float4(0.0, 0.0, 0.0, lc);
+        EnvOut[id] = float2(lc, lc);
+        return;
+    }
     // (the previous frame's motion where this pixel was: changed by over half a pixel more than its neighbours' -
     // another object's - less history, a narrower box. Against the neighbours: the camera speeding up or slowing down,
     // a hand on the mouse, changes every pixel's motion alike and cut the whole history; another object's edge changes it
@@ -73,5 +80,19 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
         float lp = PrevMotion.SampleLevel(linearClamp, puv, 0.0).w;
         rv = autoReactive * saturate((abs(lc - lp) - 2.0 * (lmx - lmn) - 0.06) * 5.0);
     }
+    // (the envelope: the range this pixel's luma has taken over the last frames - a decaying min / max, carried where
+    // the pixel went. A static pixel's jittered samples bounce within it, however aliased; a luma outside it by more
+    // than the tolerance is something new there - what moved with no motion vector of its own, arriving: the samples'
+    // box, widened by the arrival itself, does not cut the history; this does, in the first frame)
+    float2 env = float2(lc, lc);
+    if (envGain > 0.0) {
+        float2 pe = PrevEnv.SampleLevel(linearClamp, puv, 0.0);
+        float ex = max(max(lc - pe.y, pe.x - lc), 0.0);
+        float still = envRest > 0.5 ? 1.0 - saturate((length(0.5 * mda4.xy * os) - 0.5) / 1.5) : 1.0;
+        float wdt = pe.y - pe.x;
+        rv = max(rv, min(saturate((ex - envTol - envRel * wdt) * envGain), envCap) * still);
+        env = float2(min(lc, pe.x + envDecay * wdt), max(lc, pe.y - envDecay * wdt));
+    }
+    EnvOut[id] = env;
     Out[id] = float4(rj, dz, rv, lc);
 }

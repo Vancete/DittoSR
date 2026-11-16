@@ -345,7 +345,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHARP, I_WEIGHT, I_SHIMMER, I_HSHARP, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHARP, I_WEIGHT, I_SHIMMER, I_HSHARP, I_DEBUG, I_INDICATOR, I_BLEND042, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -494,6 +494,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
         return true;
     }
     case I_INDICATOR: s.indicator = !s.indicator; return true;
+    case I_BLEND042: s.blend042 = !s.blend042; return true;
     }
     return false;
 }
@@ -710,6 +711,7 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     section("ADVANCED");
     choice_row(I_DEBUG, "Debug view", kDebugNames[s.debugView < 0 || s.debugView > 4 ? 0 : s.debugView]);
     toggle_row(I_INDICATOR, "Indicator", s.indicator);
+    toggle_row(I_BLEND042, "0.4.2 blend (compare)", s.blend042);
     y += 12 * S;
 
     // the buttons
@@ -814,7 +816,7 @@ void input(DittoSettings &s, bool &changed, double t) {
             if (nv != *v) *v = nv, changed = true;
         }
     } else if (click) {
-        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR ? -1 : 1);
+        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR && hit != I_BLEND042 ? -1 : 1);
     }
 }
 

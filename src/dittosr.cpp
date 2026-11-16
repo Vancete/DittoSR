@@ -267,7 +267,8 @@ bool DittoSR::makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f) {
 }
 
 void DittoSR::releaseTextures() {
-    for (Tex *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &change1_, &expo_[0], &expo_[1]})
+    for (Tex *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &change1_, &expo_[0], &expo_[1],
+                   &env_[0], &env_[1]})
         if (t->res) t->res->Release(), *t = Tex();
     texValid_ = false;
 }
@@ -282,6 +283,7 @@ bool DittoSR::ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh,
     bool ok = makeTex(mda_[0], rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) && makeTex(mda_[1], rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
               makeTex(hist_[0], ow, oh, hf) && makeTex(hist_[1], ow, oh, hf) &&
               makeTex(aux_[0], rw, rh, DXGI_FORMAT_R8G8B8A8_UNORM) && makeTex(aux_[1], rw, rh, DXGI_FORMAT_R8G8B8A8_UNORM) &&
+              makeTex(env_[0], rw, rh, DXGI_FORMAT_R8G8_UNORM) && makeTex(env_[1], rw, rh, DXGI_FORMAT_R8G8_UNORM) &&
               makeTex(stab_[0], ow, oh, sf) && makeTex(stab_[1], ow, oh, sf) &&
               makeTex(change1_, 1, 1, DXGI_FORMAT_R16_FLOAT) && makeTex(expo_[0], 1, 1, DXGI_FORMAT_R32_FLOAT) &&
               makeTex(expo_[1], 1, 1, DXGI_FORMAT_R32_FLOAT);
@@ -488,10 +490,13 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     // motion (render size): the motion checks, the derived reactive mask
     transition(cl, auxC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     {
-        ID3D12Resource *s[kSrvs] = {auxP.res, mdaC.res, color, mdaP.res, nullptr, expo};
-        DXGI_FORMAT f[kSrvs] = {auxP.fmt, mdaC.fmt, cd.Format, mdaP.fmt, X, exf};
-        ID3D12Resource *u[kUavs] = {auxC.res};
-        DXGI_FORMAT uf[kUavs] = {auxC.fmt};
+        Tex &envC = env_[cur_], &envP = env_[cur_ ^ 1];  // (the luma envelope: t4 the previous frame's, u1 this one's)
+        transition(cl, envP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        transition(cl, envC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        ID3D12Resource *s[kSrvs] = {auxP.res, mdaC.res, color, mdaP.res, envP.res, expo};
+        DXGI_FORMAT f[kSrvs] = {auxP.fmt, mdaC.fmt, cd.Format, mdaP.fmt, envP.fmt, exf};
+        ID3D12Resource *u[kUavs] = {auxC.res, envC.res};
+        DXGI_FORMAT uf[kUavs] = {auxC.fmt, envC.fmt};
         run(psoMotion_, s, f, u, uf, (rw + 7) / 8, (rh + 7) / 8);
     }
     transition(cl, auxC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);

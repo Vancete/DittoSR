@@ -11,9 +11,10 @@
 #define DITTOSR_VERSION_NAME "DittoSR " DITTOSR_VERSION
 
 struct DittoSettings {
-    // a stable pixel's share of each new frame at rest (0.035 until 0.4.2: some 30 frames of history - what moves with
-    // no motion vector of its own, grass swaying in its vertex shader, showed where it had been all that time)
-    float alphaRest = 0.15f;
+    // a stable pixel's share of each new frame at rest: some 30 frames of history - what stands still is steady. What
+    // moves with no motion vector of its own (grass swaying in its vertex shader) would show where it had been all that
+    // time: the envelope below finds it. (0.15 for a while after 0.4.2, for that grass: the still image shimmered)
+    float alphaRest = 0.035f;
     float conf = 0.05f;        // the confidence the narrow estimate is taken alone from (originally 0.3)
     float gammaRest = 0.0f;    // the history clip width at rest (0: 1.5)
     float width = 0.8f;        // the narrow Gaussian's width from 2x (x 0.875 at 1.5x and below; originally 1.4 - at 2.3x a blur as wide as a grass blade)
@@ -33,12 +34,11 @@ struct DittoSettings {
     float changeScale = 1.0f;  // how far the share of the image that changed drives the reaction
     // the new frame's share x shareFar where no jittered sample landed close to the pixel, x shareNear where one did
     // (originally 0.6 / 1.4 - at 2.3x most frames have no sample close: their blurred estimate blurred the history)
-    // (shareFar 0.05 until 0.4.2: the pixels no sample landed near all but held their history, so what moves with no
-    // motion vector showed new in the pixels a sample reached and old in the others, a comb along its edges. The Legend
-    // of Zelda: Ocarina of Time's grass at 2x, the camera still (its Longshot port): at 1 with a rest share of 0.1, whole
-    // blades, the closest to DLSS of what was tried, for 8 - 21 % less detail in what stands still - the mean gradient
-    // of a tree and of the horizon; the rest share 0.15 itself was not measured)
-    float shareFar = 1.0f;
+    // (shareFar 0.05: the pixels no sample landed near all but hold their history. What moves with no motion vector
+    // then shows new in the pixels a sample reached and old in the others, a comb along its edges - The Legend of Zelda:
+    // Ocarina of Time's grass at 2x, the camera still (its Longshot port) - which the envelope below takes care of; at
+    // 1, tried for it, a pan's sharpness fell from 0.77 to 0.47 of the reference's and its shimmer tripled)
+    float shareFar = 0.05f;
     float shareNear = 3.0f;
     float encodePower = 0.5f;  // the encoding's power after Reinhard (0.5: sqrt)
     // while moving (from 4 output pixels a frame) shareNear falls to motionNear: each frame's pattern of pixels a sample
@@ -63,8 +63,8 @@ struct DittoSettings {
     // difference from the history keeps alternating
     // (the jittered samples' aliasing), up to this share less of the new frame. Less shimmer (-10..-25 %), a little
     // softer fine detail in motion. The stability texture becomes R8G8 (the sign's running mean in .y)
-    // (-1: by the ratio, 0.8 up to 2x and 0.4 from 3x - twice what 0.4.2 had, since the rest share and the far share let
-    // more of the new frame in at rest)
+    // (-1: by the ratio, 0.6 up to 2x and 0.45 from 3x - 0.4 and 0.2 until 0.4.2: the base share is higher in slow
+    // motion now, alphaSlow)
     float antiShimmer = -1.0f;
     // the history's detail made up for its resampling blur in motion (upscale.hlsl): x its default strength (0.03 up to
     // 2x, 0.05 from 3x); 0 off
@@ -72,6 +72,21 @@ struct DittoSettings {
     // the sharpening in the upscale, its own pass skipped (up to 2.5x - above it the separate pass): the gain
     // of the detail term; 0 the separate pass. On the ROG Ally 0.3 ms less at 1080p 2x
     float fusedSharpen = 1.0f;
+    // the envelope (motion.hlsl): each render pixel's luma range over the last frames - a min / max that narrows by
+    // envDecay of its width a frame, carried where the pixel went. A static pixel's jittered samples bounce within it,
+    // however aliased; a luma outside it by more than envTol + envRel x its width is something new there - what moved
+    // with no motion vector of its own, arriving - and raises the reactive mask by envGain per unit, up to envCap (0.5,
+    // half of it from 3x: what it lets in is a coarser estimate there), at rest only (envRest; fading out from half an
+    // output pixel a frame). envGain 0: off. Harness, 2x, thick blades swaying, the camera still: 0.31 of a blade's
+    // contrast shown against 0.20 without it, the still grass's shimmer 1.12 against 1.10
+    float envTol = 0.03f, envRel = 0.25f, envDecay = 0.05f, envGain = 40.0f, envCap = 0.5f, envRest = 1.0f;
+    // the base share in slow motion: alphaSlow from rampLo to rampHi output pixels a frame (then on to the moving share
+    // by 8) - a slow pan's history is resampled every frame, and more of the new frame keeps it sharp (the tiles at 1.8
+    // px a frame, 2x: 30.5 -> 31.6 dB); alphaSlow 0: one ramp from the rest share to the moving one over rampLo..rampHi
+    float alphaSlow = 0.15f, rampLo = 0.25f, rampHi = 1.0f;
+    // 0.4.2's blend, to compare (the menu's toggle, blend_042; not saved): no envelope, the base share one ramp up to
+    // 8 px a frame, the anti-shimmer 0.4 and 0.2 from 3x
+    bool blend042 = false;
     bool indicator = false;
     int debugView = 0;  // 1: the motion; 2: the new frame's share; 3: the stability level; 4: clip / cut / confidence
 };
@@ -145,7 +160,7 @@ private:
     bool amd_ = false;  // (the device's vendor is AMD: fp16 = -1 picks the FP16 shaders)
     ID3D12DescriptorHeap *heap_ = nullptr;
     uint32_t heapSize_ = 0, heapNext_ = 0, descInc_ = 0;
-    Tex mda_[2], hist_[2], aux_[2], stab_[2], change1_;
+    Tex mda_[2], hist_[2], aux_[2], stab_[2], change1_, env_[2];
     Tex expo_[2];  // (the auto exposure, 1 x 1: the game asked for it and gave none)
     bool split_ = false;
     int cur_ = 0;

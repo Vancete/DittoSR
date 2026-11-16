@@ -18,8 +18,10 @@ struct DittoConstants {
     float shareNear, encodePower, motionNear, splitClip;
     float history10, frameWeight, splitX, autoReactive;
     float autoExposure, historySharpen, fusedSharpen;
+    float envTol, envDecay, envGain, envRest;
+    float rampLo, rampHi, envRel, envCap, alphaSlow;
 };
-static_assert(sizeof(DittoConstants) == 51 * 4, "the root constants");
+static_assert(sizeof(DittoConstants) == 60 * 4, "the root constants");
 
 // One upscale's constants from the settings and the frame (DittoFrame or DittoFrameVk: the same numeric fields).
 // prevJit: the previous frame's jitter, updated (the vectors' jitter cancellation).
@@ -60,16 +62,20 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
     // (upscale.hlsl: 0.03 up to 2x, 0.05 from 3x, the extra bounded by the samples' range - unbounded, at 2x beyond 0.02
     // the tiles' zone plate drifted over the frames (-0.12 dB at 0.025); bounded, 0.03 holds it and 0.04 not)
     float hr = k.ratio <= 2.0f ? 0.0f : k.ratio >= 3.0f ? 1.0f : k.ratio - 2.0f;
-    // (the rest share and the far share between 0.4.2's and the settings' above 2x: x 0.5 and x 0.3 from 3x, so 0.075 and
-    // 0.3 for the defaults - there one output pixel in nine has a sample near, and following the new frame as much as at
-    // 2x in the other eight trembled. By eye, not measured)
-    k.alphaRest *= 1.0f - 0.5f * hr, k.shareFar *= 1.0f - 0.7f * hr;
     k.historySharpen = s.historySharpen > 0.0f ? (0.03f + 0.02f * hr) * s.historySharpen : 0.0f;
     // (the anti-shimmer by the ratio unless set: 0.4 up to 2x, 0.2 from 3x - there it held back the new frame's detail,
     // the image slower to get sharp again after a turn, and the history's own detail is made up more)
-    // (twice that, 0.8 to 0.4, with the rest share and the far share as they are now)
-    float as = s.antiShimmer >= 0.0f ? s.antiShimmer : 0.8f - 0.4f * hr;
+    // (0.6 to 0.45 now, with the base share higher in slow motion - alphaSlow)
+    float as = s.antiShimmer >= 0.0f ? s.antiShimmer : 0.6f - 0.15f * hr;
     k.antiShimmer = as > 0.9f ? 0.9f : as;
     // (the sharpening in the upscale, its own pass skipped: D3D12 without the comparison - set by the driver)
     k.fusedSharpen = 0.0f;
+    k.rampLo = s.rampLo, k.rampHi = s.rampHi, k.envRel = s.envRel, k.alphaSlow = s.alphaSlow;
+    // (the envelope's cap by the ratio: half above 2x, 0.25 from 3x - there what it lets in is a coarser estimate)
+    k.envCap = s.envCap * (1.0f - 0.5f * hr);
+    if (s.blend042) {  // (0.4.2's blend, to compare)
+        k.alphaRest = 0.035f, k.shareFar = 0.05f, k.alphaSlow = 0.0f, k.rampLo = 0.0f, k.rampHi = 8.0f, k.envGain = 0.0f;
+        if (s.antiShimmer < 0.0f) k.antiShimmer = 0.4f - 0.2f * hr;
+    }
+    k.envTol = s.envTol, k.envDecay = s.envDecay, k.envGain = s.envGain, k.envRest = s.envRest;
 }

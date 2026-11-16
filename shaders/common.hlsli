@@ -48,6 +48,14 @@ cbuffer C : register(b0) {
                           // frame's, u2 this one's
     float historySharpen; // the history's detail made up for its resampling blur, in motion (upscale.hlsl; 0: off)
     float fusedSharpen;   // > 0: the upscale sharpens and writes the output itself, the sharpening pass skipped
+    float envTol;         // the envelope: how far outside its range a luma counts as new (0.04)
+    float envDecay;       // ... the share of its width the range narrows by each frame (0.05)
+    float envGain;        // ... the reactive mask per unit beyond the tolerance (0: off)
+    float envRest;        // ... 1: only at rest (fading out from half an output pixel a frame)
+    float rampLo, rampHi; // the speed (output pixels a frame) from which, and at which in full, the base share is the moving one
+    float envRel;         // the envelope's tolerance more by this x its width
+    float envCap;         // ... the most it raises the reactive mask to (0.5 and under: the stability is kept)
+    float alphaSlow;      // > 0: the base share in slow motion (rampLo..rampHi), then on to the moving one by 8 px a frame
 };
 
 // hf: the colour work's precision - half in the FP16 variant (DITTO_FP16, SM 6.2 with 16-bit types: twice the rate on

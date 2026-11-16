@@ -87,7 +87,7 @@ private:
     VkDeviceMemory uboMem_ = VK_NULL_HANDLE;
     uint8_t *uboMap_ = nullptr;
     uint32_t uboStride_ = 256;
-    Img mda_[2], hist_[2], aux_[2], stab_[2], change1_, dummy_;
+    Img mda_[2], hist_[2], aux_[2], stab_[2], env_[2], change1_, dummy_;
     Img expo_[2];  // (the auto exposure, 1 x 1: the game asked for it and gave none)
     bool hist10_ = false;  // (RGB10A2 is a storage format on this device: the history can be 10 bits)
     bool split_ = false;

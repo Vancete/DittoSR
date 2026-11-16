@@ -259,7 +259,10 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     // object's detail, the history resampled every frame softening it - at 3x a moving object matched FSR's at 2.3x,
     // and the grass still shimmered half as much as FSR's)
     float hr = saturate(ratio - 2.0);
-    float base = lerp(lerp(0.2, alphaRest > 0.0 ? alphaRest : 0.035, sp), motionShare * (1.0 + 0.67 * hr), saturate(mlen * 0.125));
+    float bRest = lerp(0.2, alphaRest > 0.0 ? alphaRest : 0.035, sp), bMove = motionShare * (1.0 + 0.67 * hr);
+    float rmp = saturate((mlen - rampLo) / max(rampHi - rampLo, 1e-3));
+    float base = alphaSlow > 0.0 ? lerp(lerp(bRest, max(bRest, alphaSlow), rmp), bMove, saturate((mlen - rampHi) / max(8.0 - rampHi, 1e-3)))
+                                 : lerp(bRest, bMove, rmp);
     // (moving, less contrast between the pixels a sample landed near and the rest: each frame's own pattern of them
     // shimmers - at rest it is what resolves the detail)
     float near = motionNear > 0.0 ? lerp(shareNear, motionNear, mf) : shareNear;
@@ -288,7 +291,7 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     // (the game's reactive mask: particles, transparencies without motion of their own - more of the new frame)
     // (none from the game: the motion pass's derived one - the luma changed beyond what the jitter explains)
     float rv = 0.0;
-    if (hasReactive > 0.5) rv = saturate(Reactive.SampleLevel(linearClamp, uv, 0.0) * reactiveScale);
+    if (hasReactive > 0.5) rv = max(saturate(Reactive.SampleLevel(linearClamp, uv, 0.0) * reactiveScale), ax.z);  // (ax.z: the envelope's alone then)
     else rv = ax.z;
     a = max(a, rv);
     // (the stability for the next frame: 0 where the history was cut, else one step up. Above 2x at rest, a step only
