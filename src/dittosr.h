@@ -38,7 +38,7 @@ struct DittoSettings {
     // then shows new in the pixels a sample reached and old in the others, a comb along its edges - The Legend of Zelda:
     // Ocarina of Time's grass at 2x, the camera still (its Longshot port) - which the envelope below takes care of; at
     // 1, tried for it, a pan's sharpness fell from 0.77 to 0.47 of the reference's and its shimmer tripled)
-    float shareFar = 0.4f;  // (0.05 until 0.4.2 and a while after; 0.4 by eye, with the rest share 0.1 and the rest clip 3)
+    float shareFar = 0.2f;  // (0.05 until 0.4.2 and a while after; 0.2 by eye, with the rest share 0.1 and the rest clip 3)
     float shareNear = 3.0f;
     float encodePower = 0.5f;  // the encoding's power after Reinhard (0.5: sqrt)
     // while moving (from 4 output pixels a frame) shareNear falls to motionNear: each frame's pattern of pixels a sample

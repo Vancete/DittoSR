@@ -134,7 +134,7 @@ void draw_tab(void *) {
     a->ItemTooltip("Each new frame's share where nothing moves (0.1). Higher: what moves with no motion\n"
                    "vectors follows sooner, the still image shimmers more.");
     if (a->SliderFloat("Blend with no sample", &sf, 0.0f, 1.0f, "%.2f") && !s.blend042) s.shareFar = clampf(sf, 0.0f, 1.0f), changed = true;
-    a->ItemTooltip("x that share in the pixels none of the frame's samples landed near (0.4).\n"
+    a->ItemTooltip("x that share in the pixels none of the frame's samples landed near (0.2).\n"
                    "Higher: less detail kept from the earlier frames, more shimmer in a pan.");
     if (a->SliderFloat("Rest clip", &gr, 0.5f, 3.0f, "%.2f") && !s.blend042) s.gammaRest = clampf(gr, 0.5f, 3.0f), changed = true;
     a->ItemTooltip("How far from the new frame's samples the accumulated image may stay at rest (3).\n"
