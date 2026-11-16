@@ -126,10 +126,10 @@ DittoSR::DittoSR(ID3D12Device *device, const DittoCreateInfo &ci, const DittoSet
     ID3D12CommandQueue *q = nullptr;
     UINT64 hz = 0;
     if (SUCCEEDED(dev_->CreateCommandQueue(&qd, IID_PPV_ARGS(&q)))) q->GetTimestampFrequency(&hz), q->Release();
-    D3D12_QUERY_HEAP_DESC hd = {D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 2 * kTimeRing, 0};
+    D3D12_QUERY_HEAP_DESC hd = {D3D12_QUERY_HEAP_TYPE_TIMESTAMP, kStamps * kTimeRing, 0};
     D3D12_HEAP_PROPERTIES hp = {D3D12_HEAP_TYPE_READBACK};
     D3D12_RESOURCE_DESC bd = {};
-    bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, bd.Width = 16 * kTimeRing, bd.Height = 1, bd.DepthOrArraySize = 1;
+    bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, bd.Width = 8 * kStamps * kTimeRing, bd.Height = 1, bd.DepthOrArraySize = 1;
     bd.MipLevels = 1, bd.SampleDesc.Count = 1, bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     D3D12_RANGE none = {0, 0};
     if (hz && SUCCEEDED(dev_->CreateQueryHeap(&hd, IID_PPV_ARGS(&timeQ_))) &&
@@ -419,9 +419,21 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     // list both take timestamps)
     uint32_t ts = (uint32_t)(frames_ % kTimeRing);
     if (tickMs_ > 0.0) {
-        uint64_t a = timeMap_[2 * ts], b = timeMap_[2 * ts + 1];
-        if (frames_ >= kTimeRing && b > a && (b - a) * tickMs_ < 1000.0) g_stats.upscaleMs = (float)((b - a) * tickMs_);
-        cl->EndQuery(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, 2 * ts);
+        const uint64_t *st = timeMap_ + kStamps * ts;
+        uint64_t a = st[0], b = st[kStamps - 1];
+        if (frames_ >= kTimeRing && b > a && (b - a) * tickMs_ < 1000.0) {
+            g_stats.upscaleMs = (float)((b - a) * tickMs_);
+            if (g_cfg.logPasses) {
+                for (uint32_t i = 0; i < 4; i++) passMs_[i] += st[i + 1] >= st[i] ? (st[i + 1] - st[i]) * tickMs_ : 0.0;
+                if (++passN_ == 256) {
+                    ditto_log("passes: convert %.3f, motion %.3f, upscale %.3f, sharpen %.3f, all %.3f ms (GPU, the mean of 256)\n",
+                              passMs_[0] / 256, passMs_[1] / 256, passMs_[2] / 256, passMs_[3] / 256,
+                              (passMs_[0] + passMs_[1] + passMs_[2] + passMs_[3]) / 256);
+                    passMs_[0] = passMs_[1] = passMs_[2] = passMs_[3] = 0.0, passN_ = 0;
+                }
+            }
+        }
+        cl->EndQuery(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, kStamps * ts);
     }
 
     // the constants
@@ -480,6 +492,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
         DXGI_FORMAT uf[kUavs] = {mdaC.fmt, change1_.fmt, autoExpo ? expoC.fmt : X};
         run(psoConvert_, s, f, u, uf, (rw + 7) / 8, (rh + 7) / 8 + 1);
     }
+    if (tickMs_ > 0.0) cl->EndQuery(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, kStamps * ts + 1);
     // (the later passes read this frame's exposure: the auto one just measured, or the game's)
     if (autoExpo) transition(cl, expoC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE), expo = expoC.res;
     DXGI_FORMAT exf = expo ? expo->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
@@ -499,6 +512,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
         DXGI_FORMAT uf[kUavs] = {auxC.fmt, envC.fmt};
         run(psoMotion_, s, f, u, uf, (rw + 7) / 8, (rh + 7) / 8);
     }
+    if (tickMs_ > 0.0) cl->EndQuery(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, kStamps * ts + 2);
     transition(cl, auxC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     // upscale (output size): the history, the stability levels (and the game's output, a debug view)
     transition(cl, histC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -512,6 +526,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
         bool as = s_.antiShimmer != 0.0f;
         run(fp16 ? (as ? psoUpscaleAs16_ : psoUpscale16_) : (as ? psoUpscaleAs_ : psoUpscale_), s, f, u, uf, (ow + kUpGX - 1) / kUpGX, (oh + kUpGY - 1) / kUpGY);
     }
+    if (tickMs_ > 0.0) cl->EndQuery(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, kStamps * ts + 3);
     transition(cl, histC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     transition(cl, stabC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     // sharpen (output size): the history into the game's output
@@ -532,8 +547,8 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     cl->ResourceBarrier(1, &ub);
     if (nu) cl->ResourceBarrier(nu, bs);
     if (tickMs_ > 0.0) {
-        cl->EndQuery(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, 2 * ts + 1);
-        cl->ResolveQueryData(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, 2 * ts, 2, timeRb_, 16 * ts);
+        cl->EndQuery(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, kStamps * ts + 4);
+        cl->ResolveQueryData(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, kStamps * ts, kStamps, timeRb_, 8 * kStamps * ts);
     }
     frames_++;
     return true;

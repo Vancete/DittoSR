@@ -172,7 +172,7 @@ the game is in front: a game in exclusive fullscreen may hide it - borderless or
 - `alpha_rest` (0.035) and `share_far` (0.05): each new frame's share where nothing moves, and x that where none of its samples landed near the pixel. What moves with no motion vectors of its own (grass swaying in its vertex shader) is found by its luma leaving the range each pixel has kept over the last frames, and follows the new frame there: `env_gain` (40; `0` off), `env_tol` (0.03), `env_rel`, `env_decay`, `env_cap` (0.5), `env_rest`. In slow motion the share is `alpha_slow` (0.15) from `ramp_lo` to `ramp_hi` pixels a frame (0.25 to 1).
 - `history_10bit`, `fp16` (DirectX 12), `fused_sharpen` (1; `0`: the separate sharpening pass): performance (see above).
 - `game_sharpness`: the sharpness sent with the upscale call in place of the ini's: `-1` (default) only from OptiScaler's custom folder, `1` always, `0` never.
-- `toggle_key`, `reload_key`, `debug_view`, `log_dispatches`: diagnosis.
+- `toggle_key`, `reload_key`, `debug_view`, `log_dispatches`, `log_passes` (`1`: each pass's GPU time in the log, the mean of every 256 frames; DirectX 12): diagnosis.
 - The reconstruction's knobs: `width`, `conf`, `share_far`, `share_near`, `alpha_rest`, `gamma_rest`, `motion_gamma`, `motion_share`, `motion_minmax`, `motion_near`, `split_clip`, `react`, `change_scale`, `exposure_scale`, `encode_power`, `reactive_scale`, `jitter_sign_x`, `jitter_sign_y`, `mv_sign`.
 
 ## Build

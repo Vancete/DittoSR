@@ -169,14 +169,7 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     float2 tng = g2 > 1e-10 ? float2(-gy, gx) * rg : float2(0.0, 1.0);
     float kn = -2.26 * L2E * ks * ks, ke = 0.75 * es;
     float dt0 = dot(d0, tng);
-    float wn[9];
     [unroll] for (int i = 0; i < 9; i++) {
-        float dt = dt0 + tng.x * (i % 3 - 1) + tng.y * (i / 3 - 1);
-        wn[i] = exp2(kn * (dx[i % 3] * dx[i % 3] + dy[i / 3] * dy[i / 3] - ke * dt * dt));
-    }
-    [unroll] for (int i = 0; i < 9; i++) {
-        float w = wn[i];
-        sg += cc[i] * (hf)w; wg += w;
         ymn = min(ymn, cc[i]); ymx = max(ymx, cc[i]);
         hf3 dc = cc[i] - cc[4]; m1h += dc; m2h += dc * dc;
     }
@@ -190,6 +183,19 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     hf3 c00 = hy0 ? (hx ? cc[4] : cc[3]) : (hx ? cc[1] : cc[0]), c10 = hy0 ? (hx ? cc[5] : cc[4]) : (hx ? cc[2] : cc[1]);
     hf3 c01 = hy0 ? (hx ? cc[7] : cc[6]) : (hx ? cc[4] : cc[3]), c11 = hy0 ? (hx ? cc[8] : cc[7]) : (hx ? cc[5] : cc[4]);
     float3 cs2 = lerp(lerp((float3)c00, (float3)c10, fb.x), lerp((float3)c01, (float3)c11, fb.x), fb.y);
+    // (the narrow Gaussian over those same 4 samples - the pixel's cell: the 3 x 3's other 5 are a render pixel or more
+    // from the pixel, their weights under 3 % at 2x along an edge and ~0 at 3x. Over all 9 until 0.4.2: the harness'
+    // battery the same at 2x and 3x, +- 0.01 dB at 1.5x; on the ROG Ally 0.125 ms less at 1080p 1.5x, none at 2x)
+    {
+        float ix = hx ? 0.0 : -1.0, iy = hy0 ? 0.0 : -1.0;
+        float2 ddx = hx ? dx.yz : dx.xy, ddy = hy0 ? dy.yz : dy.xy;
+        float2 tx = dt0 + tng.x * float2(ix, ix + 1.0), ty = tng.y * float2(iy, iy + 1.0);
+        float4 dt4 = float4(tx.x + ty.x, tx.y + ty.x, tx.x + ty.y, tx.y + ty.y);
+        float4 r2 = float4(ddx.x * ddx.x + ddy.x * ddy.x, ddx.y * ddx.y + ddy.x * ddy.x, ddx.x * ddx.x + ddy.y * ddy.y, ddx.y * ddx.y + ddy.y * ddy.y);
+        float4 w4 = exp2(kn * (r2 - ke * dt4 * dt4));
+        sg = c00 * (hf)w4.x + c10 * (hf)w4.y + c01 * (hf)w4.z + c11 * (hf)w4.w;
+        wg = w4.x + w4.y + w4.z + w4.w;
+    }
     float3 cg = (float3)sg / max(wg, 1e-6);
     float cf = saturate(wg);
     float3 cur = lerp(cs2, cg, smoothstep(0.05, conf > 0.0 ? conf : 0.6, cf));

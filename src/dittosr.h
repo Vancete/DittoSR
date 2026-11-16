@@ -167,8 +167,11 @@ private:
     bool texValid_ = false;
     uint64_t frames_ = 0;
     float prevJit_[2] = {0, 0};
-    // the passes' GPU time (the menu's graph): two timestamps a frame into a ring, read back kTimeRing frames later
-    static constexpr uint32_t kTimeRing = 8;
+    // the passes' GPU time (the menu's graph): five timestamps a frame (the start, after the convert, the motion and
+    // the upscale passes, the end) into a ring, read back kTimeRing frames later; log_passes=1: each pass's mean logged
+    static constexpr uint32_t kTimeRing = 8, kStamps = 5;
+    double passMs_[4] = {0, 0, 0, 0};
+    uint32_t passN_ = 0;
     ID3D12QueryHeap *timeQ_ = nullptr;
     ID3D12Resource *timeRb_ = nullptr;
     const uint64_t *timeMap_ = nullptr;
@@ -191,6 +194,7 @@ struct DittoConfig {
     int toggleKey = 0x79;
     int reloadKey = 0x78;  // (F9: dittosr.ini read again while playing)
     int logDispatches = 3;
+    bool logPasses = false;  // (log_passes=1: each pass's GPU time, its mean every 256 frames)
     // the comparison's key (0: none - the in-game menu switches it): the game's own upscaler (AMD's FSR, Intel's XeSS) on
     // the output's right half, DittoSR on the left; it needs the game's DLL alongside (<name>.orig.dll, libxess_orig.dll)
     int compareKey = 0;

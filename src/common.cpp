@@ -64,6 +64,7 @@ static void load_config() {
     GetPrivateProfileStringA("dittosr", "reload_key", "0x78", b, sizeof b, ini);
     c.reloadKey = (int)strtol(b, nullptr, 0);  // (always: the values tuned live)
     c.logDispatches = GetPrivateProfileIntA("dittosr", "log_dispatches", c.debug ? 3 : 0, ini);
+    c.logPasses = GetPrivateProfileIntA("dittosr", "log_passes", 0, ini) != 0;
     DittoSettings s;
     s.frameWeight = ini_float(ini, "frame_weight", s.frameWeight);
     s.alphaRest = ini_float(ini, "alpha_rest", s.alphaRest);
