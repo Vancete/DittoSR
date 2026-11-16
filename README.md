@@ -167,8 +167,9 @@ the game is in front: a game in exclusive fullscreen may hide it - borderless or
 - `ratio_quality`, `ratio_balanced`, `ratio_performance`, `ratio_ultra_performance`: the ratio each quality mode gets (1 to 4), e.g. `ratio_ultra_performance=2.5`. FidelityFX API only.
 - `compare=1`, the menu, or a key of its own (`compare_key`, none by default): DittoSR on the left half, the game's own upscaler on the right (needs the game's DLL alongside).
 - `menu_key` (`0x76`, F7; `0` off): the in-game menu's key.
-- `anti_shimmer` (0.4 up to 2x, 0.2 at 3x; `0` off), `auto_reactive` (0.5; `0` off), `stab_step`: steadiness against responsiveness.
+- `anti_shimmer` (0.8 up to 2x, 0.4 at 3x; `0` off), `auto_reactive` (0.5; `0` off), `stab_step`: steadiness against responsiveness.
 - `history_sharpen` (1; `0` off): how far the history's resampling blur is made up in motion (fine moving detail).
+- `alpha_rest` (0.15) and `share_far` (1): each new frame's share where nothing moves, and x that where none of its samples landed near the pixel; with them, the automatic `anti_shimmer` is twice what it was. Until 0.4.2 they were 0.035 and 0.05, and the anti-shimmer 0.4 to 0.2: steadier and a little sharper at rest, but what moves with no motion vectors of its own (grass swaying in its vertex shader) showed several times over. Above 2x the two go part of the way back by themselves: x 0.5 and x 0.3 from 3x (0.075 and 0.3 for the defaults), where following the new frame that much trembled.
 - `history_10bit`, `fp16` (DirectX 12), `fused_sharpen` (1; `0`: the separate sharpening pass): performance (see above).
 - `game_sharpness`: the sharpness sent with the upscale call in place of the ini's: `-1` (default) only from OptiScaler's custom folder, `1` always, `0` never.
 - `toggle_key`, `reload_key`, `debug_view`, `log_dispatches`: diagnosis.

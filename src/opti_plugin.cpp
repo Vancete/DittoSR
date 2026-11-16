@@ -26,8 +26,8 @@ const char kFrameWeight[] = "frame_weight", kFrameWeightOverride[] = "frame_weig
 const char *const kKeys[] = {kFrameWeight, kFrameWeightOverride, kAntiShimmer, kHistorySharpen, kDebugView, kIndicator};
 
 // the anti-shimmer's steps, as the F7 menu's (-1: by the ratio)
-const float kShimmer[] = {-1.0f, 0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f};
-const char *const kShimmerNames[] = {"Auto", "Off", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6"};
+const float kShimmer[] = {-1.0f, 0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f};
+const char *const kShimmerNames[] = {"Auto", "Off", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9"};
 const int kShimmerCount = sizeof kShimmer / sizeof kShimmer[0];
 
 // (the motion view, 1, from dittosr.ini's debug_view only, as in the F7 menu: shown when set there, not picked here)
@@ -117,7 +117,7 @@ void draw_tab(void *) {
     }
     a->ItemTooltip("Where the new frame keeps flipping around the accumulated image (the jittered samples'\n"
                    "aliasing), up to this share less of it: less shimmer, a little softer fine detail in motion.\n"
-                   "Auto: 0.4 up to 2x, 0.2 from 3x.");
+                   "Auto: 0.8 up to 2x, 0.4 from 3x.");
 
     if (a->SliderFloat("Motion detail", &s.historySharpen, 0.0f, 2.0f, "%.2f")) {
         s.historySharpen = clampf(s.historySharpen, 0.0f, 2.0f);

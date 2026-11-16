@@ -460,12 +460,13 @@ float *slider_of(DittoSettings &s, int i) {
     default: return nullptr;
     }
 }
-const float kShimmer[] = {-1.0f, 0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f};
+const float kShimmer[] = {-1.0f, 0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f};
+const int kShimmerCount = sizeof kShimmer / sizeof kShimmer[0];
 const char *kDebugNames[] = {"Off", "Motion", "New frame's share", "Stability", "Clip / cut / confidence"};
 
 int shimmer_index(float v) {
     int best = 0;
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < kShimmerCount; i++)
         if (fabsf(kShimmer[i] - v) < fabsf(kShimmer[best] - v)) best = i;
     return best;
 }
@@ -483,7 +484,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
         else *v = fminf(fmaxf(roundf((*v + dir * r.step) / r.step) * r.step, r.lo), r.hi);
         return true;
     }
-    case I_SHIMMER: s.antiShimmer = kShimmer[(shimmer_index(s.antiShimmer) + (dir < 0 ? 7 : 1)) % 8]; return true;
+    case I_SHIMMER: s.antiShimmer = kShimmer[(shimmer_index(s.antiShimmer) + (dir < 0 ? kShimmerCount - 1 : 1)) % kShimmerCount]; return true;
     case I_DEBUG: {  // (Off, 2, 3, 4: the motion view, 1, from the ini only)
         const int order[4] = {0, 2, 3, 4};
         int k = 0;

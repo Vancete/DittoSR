@@ -11,7 +11,9 @@
 #define DITTOSR_VERSION_NAME "DittoSR " DITTOSR_VERSION
 
 struct DittoSettings {
-    float alphaRest = 0.035f;  // a stable pixel's share of each new frame at rest
+    // a stable pixel's share of each new frame at rest (0.035 until 0.4.2: some 30 frames of history - what moves with
+    // no motion vector of its own, grass swaying in its vertex shader, showed where it had been all that time)
+    float alphaRest = 0.15f;
     float conf = 0.05f;        // the confidence the narrow estimate is taken alone from (originally 0.3)
     float gammaRest = 0.0f;    // the history clip width at rest (0: 1.5)
     float width = 0.8f;        // the narrow Gaussian's width from 2x (x 0.875 at 1.5x and below; originally 1.4 - at 2.3x a blur as wide as a grass blade)
@@ -31,7 +33,12 @@ struct DittoSettings {
     float changeScale = 1.0f;  // how far the share of the image that changed drives the reaction
     // the new frame's share x shareFar where no jittered sample landed close to the pixel, x shareNear where one did
     // (originally 0.6 / 1.4 - at 2.3x most frames have no sample close: their blurred estimate blurred the history)
-    float shareFar = 0.05f;
+    // (shareFar 0.05 until 0.4.2: the pixels no sample landed near all but held their history, so what moves with no
+    // motion vector showed new in the pixels a sample reached and old in the others, a comb along its edges. The Legend
+    // of Zelda: Ocarina of Time's grass at 2x, the camera still (its Longshot port): at 1 with a rest share of 0.1, whole
+    // blades, the closest to DLSS of what was tried, for 8 - 21 % less detail in what stands still - the mean gradient
+    // of a tree and of the horizon; the rest share 0.15 itself was not measured)
+    float shareFar = 1.0f;
     float shareNear = 3.0f;
     float encodePower = 0.5f;  // the encoding's power after Reinhard (0.5: sqrt)
     // while moving (from 4 output pixels a frame) shareNear falls to motionNear: each frame's pattern of pixels a sample
@@ -56,6 +63,8 @@ struct DittoSettings {
     // difference from the history keeps alternating
     // (the jittered samples' aliasing), up to this share less of the new frame. Less shimmer (-10..-25 %), a little
     // softer fine detail in motion. The stability texture becomes R8G8 (the sign's running mean in .y)
+    // (-1: by the ratio, 0.8 up to 2x and 0.4 from 3x - twice what 0.4.2 had, since the rest share and the far share let
+    // more of the new frame in at rest)
     float antiShimmer = -1.0f;
     // the history's detail made up for its resampling blur in motion (upscale.hlsl): x its default strength (0.03 up to
     // 2x, 0.05 from 3x); 0 off
