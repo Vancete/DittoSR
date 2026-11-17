@@ -56,9 +56,9 @@ OptiScaler's settings drive it:
   (up to 4).
 - A **DittoSR** tab in OptiScaler's menu (OptiScaler builds with the plugin API) holds the rest: the
   **frame weight** (shown as the presets set it; at **Default**, or with **Override** ticked, the slider's), the
-  **anti-shimmer**, the **motion detail**, the **sharpening filter**, the **debug views** and the **indicator**. They
+  **anti-shimmer**, the **sharpening filter**, the **debug views** and the **indicator**. They
   are kept in `OptiScaler.ini`'s `[Plugin.DittoSR]` section, under the ini's key names (`frame_weight`, `anti_shimmer`,
-  `history_sharpen`, `sharpen_mode`, `debug_view`, `indicator`; plus `frame_weight_override`, the tab's own), and win over
+  `sharpen_mode`, `debug_view`, `indicator`; plus `frame_weight_override`, the tab's and the F7 menu's), and win over
   `dittosr.ini`'s. **Save** in the tab (or OptiScaler's Save INI) writes them, and so does the F7 menu's **Save** for
   the ones the tab holds; **Defaults** removes them.
 
@@ -136,7 +136,8 @@ The upscale's GPU time (`scripts\bench.ps1`, the median of 400), RTX 5070 Ti:
 
 **F7** opens a side panel on the left of the game: DittoSR's GPU time and the frame time as a graph, the upscaler
 (DittoSR or the game's own, and the side-by-side comparison), sharpness, the sharpening filter (CAS or RCAS), frame
-weight, anti-shimmer, motion detail, the debug views and the indicator. Changes apply at once; **Save** writes them to
+weight, anti-shimmer, the debug views and the indicator. While FSR's settings set the frame weight (OptiScaler's
+presets, see below), its slider shows theirs; moving it overrides them, Enter gives them back. Changes apply at once; **Save** writes them to
 `dittosr.ini` (only what differs from the defaults, besides sharpness and frame weight), **Defaults** restores the
 defaults, **Revert** reads the file again.
 
@@ -168,6 +169,7 @@ the game is in front: a game in exclusive fullscreen may hide it - borderless or
 - `compare=1`, the menu, or a key of its own (`compare_key`, none by default): DittoSR on the left half, the game's own upscaler on the right (needs the game's DLL alongside).
 - `menu_key` (`0x76`, F7; `0` off): the in-game menu's key.
 - `anti_shimmer` (0.6 up to 2x, 0.45 at 3x; `0` off), `auto_reactive` (0.5; `0` off), `stab_step`: steadiness against responsiveness.
+- `frame_weight_override` (`0`; `1`: `frame_weight` wins over the weight FSR's settings set - OptiScaler's presets, or the game's; the F7 menu sets it when its slider is moved).
 - `history_sharpen` (1; `0` off): how far the history's resampling blur is made up in motion (fine moving detail).
 - `alpha_rest` (0.1) and `share_far` (0.2, down to half of it by 3x): each new frame's share where nothing moves, and x that where none of its samples landed near the pixel; `gamma_rest` (3): how far from the new frame's samples the accumulated image may stay there. What moves with no motion vectors of its own (grass swaying in its vertex shader) is found by its luma leaving the range each pixel has kept over the last frames, and follows the new frame there: `env_gain` (40; `0` off), `env_tol` (0.03), `env_rel`, `env_decay`, `env_cap` (0.5), `env_rest`. In slow motion the share is `alpha_slow` (0.15) from `ramp_lo` to `ramp_hi` pixels a frame (0.25 to 1).
 - `sharpen_mode` (`0` CAS, default; `1` RCAS, FSR 1's robust CAS: one strength for the 3 channels, less on noise - its own pass at every ratio, no fused sharpening): the sharpening filter, also in the menu.

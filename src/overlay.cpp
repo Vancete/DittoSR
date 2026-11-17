@@ -345,7 +345,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHARP, I_SHMODE, I_WEIGHT, I_SHIMMER, I_HSHARP, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHARP, I_SHMODE, I_WEIGHT, I_SHIMMER, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -440,6 +440,9 @@ bool key_pressed(Key &k, double t, bool repeat) {
     return fire;
 }
 
+// the frame weight FSR 3.1's settings set (OptiScaler's presets, or the game) while not overridden; -1 none
+float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f : (float)g_stats.fsrFrameWeight; }
+
 bool visible(int i) { return (i != I_UPSCALER && i != I_COMPARE) || g_stats.hasReal; }
 
 // the sliders' and choices' ranges
@@ -448,7 +451,6 @@ Range range_of(int i) {
     switch (i) {
     case I_SHARP: return {0.0f, 1.0f, 0.05f};
     case I_WEIGHT: return {0.25f, 4.0f, 0.25f};
-    case I_HSHARP: return {0.0f, 2.0f, 0.25f};
     default: return {0, 1, 1};
     }
 }
@@ -456,7 +458,6 @@ float *slider_of(DittoSettings &s, int i) {
     switch (i) {
     case I_SHARP: return &s.sharpness;
     case I_WEIGHT: return &s.frameWeight;
-    case I_HSHARP: return &s.historySharpen;
     default: return nullptr;
     }
 }
@@ -477,9 +478,13 @@ bool adjust(DittoSettings &s, int i, int dir) {
     switch (i) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
-    case I_SHARP: case I_WEIGHT: case I_HSHARP: {
+    case I_SHARP: case I_WEIGHT: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
+        // (the frame weight: moved, it overrides FSR 3.1's settings' - OptiScaler's presets - from the weight in use;
+        // Enter, back to theirs)
+        if (i == I_WEIGHT && dir != 0 && fsr_weight(s) >= 0.0f) *v = fsr_weight(s);
+        if (i == I_WEIGHT) s.frameWeightOverride = dir != 0 && (s.frameWeightOverride || fsr_weight(s) >= 0.0f);
         if (dir == 0) *v = *slider_of(d, i);  // (Enter: back to the default)
         else *v = fminf(fmaxf(roundf((*v + dir * r.step) / r.step) * r.step, r.lo), r.hi);
         return true;
@@ -664,11 +669,11 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         draw_choice(u, x1, y + (rh - u.h(F_VALUE)) / 2, v, g_m.sel == i);
         y += rh + 2 * S;
     };
-    auto slider_row = [&](int i, const char *label, const char *hint) {
+    auto slider_row_of = [&](const DittoSettings &sv, int i, const char *label, const char *hint) {
         float rh = 54 * S;
         row_bg(i, rh);
         DittoSettings d;
-        float v = *slider_of(const_cast<DittoSettings &>(s), i), dv = *slider_of(d, i);
+        float v = *slider_of(const_cast<DittoSettings &>(sv), i), dv = *slider_of(d, i);
         Range r = range_of(i);
         float ty = y + 8 * S;
         u.text(F_BODY, x0, ty, label, kText);
@@ -687,6 +692,7 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         u.box(kx - k / 2, ky - k / 2, kx + k / 2, ky + k / 2, rgba(0xFFFFFF), k / 2);
         y += rh + 2 * S;
     };
+    auto slider_row = [&](int i, const char *label, const char *hint) { slider_row_of(s, i, label, hint); };
 
     if (g_stats.hasReal) {
         section("UPSCALER");
@@ -699,7 +705,13 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     section("IMAGE");
     slider_row(I_SHARP, "Sharpness", nullptr);
     choice_row(I_SHMODE, "Sharpening filter", s.sharpenMode ? "RCAS" : "CAS");
-    slider_row(I_WEIGHT, "Frame weight", "steadier \xE2\x86\x90 \xE2\x86\x92 crisper");
+    {
+        // (the weight in use: FSR 3.1's settings' until the slider is moved)
+        DittoSettings sw = s;
+        bool fsr = fsr_weight(s) >= 0.0f;
+        if (fsr) sw.frameWeight = fsr_weight(s);
+        slider_row_of(sw, I_WEIGHT, "Frame weight", fsr ? "set by FSR's settings" : "steadier \xE2\x86\x90 \xE2\x86\x92 crisper");
+    }
     {
         char b[16];
         if (s.antiShimmer < 0.0f) snprintf(b, sizeof b, "Auto");
@@ -707,7 +719,6 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         else snprintf(b, sizeof b, "%.1f", s.antiShimmer);
         choice_row(I_SHIMMER, "Anti-shimmer", b);
     }
-    slider_row(I_HSHARP, "Motion detail", nullptr);
     y += 10 * S;
     section("ADVANCED");
     choice_row(I_DEBUG, "Debug view", kDebugNames[s.debugView < 0 || s.debugView > 4 ? 0 : s.debugView]);
@@ -813,7 +824,10 @@ void input(DittoSettings &s, bool &changed, double t) {
             Range r = range_of(hit);
             float t01 = fminf(fmaxf((mx - g_m.trackX0) / (g_m.trackX1 - g_m.trackX0), 0.0f), 1.0f);
             float nv = roundf((r.lo + t01 * (r.hi - r.lo)) / r.step) * r.step;
-            if (nv != *v) *v = nv, changed = true;
+            if (nv != *v || (hit == I_WEIGHT && fsr_weight(s) >= 0.0f)) {
+                *v = nv, changed = true;
+                if (hit == I_WEIGHT) s.frameWeightOverride = true;  // (FSR 3.1's settings' overridden)
+            }
         }
     } else if (click) {
         changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR ? -1 : 1);

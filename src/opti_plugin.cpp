@@ -22,9 +22,8 @@ bool g_unsaved;  // (the tab's values changed since OptiScaler.ini was last writ
 
 // the keys in [Plugin.<name>]: dittosr.ini's names, and the override the tab adds
 const char kFrameWeight[] = "frame_weight", kFrameWeightOverride[] = "frame_weight_override", kAntiShimmer[] = "anti_shimmer",
-           kHistorySharpen[] = "history_sharpen", kDebugView[] = "debug_view", kIndicator[] = "indicator",
-           kSharpenMode[] = "sharpen_mode";
-const char *const kKeys[] = {kFrameWeight, kFrameWeightOverride, kAntiShimmer, kHistorySharpen, kDebugView, kIndicator, kSharpenMode};
+           kDebugView[] = "debug_view", kIndicator[] = "indicator", kSharpenMode[] = "sharpen_mode";
+const char *const kKeys[] = {kFrameWeight, kFrameWeightOverride, kAntiShimmer, kDebugView, kIndicator, kSharpenMode};
 const char *const kSharpenNames[] = {"CAS", "RCAS"};
 
 // the anti-shimmer's steps, as the F7 menu's (-1: by the ratio)
@@ -51,7 +50,6 @@ void apply_ini(DittoSettings &s) {
     s.frameWeight = clampf(g_api->GetFloat(g_plugin, kFrameWeight, s.frameWeight), 0.25f, 4.0f);
     s.frameWeightOverride = g_api->GetBool(g_plugin, kFrameWeightOverride, s.frameWeightOverride);
     s.antiShimmer = g_api->GetFloat(g_plugin, kAntiShimmer, s.antiShimmer);
-    s.historySharpen = clampf(g_api->GetFloat(g_plugin, kHistorySharpen, s.historySharpen), 0.0f, 2.0f);
     int dv = g_api->GetInt(g_plugin, kDebugView, s.debugView);
     s.debugView = dv < 0 || dv >= kDebugCount ? 0 : dv;
     s.indicator = g_api->GetBool(g_plugin, kIndicator, s.indicator);
@@ -72,7 +70,7 @@ bool save_held(const DittoSettings &s, const char *key) {
     if (!g_api->GetString(g_plugin, key, v, sizeof v, nullptr)) return false;  // (missing or "auto")
     if (!strcmp(key, kFrameWeight)) g_api->SetFloat(g_plugin, key, s.frameWeight);
     else if (!strcmp(key, kAntiShimmer)) g_api->SetFloat(g_plugin, key, s.antiShimmer);
-    else if (!strcmp(key, kHistorySharpen)) g_api->SetFloat(g_plugin, key, s.historySharpen);
+    else if (!strcmp(key, kFrameWeightOverride)) g_api->SetBool(g_plugin, key, s.frameWeightOverride);
     else if (!strcmp(key, kDebugView)) g_api->SetInt(g_plugin, key, s.debugView);
     else if (!strcmp(key, kIndicator)) g_api->SetBool(g_plugin, key, s.indicator);
     else if (!strcmp(key, kSharpenMode)) g_api->SetInt(g_plugin, key, s.sharpenMode);
@@ -130,13 +128,6 @@ void draw_tab(void *) {
     a->ItemTooltip("Where the new frame keeps flipping around the accumulated image (the jittered samples'\n"
                    "aliasing), up to this share less of it: less shimmer, a little softer fine detail in motion.\n"
                    "Auto: 0.8 up to 2x, 0.4 from 3x.");
-
-    if (a->SliderFloat("Motion detail", &s.historySharpen, 0.0f, 2.0f, "%.2f")) {
-        s.historySharpen = clampf(s.historySharpen, 0.0f, 2.0f);
-        a->SetFloat(g_plugin, kHistorySharpen, s.historySharpen), changed = true;
-    }
-    a->ItemTooltip("The accumulated image's detail made up for its resampling blur in motion,\n"
-                   "x its default strength (1). 0: off.");
 
     a->Section("Debug");
     int dv = s.debugView < 0 || s.debugView >= kDebugCount ? 0 : s.debugView;

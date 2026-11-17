@@ -67,6 +67,7 @@ static void load_config() {
     c.logPasses = GetPrivateProfileIntA("dittosr", "log_passes", 0, ini) != 0;
     DittoSettings s;
     s.frameWeight = ini_float(ini, "frame_weight", s.frameWeight);
+    s.frameWeightOverride = GetPrivateProfileIntA("dittosr", "frame_weight_override", s.frameWeightOverride, ini) != 0;
     s.alphaRest = ini_float(ini, "alpha_rest", s.alphaRest);
     s.conf = ini_float(ini, "conf", s.conf);
     s.gammaRest = ini_float(ini, "gamma_rest", s.gammaRest);
@@ -174,7 +175,7 @@ bool ditto_save_settings() {
     bool ok = put("sharpness", s.sharpness, d.sharpness, true);
     ok = put("frame_weight", s.frameWeight, d.frameWeight, true) && ok;
     ok = put("anti_shimmer", s.antiShimmer, d.antiShimmer, false) && ok;
-    ok = put("history_sharpen", s.historySharpen, d.historySharpen, false) && ok;
+    ok = put("frame_weight_override", s.frameWeightOverride ? 1.0f : 0.0f, d.frameWeightOverride ? 1.0f : 0.0f, false) && ok;
     ok = put("sharpen_mode", (float)s.sharpenMode, (float)d.sharpenMode, false) && ok;
     ok = put("auto_reactive", s.autoReactive, d.autoReactive, false) && ok;
     ok = put("debug_view", (float)s.debugView, (float)d.debugView, false) && ok;
