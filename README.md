@@ -135,7 +135,7 @@ The upscale's GPU time (`scripts\bench.ps1`, the median of 400), RTX 5070 Ti:
 ## In-game menu
 
 **F7** opens a side panel on the left of the game: DittoSR's GPU time and the frame time as a graph, the upscaler
-(DittoSR or the game's own, and the side-by-side comparison), sharpness, the sharpening filter (CAS or RCAS), frame
+(DittoSR or the game's own, and the side-by-side comparison), the sharpening filter (CAS or RCAS), sharpness, frame
 weight, anti-shimmer, the debug views and the indicator. While FSR's settings set the frame weight (OptiScaler's
 presets, see below), its slider shows theirs; moving it overrides them, Enter gives them back. Changes apply at once; **Save** writes them to
 `dittosr.ini` (only what differs from the defaults, besides sharpness and frame weight), **Defaults** restores the

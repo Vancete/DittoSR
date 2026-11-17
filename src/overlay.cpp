@@ -345,7 +345,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHARP, I_SHMODE, I_WEIGHT, I_SHIMMER, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -703,8 +703,8 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         y += 10 * S;
     }
     section("IMAGE");
-    slider_row(I_SHARP, "Sharpness", nullptr);
     choice_row(I_SHMODE, "Sharpening filter", s.sharpenMode ? "RCAS" : "CAS");
+    slider_row(I_SHARP, "Sharpness", nullptr);
     {
         // (the weight in use: FSR 3.1's settings' until the slider is moved)
         DittoSettings sw = s;
