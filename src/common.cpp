@@ -95,6 +95,7 @@ static void load_config() {
     s.antiShimmer = ini_float(ini, "anti_shimmer", s.antiShimmer);
     s.historySharpen = ini_float(ini, "history_sharpen", s.historySharpen);
     s.fusedSharpen = ini_float(ini, "fused_sharpen", s.fusedSharpen);
+    s.sharpenMode = GetPrivateProfileIntA("dittosr", "sharpen_mode", s.sharpenMode, ini) == 1 ? 1 : 0;
     s.envTol = ini_float(ini, "env_tol", s.envTol), s.envDecay = ini_float(ini, "env_decay", s.envDecay);
     s.envGain = ini_float(ini, "env_gain", s.envGain), s.envRest = ini_float(ini, "env_rest", s.envRest);
     s.rampLo = ini_float(ini, "ramp_lo", s.rampLo), s.rampHi = ini_float(ini, "ramp_hi", s.rampHi);
@@ -174,6 +175,7 @@ bool ditto_save_settings() {
     ok = put("frame_weight", s.frameWeight, d.frameWeight, true) && ok;
     ok = put("anti_shimmer", s.antiShimmer, d.antiShimmer, false) && ok;
     ok = put("history_sharpen", s.historySharpen, d.historySharpen, false) && ok;
+    ok = put("sharpen_mode", (float)s.sharpenMode, (float)d.sharpenMode, false) && ok;
     ok = put("auto_reactive", s.autoReactive, d.autoReactive, false) && ok;
     ok = put("debug_view", (float)s.debugView, (float)d.debugView, false) && ok;
     if (!held("indicator")) ok = WritePrivateProfileStringA("debug", "indicator", s.indicator ? "1" : "0", ini) != 0 && ok;

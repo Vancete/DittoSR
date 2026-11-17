@@ -447,7 +447,8 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     // (the sharpening in the upscale: its own pass skipped - not with the comparison, nor a debug view)
     // (up to 2.5x: above it the separate pass - its moving clamp to the output's 4 neighbours holds the shimmer of a
     // 3x pan, which the fused term's bound by the samples' range cannot: grass at 3x 2.70 against 2.24, as sharp)
-    k.fusedSharpen = !split_ && !s_.debugView && s_.fusedSharpen > 0.0f && k.ratio <= 2.55f ? s_.fusedSharpen : 0.0f;
+    // (RCAS: the sharpening pass at every ratio - the fused term is the blend's detail, not a filter of the output)
+    k.fusedSharpen = !split_ && !s_.debugView && !s_.sharpenMode && s_.fusedSharpen > 0.0f && k.ratio <= 2.55f ? s_.fusedSharpen : 0.0f;
     // (a float colour declared LDR is read as HDR: as [0, 1] colour it would be clipped at 1 - Witcher 3 through
     // OptiScaler, its highlights flattened)
     if (!fr.hdr && float_format(cd.Format)) {

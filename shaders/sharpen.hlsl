@@ -8,6 +8,13 @@
 // frame - 0.1 x sharpness: the wider reconstruction there softens the image (0.2 doubled the shimmer of an uneven pan).
 // Above 2x the moving term grows with the ratio (x 2.25 at 3x): a moving object's detail is softer there - at 3x it was
 // 12 % below 2x's against the reference, now level.
+//   RCAS (sharpenMode 1, AMD FSR 1's robust CAS) in place of CAS: one weight for the 3 channels - the most the 4
+// neighbours allow before the result leaves [0, 1], at most 0.1875 (no square root, no colour shifts) - x k / 0.2, the
+// same scale; half of it where the centre stands out of its neighbours as noise does; the result held within the 5
+// pixels' range (edges steeper, no overshoot: a glint or a thin line not pushed further out). Below 0.6 the same soft
+// blur. Harness, sharpness 1 against CAS: the still image 33.4 -> 36.0 dB at 1.5x, 30.7 -> 33.0 at 3x, its shimmer
+// 4.7 -> 2.8 and 3.4 -> 2.3, the glints' sparkle gone; a 1.5x pan 34.5 -> 35.4 dB, its shimmer 4.8 -> 4.1 (at 3x
+// 3.4 -> 3.6, sharper); at sharpness 0.6 the moving tiles -0.3 dB at 1.5x and 2x (the separate pass).
 //   The comparison (splitX > 0): the game's own upscaler wrote the output first; this pass writes the left of splitX
 // alone, a line between.
 // t0 = the history (u0 of the upscale), t1 = the convert pass's (motion), t7 = the stability levels, u1 = the game's
@@ -48,9 +55,21 @@ void main(uint2 id : SV_DispatchThreadID) {
     hf3 s = (hf3)History.Load(int3(clamp(p + int2(0, 1), int2(0, 0), m), 0)).rgb;
     hf3 w = (hf3)History.Load(int3(clamp(p + int2(-1, 0), int2(0, 0), m), 0)).rgb;
     hf3 ea = (hf3)History.Load(int3(clamp(p + int2(1, 0), int2(0, 0), m), 0)).rgb;
-    hf3 mn = min(ch, min(min(n, s), min(w, ea))), mx = max(ch, max(max(n, s), max(w, ea)));
-    hf3 amp = sqrt(saturate(min(mn, (hf)1.0 - mx) / max(mx, (hf)1e-4)));
-    hf3 wgt = k >= 0.0 ? -amp * (hf)k : (hf3)(hf)(-k);
+    hf3 mn4 = min(min(n, s), min(w, ea)), mx4 = max(max(n, s), max(w, ea));
+    hf3 mn = min(ch, mn4), mx = max(ch, mx4);
+    hf3 wgt;
+    if (k < 0.0) wgt = (hf3)(hf)(-k);
+    else if (sharpenMode > 0.5) {
+        hf3 hmin = mn4 / ((hf)4.0 * max(mx4, (hf)1e-3));
+        hf3 hmax = ((hf)1.0 - mx4) / min((hf)4.0 * mn4 - (hf)4.0, (hf)-1e-3);
+        hf3 lb = max(-hmin, hmax);
+        hf lobe = max((hf)-0.1875, min(max(lb.x, max(lb.y, lb.z)), (hf)0.0)) * (hf)(k * 5.0);
+        hf3 lk = hf3(0.25, 0.5, 0.25);
+        hf lc = dot(ch, lk), ln = dot(n, lk), ls = dot(s, lk), lw = dot(w, lk), le = dot(ea, lk);
+        hf lmn = min(lc, min(min(ln, ls), min(lw, le))), lmx = max(lc, max(max(ln, ls), max(lw, le)));
+        hf nz = saturate(abs((hf)0.25 * (ln + ls + lw + le) - lc) / max(lmx - lmn, (hf)1e-3));
+        wgt = (hf3)(lobe * ((hf)1.0 - (hf)0.5 * nz));
+    } else wgt = -sqrt(saturate(min(mn, (hf)1.0 - mx) / max(mx, (hf)1e-4))) * (hf)k;
     hf3 r = saturate((ch + wgt * (n + s + w + ea)) / ((hf)1.0 + (hf)4.0 * wgt));
     // (moving, within its neighbourhood's range: a pixel the reconstruction left a little brighter or darker than its
     // neighbours - the new frame's jittered samples, more of them above 2x - is not pushed further out, a sparkle that
@@ -58,6 +77,7 @@ void main(uint2 id : SV_DispatchThreadID) {
     // 2x - its moving sharpness as before - none at 3x: there, at sharpness 1, the shimmer of a pan 7.9 -> 3.3)
     hf3 mrg = (hf)(0.25 * (1.0 - saturate(ratio - 2.0))) * (mx - mn);
     r = lerp(r, clamp(r, mn - mrg, mx + mrg), (hf)mv);
+    if (sharpenMode > 0.5) r = clamp(r, mn, mx);  // (RCAS: within the 5 pixels' range at every speed - no halo)
     float3 o = dec((float3)r, e);
     float3 ic;
     if (indicator > 0.5 && indicatorAt(id, e, ic)) o = ic;

@@ -20,8 +20,9 @@ struct DittoConstants {
     float autoExposure, historySharpen, fusedSharpen;
     float envTol, envDecay, envGain, envRest;
     float rampLo, rampHi, envRel, envCap, alphaSlow;
+    float sharpenMode;
 };
-static_assert(sizeof(DittoConstants) == 60 * 4, "the root constants");
+static_assert(sizeof(DittoConstants) == 61 * 4, "the root constants");
 
 // One upscale's constants from the settings and the frame (DittoFrame or DittoFrameVk: the same numeric fields).
 // prevJit: the previous frame's jitter, updated (the vectors' jitter cancellation).
@@ -78,4 +79,5 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
     // shimmer 3.79 -> 3.06, the still image 33.14 -> 33.40 dB and its shimmer 1.89 -> 1.56; the tiles 29.50 -> 29.37)
     k.shareFar *= 1.0f - 0.5f * hr;
     k.envTol = s.envTol, k.envDecay = s.envDecay, k.envGain = s.envGain, k.envRest = s.envRest;
+    k.sharpenMode = s.sharpenMode == 1 ? 1.0f : 0.0f;
 }

@@ -519,7 +519,8 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
     if (split_) k.splitX = (float)(ow / 2);
     // (the sharpening in the upscale, its own pass skipped - not with the comparison, nor a debug view; up to 2.5x, as
     // on D3D12)
-    k.fusedSharpen = !split_ && !s_.debugView && s_.fusedSharpen > 0.0f && k.ratio <= 2.55f ? s_.fusedSharpen : 0.0f;
+    // (RCAS: the sharpening pass at every ratio - the fused term is the blend's detail, not a filter of the output)
+    k.fusedSharpen = !split_ && !s_.debugView && !s_.sharpenMode && s_.fusedSharpen > 0.0f && k.ratio <= 2.55f ? s_.fusedSharpen : 0.0f;
     // (a float colour declared LDR is read as HDR: as [0, 1] colour it would be clipped at 1)
     if (!fr.hdr && float_format(fr.color.format)) {
         if (!hdrFromFormat_) ditto_log("colour: float format %d without the HDR flag - read as HDR\n", (int)fr.color.format), hdrFromFormat_ = true;

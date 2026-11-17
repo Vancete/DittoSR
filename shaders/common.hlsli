@@ -56,6 +56,7 @@ cbuffer C : register(b0) {
     float envRel;         // the envelope's tolerance more by this x its width
     float envCap;         // ... the most it raises the reactive mask to (0.5 and under: the stability is kept)
     float alphaSlow;      // > 0: the base share in slow motion (rampLo..rampHi), then on to the moving one by 8 px a frame
+    float sharpenMode;    // 0: CAS; 1: RCAS (sharpen.hlsl)
 };
 
 // hf: the colour work's precision - half in the FP16 variant (DITTO_FP16, SM 6.2 with 16-bit types: twice the rate on

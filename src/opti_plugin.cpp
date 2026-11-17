@@ -22,8 +22,10 @@ bool g_unsaved;  // (the tab's values changed since OptiScaler.ini was last writ
 
 // the keys in [Plugin.<name>]: dittosr.ini's names, and the override the tab adds
 const char kFrameWeight[] = "frame_weight", kFrameWeightOverride[] = "frame_weight_override", kAntiShimmer[] = "anti_shimmer",
-           kHistorySharpen[] = "history_sharpen", kDebugView[] = "debug_view", kIndicator[] = "indicator";
-const char *const kKeys[] = {kFrameWeight, kFrameWeightOverride, kAntiShimmer, kHistorySharpen, kDebugView, kIndicator};
+           kHistorySharpen[] = "history_sharpen", kDebugView[] = "debug_view", kIndicator[] = "indicator",
+           kSharpenMode[] = "sharpen_mode";
+const char *const kKeys[] = {kFrameWeight, kFrameWeightOverride, kAntiShimmer, kHistorySharpen, kDebugView, kIndicator, kSharpenMode};
+const char *const kSharpenNames[] = {"CAS", "RCAS"};
 
 // the anti-shimmer's steps, as the F7 menu's (-1: by the ratio)
 const float kShimmer[] = {-1.0f, 0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f};
@@ -53,6 +55,7 @@ void apply_ini(DittoSettings &s) {
     int dv = g_api->GetInt(g_plugin, kDebugView, s.debugView);
     s.debugView = dv < 0 || dv >= kDebugCount ? 0 : dv;
     s.indicator = g_api->GetBool(g_plugin, kIndicator, s.indicator);
+    s.sharpenMode = g_api->GetInt(g_plugin, kSharpenMode, s.sharpenMode) == 1 ? 1 : 0;
 }
 
 // The F7 menu's Save (common.cpp ditto_save_settings), key by key: a key [Plugin.<name>] holds takes s's value there -
@@ -72,6 +75,7 @@ bool save_held(const DittoSettings &s, const char *key) {
     else if (!strcmp(key, kHistorySharpen)) g_api->SetFloat(g_plugin, key, s.historySharpen);
     else if (!strcmp(key, kDebugView)) g_api->SetInt(g_plugin, key, s.debugView);
     else if (!strcmp(key, kIndicator)) g_api->SetBool(g_plugin, key, s.indicator);
+    else if (!strcmp(key, kSharpenMode)) g_api->SetInt(g_plugin, key, s.sharpenMode);
     else return false;
     taken = true;
     return true;
@@ -83,6 +87,14 @@ void draw_tab(void *) {
     bool changed = false;
 
     a->Section("Image");
+    int sm = s.sharpenMode == 1 ? 1 : 0;
+    if (a->Combo("Sharpening filter", &sm, kSharpenNames, 2, nullptr) && sm >= 0 && sm < 2) {
+        s.sharpenMode = sm;
+        a->SetInt(g_plugin, kSharpenMode, sm), changed = true;
+    }
+    a->ItemTooltip("CAS: AMD's contrast-adaptive sharpening, per colour channel.\n"
+                   "RCAS: FSR 1's robust CAS - one strength for the 3 channels, less on noise. Its own pass at\n"
+                   "every ratio: a little more GPU time up to 2.5x. The strength: OptiScaler's sharpness slider.");
     // (the slider shows the weight in use: FSR 3.1's settings' when they set one and the override is off, else
     // DittoSR's own - editable then, whether overridden or not: nothing else sets it)
     float fsr = g_stats.fsrFrameWeight;

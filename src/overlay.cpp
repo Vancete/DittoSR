@@ -345,7 +345,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHARP, I_WEIGHT, I_SHIMMER, I_HSHARP, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHARP, I_SHMODE, I_WEIGHT, I_SHIMMER, I_HSHARP, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -494,6 +494,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
         return true;
     }
     case I_INDICATOR: s.indicator = !s.indicator; return true;
+    case I_SHMODE: s.sharpenMode = !s.sharpenMode; return true;
     }
     return false;
 }
@@ -697,6 +698,7 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     }
     section("IMAGE");
     slider_row(I_SHARP, "Sharpness", nullptr);
+    choice_row(I_SHMODE, "Sharpening filter", s.sharpenMode ? "RCAS" : "CAS");
     slider_row(I_WEIGHT, "Frame weight", "steadier \xE2\x86\x90 \xE2\x86\x92 crisper");
     {
         char b[16];
