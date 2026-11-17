@@ -136,8 +136,7 @@ The upscale's GPU time (`scripts\bench.ps1`, the median of 400), RTX 5070 Ti:
 
 **F7** opens a side panel on the left of the game: DittoSR's GPU time and the frame time as a graph, the upscaler
 (DittoSR or the game's own, and the side-by-side comparison), sharpness, frame weight, anti-shimmer, motion detail, the
-blend at rest (the new frame's share there, that share where none of its samples landed near, the history's clip
-width; a toggle puts 0.4.2's blend in their place, to compare), the debug views and the indicator. Changes apply at once; **Save** writes them to
+debug views and the indicator. Changes apply at once; **Save** writes them to
 `dittosr.ini` (only what differs from the defaults, besides sharpness and frame weight), **Defaults** restores the
 defaults, **Revert** reads the file again.
 
@@ -170,7 +169,7 @@ the game is in front: a game in exclusive fullscreen may hide it - borderless or
 - `menu_key` (`0x76`, F7; `0` off): the in-game menu's key.
 - `anti_shimmer` (0.6 up to 2x, 0.45 at 3x; `0` off), `auto_reactive` (0.5; `0` off), `stab_step`: steadiness against responsiveness.
 - `history_sharpen` (1; `0` off): how far the history's resampling blur is made up in motion (fine moving detail).
-- `alpha_rest` (0.1) and `share_far` (0.2): each new frame's share where nothing moves, and x that where none of its samples landed near the pixel; `gamma_rest` (3): how far from the new frame's samples the accumulated image may stay there. What moves with no motion vectors of its own (grass swaying in its vertex shader) is found by its luma leaving the range each pixel has kept over the last frames, and follows the new frame there: `env_gain` (40; `0` off), `env_tol` (0.03), `env_rel`, `env_decay`, `env_cap` (0.5), `env_rest`. In slow motion the share is `alpha_slow` (0.15) from `ramp_lo` to `ramp_hi` pixels a frame (0.25 to 1).
+- `alpha_rest` (0.1) and `share_far` (0.2, down to half of it by 3x): each new frame's share where nothing moves, and x that where none of its samples landed near the pixel; `gamma_rest` (3): how far from the new frame's samples the accumulated image may stay there. What moves with no motion vectors of its own (grass swaying in its vertex shader) is found by its luma leaving the range each pixel has kept over the last frames, and follows the new frame there: `env_gain` (40; `0` off), `env_tol` (0.03), `env_rel`, `env_decay`, `env_cap` (0.5), `env_rest`. In slow motion the share is `alpha_slow` (0.15) from `ramp_lo` to `ramp_hi` pixels a frame (0.25 to 1).
 - `history_10bit`, `fp16` (DirectX 12), `fused_sharpen` (1; `0`: the separate sharpening pass): performance (see above).
 - `game_sharpness`: the sharpness sent with the upscale call in place of the ini's: `-1` (default) only from OptiScaler's custom folder, `1` always, `0` never.
 - `toggle_key`, `reload_key`, `debug_view`, `log_dispatches`, `log_passes` (`1`: each pass's GPU time in the log, the mean of every 256 frames; DirectX 12): diagnosis.

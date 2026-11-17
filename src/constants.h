@@ -73,9 +73,9 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
     k.rampLo = s.rampLo, k.rampHi = s.rampHi, k.envRel = s.envRel, k.alphaSlow = s.alphaSlow;
     // (the envelope's cap by the ratio: half above 2x, 0.25 from 3x - there what it lets in is a coarser estimate)
     k.envCap = s.envCap * (1.0f - 0.5f * hr);
-    if (s.blend042) {  // (0.4.2's blend, to compare)
-        k.alphaRest = 0.035f, k.shareFar = 0.05f, k.gammaRest = 1.5f, k.alphaSlow = 0.0f, k.rampLo = 0.0f, k.rampHi = 8.0f, k.envGain = 0.0f;
-        if (s.antiShimmer < 0.0f) k.antiShimmer = 0.4f - 0.2f * hr;
-    }
+    // (the far share halved by 3x: there 8 pixels in 9 have no sample near each frame, and at 2x's far share their smooth
+    // estimate is half of what a still pixel holds - harness, 3x: a pan's sharpness 0.73 -> 0.93 of the reference's, its
+    // shimmer 3.79 -> 3.06, the still image 33.14 -> 33.40 dB and its shimmer 1.89 -> 1.56; the tiles 29.50 -> 29.37)
+    k.shareFar *= 1.0f - 0.5f * hr;
     k.envTol = s.envTol, k.envDecay = s.envDecay, k.envGain = s.envGain, k.envRest = s.envRest;
 }

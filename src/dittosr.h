@@ -38,7 +38,7 @@ struct DittoSettings {
     // then shows new in the pixels a sample reached and old in the others, a comb along its edges - The Legend of Zelda:
     // Ocarina of Time's grass at 2x, the camera still (its Longshot port) - which the envelope below takes care of; at
     // 1, tried for it, a pan's sharpness fell from 0.77 to 0.47 of the reference's and its shimmer tripled)
-    float shareFar = 0.2f;  // (0.05 until 0.4.2 and a while after; 0.2 by eye, with the rest share 0.1 and the rest clip 3)
+    float shareFar = 0.2f;  // (0.05 until 0.4.2 and a while after; 0.2 by eye, with the rest share 0.1 and the rest clip 3; x 0.5 by 3x - constants.h)
     float shareNear = 3.0f;
     float encodePower = 0.5f;  // the encoding's power after Reinhard (0.5: sqrt)
     // while moving (from 4 output pixels a frame) shareNear falls to motionNear: each frame's pattern of pixels a sample
@@ -84,10 +84,6 @@ struct DittoSettings {
     // by 8) - a slow pan's history is resampled every frame, and more of the new frame keeps it sharp (the tiles at 1.8
     // px a frame, 2x: 30.5 -> 31.6 dB); alphaSlow 0: one ramp from the rest share to the moving one over rampLo..rampHi
     float alphaSlow = 0.15f, rampLo = 0.25f, rampHi = 1.0f;
-    // 0.4.2's blend, to compare (the menu's toggle, blend_042; not saved): no envelope, the base share one ramp up to
-    // 8 px a frame, the anti-shimmer 0.4 and 0.2 from 3x, and its rest share, far share and rest clip (0.035, 0.05,
-    // 1.5) whatever the menu's sliders say
-    bool blend042 = false;
     bool indicator = false;
     int debugView = 0;  // 1: the motion; 2: the new frame's share; 3: the stability level; 4: clip / cut / confidence
 };

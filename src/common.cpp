@@ -99,7 +99,6 @@ static void load_config() {
     s.envGain = ini_float(ini, "env_gain", s.envGain), s.envRest = ini_float(ini, "env_rest", s.envRest);
     s.rampLo = ini_float(ini, "ramp_lo", s.rampLo), s.rampHi = ini_float(ini, "ramp_hi", s.rampHi);
     s.envCap = ini_float(ini, "env_cap", s.envCap);
-    s.blend042 = GetPrivateProfileIntA("dittosr", "blend_042", s.blend042 ? 1 : 0, ini) != 0;
     s.envRel = ini_float(ini, "env_rel", s.envRel), s.alphaSlow = ini_float(ini, "alpha_slow", s.alphaSlow);
     // (the upscale ratios the FidelityFX API answers a game's quality modes with: 0 FSR 3.1's)
     c.ratio[0] = ini_float(ini, "ratio_quality", 0.0f);
@@ -175,9 +174,6 @@ bool ditto_save_settings() {
     ok = put("frame_weight", s.frameWeight, d.frameWeight, true) && ok;
     ok = put("anti_shimmer", s.antiShimmer, d.antiShimmer, false) && ok;
     ok = put("history_sharpen", s.historySharpen, d.historySharpen, false) && ok;
-    ok = put("alpha_rest", s.alphaRest, d.alphaRest, false) && ok;
-    ok = put("share_far", s.shareFar, d.shareFar, false) && ok;
-    ok = put("gamma_rest", s.gammaRest, d.gammaRest, false) && ok;
     ok = put("auto_reactive", s.autoReactive, d.autoReactive, false) && ok;
     ok = put("debug_view", (float)s.debugView, (float)d.debugView, false) && ok;
     if (!held("indicator")) ok = WritePrivateProfileStringA("debug", "indicator", s.indicator ? "1" : "0", ini) != 0 && ok;
