@@ -345,7 +345,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_RRAYS, I_RRADIUS, I_RSCREEN, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -454,6 +454,7 @@ Range range_of(int i) {
     case I_RRAYS: return {4.0f, 32.0f, 1.0f};
     case I_RRADIUS: return {0.0f, 10.0f, 0.25f};
     case I_RSCREEN: return {0.02f, 0.5f, 0.01f};
+    case I_RCONTACT: return {0.0f, 2.0f, 0.1f};
     default: return {0, 1, 1};
     }
 }
@@ -464,6 +465,7 @@ float *slider_of(DittoSettings &s, int i) {
     case I_RRAYS: return &s.aoRays;
     case I_RRADIUS: return &s.aoRadius;
     case I_RSCREEN: return &s.aoScreen;
+    case I_RCONTACT: return &s.aoContact;
     default: return nullptr;
     }
 }
@@ -484,7 +486,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
     switch (i) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
-    case I_SHARP: case I_WEIGHT: case I_RRAYS: case I_RRADIUS: case I_RSCREEN: {
+    case I_SHARP: case I_WEIGHT: case I_RRAYS: case I_RRADIUS: case I_RSCREEN: case I_RCONTACT: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
         // (the frame weight: moved, it overrides FSR 3.1's settings' - OptiScaler's presets - from the weight in use;
@@ -732,6 +734,7 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     slider_row(I_RRAYS, "Relight rays", nullptr);
     slider_row(I_RRADIUS, "Relight radius", "view units, 0 none");
     slider_row(I_RSCREEN, "Relight screen reach", "of its height");
+    slider_row(I_RCONTACT, "Relight contact", "near occluders darker");
     y += 10 * S;
     section("ADVANCED");
     choice_row(I_DEBUG, "Debug view", kDebugNames[s.debugView < 0 || s.debugView > 4 ? 0 : s.debugView]);

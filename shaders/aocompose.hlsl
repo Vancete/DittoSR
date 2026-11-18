@@ -1,15 +1,24 @@
-// DittoSR's experimental AO / GI, the composition (render size): the main pass' occlusion and bounce light through a
-// sparse 3 x 3 (2 pixels apart) weighted by depth and normal - CORTAO's prefilter idea: not to clean the noise, only to
-// make it something the temporal accumulation that follows can average - then onto the game's colour, which every
-// later pass reads in its place: colour x lerp(1, occlusion, aoStrength) + giStrength x albedo x bounce light. The
-// albedo, unknown (the colour is albedo x light): the colour's hue at 0.6 of its brightest channel, grey 0.5 where dark.
-// t0 = the prepass' normal and depth, t1 = the game's colour, t2 = the main pass'; u0 = the colour (RGBA16F).
+// Ditto Relight (experimental), the composition (render size): the main pass' occlusion and bounce light
+//   - through a sparse 3 x 3 (2 pixels apart) weighted by depth and normal (CORTAO's prefilter idea),
+//   - then accumulated over the frames: the last frame's result where this pixel was (the game's motion vectors), unless
+//     the depth there differs by over 5 % (something else was there: a disocclusion), x 0.85 - each frame's samples
+//     land elsewhere (their noise per pixel and per frame), the mean of ~7 frames what the eye should see,
+//   - onto the game's colour, which every later pass reads in its place: colour x lerp(1, occlusion, aoStrength) +
+//     giStrength x albedo x bounce light. The albedo, unknown (the colour is albedo x light): the colour's hue at 0.6 of
+//     its brightest channel, grey 0.5 where dark.
+// t0 = the prepass' normal and depth, t1 = the game's colour, t2 = the main pass', t3 = the game's motion vectors,
+// t4 = the last frame's normal and depth, t5 = the last frame's accumulation; u0 = the colour (RGBA16F), u1 = this
+// frame's accumulation.
 #include "ao_common.hlsli"
 
 Texture2D<float4> Nd : register(t0);
 Texture2D<float4> Color : register(t1);
 Texture2D<float4> Res : register(t2);
+Texture2D<float2> Mv : register(t3);
+Texture2D<float4> PrevNd : register(t4);
+Texture2D<float4> PrevAcc : register(t5);
 RWTexture2D<float4> Out : register(u0);
+RWTexture2D<float4> AccOut : register(u1);
 
 [numthreads(8, 8, 1)]
 void main(uint2 id : SV_DispatchThreadID) {
@@ -17,7 +26,7 @@ void main(uint2 id : SV_DispatchThreadID) {
     int2 p = int2(id), m = int2(rs) - 1;
     float4 c = Color.Load(int3(p, 0));
     float4 nd = Nd.Load(int3(p, 0));
-    if (nd.w <= 0.0) { Out[id] = c; return; }
+    if (nd.w <= 0.0) { Out[id] = c; AccOut[id] = float4(0.0, 0.0, 0.0, 1.0); return; }
     float4 acc = 0.0;
     float ws = 0.0;
     [unroll] for (int j = -1; j <= 1; j++) {
@@ -34,6 +43,16 @@ void main(uint2 id : SV_DispatchThreadID) {
         }
     }
     float4 r = ws > 0.0 ? acc / ws : Res.Load(int3(p, 0));
+    // the accumulation: where the pixel was, its depth then within 5 % of now (and on screen)
+    if (histOk > 0.5) {
+        float2 uv = (float2(id) + 0.5) * rsRcp;
+        float2 puv = uv + Mv.SampleLevel(linearClamp, uv, 0.0) * mvToUv;
+        if (all(puv > 0.0) && all(puv < 1.0)) {
+            float pz = PrevNd.Load(int3(int2(puv * rs), 0)).w;
+            if (pz > 0.0 && abs(pz - nd.w) < 0.05 * nd.w) r = lerp(PrevAcc.SampleLevel(linearClamp, puv, 0.0), r, 0.15);
+        }
+    }
+    AccOut[id] = r;
     float3 col = max(c.rgb, 0.0);
     float mx = max(col.r, max(col.g, col.b));
     float3 albedo = lerp((float3)0.5, 0.6 * col / max(mx, 1e-4), saturate(mx * 8.0));

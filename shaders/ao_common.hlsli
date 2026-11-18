@@ -17,6 +17,9 @@ cbuffer A : register(b0) {
     float radiusWorld;    // the occluders' reach, view units (ini ao_radius; 0: the screen's cap alone)
     float radiusScreen;   // ... at most this share of the screen's height (ini ao_screen)
     float rays;           // the rays a pixel (4 - 32: one bit each)
+    float contact;        // how much more the rays the nearest occluders block darken (0 - 2)
+    float2 mvToUv;        // the game's motion vectors to uv (the previous uv = uv + mv x this)
+    float histOk;         // 1: the last frame's accumulation is there to blend with
     float aoPad0;
 };
 

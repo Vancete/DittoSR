@@ -10,6 +10,9 @@
 //   The GI: a ray blocked for the first time takes the colour of the occluder that blocks it (nearest first: the samples
 // go outward), unless it is a backface (its lit side faces away). The rays being cosine-distributed, their plain mean
 // is the irradiance / pi - the light bounced off what surrounds the pixel, as far as the screen shows it.
+//   The contact term: the rays blocked first by an occluder near the pixel (closer than half the reach, more the
+// closer) darken more, x contact - a tyre on the road, a box against a wall: what a ray's yes / no leaves as faint as a
+// distant wall's shade. The occlusion x (1 - contact x that share).
 // t0 = the prepass' normal and depth, t1 = the game's colour; u0 = rgb the bounce light, a the occlusion.
 #include "ao_common.hlsli"
 
@@ -55,6 +58,7 @@ void main(uint2 id : SV_DispatchThreadID) {
     float3 tg = cr * t0 + sn * b0, bt = cr * b0 - sn * t0;
     uint bits = 0u;
     float3 gi = 0.0;
+    float near = 0.0;
     [unroll] for (uint i = 0u; i < SAMPLES; i++) {
         float a = float(i) * GOLDEN;
         float2 sp = float2(cos(a), sin(a));
@@ -85,7 +89,10 @@ void main(uint2 id : SV_DispatchThreadID) {
         [loop] for (uint j = 0u; j < nr; j++) ob |= dot(rayDir(j, nr), hd) > cosA ? (1u << j) : 0u;
         uint nb = ob & ~bits;
         bits |= ob;
+        float prox = saturate(1.0 - 2.0 * sqrt(l2) / R);
+        near += prox * prox * float(countbits(nb));
         if (giStrength > 0.0 && nb != 0u && !back) gi += Color.SampleLevel(linearClamp, cuv, 0.0).rgb * float(countbits(nb));
     }
-    Res[id] = float4(gi / float(nr), 1.0 - float(countbits(bits)) / float(nr));
+    float ao = (1.0 - float(countbits(bits)) / float(nr)) * saturate(1.0 - contact * near / float(nr));
+    Res[id] = float4(gi / float(nr), ao);
 }

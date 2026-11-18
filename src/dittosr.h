@@ -32,9 +32,10 @@ struct DittoSettings {
     int sharpenMode = 0;
     // EXPERIMENTAL (D3D12), Ditto Relight: ambient occlusion and a one-bounce global illumination after CORTAO
     // (aomain.hlsl), applied to the colour before the upscale - the occlusion in full, the bounce light x 2; their reach:
-    // aoRadius view units (0: none), at most aoScreen of the screen's height; aoRays rays a pixel (4 - 32)
+    // aoRadius view units (0: none), at most aoScreen of the screen's height; aoRays rays a pixel (4 - 32); aoContact:
+    // how much more the rays blocked by the nearest occluders darken (0 - 2: contact shadows)
     bool relight = false;
-    float aoRadius = 2.0f, aoScreen = 0.15f, aoRays = 16.0f;
+    float aoRadius = 4.0f, aoScreen = 0.15f, aoRays = 8.0f, aoContact = 1.0f;
     float frameWeight = 2.0f;  // x the new frame's share, 0.25 - 4: lower, more persistence (smoother, blurrier in motion)
     // the frame weight above wins over the one FSR 3.1's velocity factor and reactiveness scale set (OptiScaler's
     // presets and sliders); false: those set it whenever they are not both at 1
@@ -169,7 +170,10 @@ private:
     uint32_t heapSize_ = 0, heapNext_ = 0, descInc_ = 0;
     Tex mda_[2], hist_[2], aux_[2], stab_[2], change1_, env_[2];
     Tex expo_[2];  // (the auto exposure, 1 x 1: the game asked for it and gave none)
-    Tex aoNd_, aoRes_, aoCol_;  // (EXPERIMENTAL, Ditto Relight: normal and depth, occlusion and bounce, the colour)
+    // (EXPERIMENTAL, Ditto Relight: normal and depth - this frame's and the last -, occlusion and bounce, their
+    // accumulation over the frames, the colour; aoLast_: the frame it last ran)
+    Tex aoNd_[2], aoRes_, aoAcc_[2], aoCol_;
+    uint64_t aoLast_ = ~0ull;
     bool split_ = false;
     int cur_ = 0;
     bool texValid_ = false;
