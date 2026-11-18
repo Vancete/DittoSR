@@ -441,7 +441,7 @@ struct Dx12 : Api {
         g.ev = CreateEventA(nullptr, FALSE, FALSE, nullptr);
         g.cl->Close();
         be = {{FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12, nullptr}, g.dev};
-        up = buffer(g, 96ull << 20, D3D12_HEAP_TYPE_UPLOAD);
+        up = buffer(g, 192ull << 20, D3D12_HEAP_TYPE_UPLOAD);  // (a frame's inputs: 16 bytes a render texel - 133 MB at 4K native)
         D3D12_QUERY_HEAP_DESC qhd = {D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 2};
         CHECK(g.dev->CreateQueryHeap(&qhd, IID_PPV_ARGS(&qh)));
         qrb = buffer(g, 16, D3D12_HEAP_TYPE_READBACK);
@@ -648,7 +648,7 @@ struct Vk : Api {
         VkQueryPoolCreateInfo qpc = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
         qpc.queryType = VK_QUERY_TYPE_TIMESTAMP, qpc.queryCount = 2;
         VKCHECK(vkCreateQueryPool(dev, &qpc, nullptr, &qp));
-        upMap = hostBuffer(96ull << 20, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &up);
+        upMap = hostBuffer(192ull << 20, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &up);
         be = {{FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_VK, nullptr}, dev, phys, gdpa};
         return true;
     }
