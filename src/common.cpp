@@ -102,6 +102,7 @@ static void load_config() {
     s.aoRays = ini_float(ini, "ao_rays", s.aoRays), s.aoContact = ini_float(ini, "ao_contact", s.aoContact);
     s.aoStrength = ini_float(ini, "ao_strength", s.aoStrength), s.giStrength = ini_float(ini, "gi_strength", s.giStrength);
     s.giDark = ini_float(ini, "gi_dark", s.giDark), s.sCurve = ini_float(ini, "s_curve", s.sCurve);
+    s.aoSmooth = ini_float(ini, "ao_smooth", s.aoSmooth);
     s.envTol = ini_float(ini, "env_tol", s.envTol), s.envDecay = ini_float(ini, "env_decay", s.envDecay);
     s.envGain = ini_float(ini, "env_gain", s.envGain), s.envRest = ini_float(ini, "env_rest", s.envRest);
     s.rampLo = ini_float(ini, "ramp_lo", s.rampLo), s.rampHi = ini_float(ini, "ramp_hi", s.rampHi);
@@ -183,6 +184,15 @@ bool ditto_save_settings() {
     ok = put("frame_weight_override", s.frameWeightOverride ? 1.0f : 0.0f, d.frameWeightOverride ? 1.0f : 0.0f, false) && ok;
     ok = put("sharpen_mode", (float)s.sharpenMode, (float)d.sharpenMode, false) && ok;
     ok = put("relight", s.relight ? 1.0f : 0.0f, 0.0f, false) && ok;
+    ok = put("ao_strength", s.aoStrength, d.aoStrength, false) && ok;
+    ok = put("gi_strength", s.giStrength, d.giStrength, false) && ok;
+    ok = put("gi_dark", s.giDark, d.giDark, false) && ok;
+    ok = put("s_curve", s.sCurve, d.sCurve, false) && ok;
+    ok = put("ao_rays", s.aoRays, d.aoRays, false) && ok;
+    ok = put("ao_radius", s.aoRadius, d.aoRadius, false) && ok;
+    ok = put("ao_screen", s.aoScreen, d.aoScreen, false) && ok;
+    ok = put("ao_contact", s.aoContact, d.aoContact, false) && ok;
+    ok = put("ao_smooth", s.aoSmooth, d.aoSmooth, false) && ok;
     ok = put("auto_reactive", s.autoReactive, d.autoReactive, false) && ok;
     ok = put("debug_view", (float)s.debugView, (float)d.debugView, false) && ok;
     if (!held("indicator")) ok = WritePrivateProfileStringA("debug", "indicator", s.indicator ? "1" : "0", ini) != 0 && ok;

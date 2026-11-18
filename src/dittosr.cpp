@@ -509,7 +509,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
         if (made) {
             struct AoConstants {
                 float rs[2], rsRcp[2], tanX, tanY, zNear, zFar, inverted, frame, aoStrength, giStrength, radiusWorld, radiusScreen, rays,
-                    contact, giDark, sCurve, pivot, pad[3];
+                    contact, giDark, sCurve, pivot, smooth, pad[2];
             } ka = {};
             ka.rs[0] = (float)rw, ka.rs[1] = (float)rh, ka.rsRcp[0] = 1.0f / rw, ka.rsRcp[1] = 1.0f / rh;
             float fov = fr.fovY > 0.01f && fr.fovY < 3.1f ? fr.fovY : 1.0472f;  // (none given - XeSS: 60 degrees)
@@ -517,13 +517,14 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             ka.zNear = fr.zNear > 0.0f ? fr.zNear : 0.1f, ka.zFar = fr.zFar > 0.0f ? fr.zFar : 100000.0f;
             ka.inverted = fr.depthInverted ? 1.0f : 0.0f, ka.frame = (float)(frames_ % 1024);
             ka.aoStrength = s_.aoStrength < 0.0f ? 0.0f : s_.aoStrength > 1.0f ? 1.0f : s_.aoStrength;
-            ka.giStrength = s_.giStrength < 0.0f ? 0.0f : s_.giStrength > 2.0f ? 2.0f : s_.giStrength;
+            ka.giStrength = s_.giStrength < 0.0f ? 0.0f : s_.giStrength > 4.0f ? 4.0f : s_.giStrength;
             ka.giDark = s_.giDark < 0.0f ? 0.0f : s_.giDark > 4.0f ? 4.0f : s_.giDark;
             ka.sCurve = s_.sCurve < 0.0f ? 0.0f : s_.sCurve > 1.0f ? 1.0f : s_.sCurve;
             ka.pivot = fr.hdr || float_format(cd.Format) ? 0.071f : 0.3f;  // (30 % of the brightness: linear HDR 0.3 ^ 2.2, or [0, 1] colour)
             ka.radiusWorld = s_.aoRadius, ka.radiusScreen = s_.aoScreen > 0.01f ? s_.aoScreen : 0.15f;
             ka.rays = s_.aoRays < 4.0f ? 4.0f : s_.aoRays > 32.0f ? 32.0f : floorf(s_.aoRays + 0.5f);
-            ka.contact = s_.aoContact < 0.0f ? 0.0f : s_.aoContact > 2.0f ? 2.0f : s_.aoContact;
+            ka.contact = s_.aoContact < 0.0f ? 0.0f : s_.aoContact > 4.0f ? 4.0f : s_.aoContact;
+            ka.smooth = s_.aoSmooth < 0.0f ? 0.0f : s_.aoSmooth > 4.0f ? 4.0f : floorf(s_.aoSmooth + 0.5f);
             auto runA = [&](ID3D12PipelineState *pso, ID3D12Resource *const srv[kSrvs], const DXGI_FORMAT sf[kSrvs], ID3D12Resource *const uav[kUavs],
                             const DXGI_FORMAT uf[kUavs]) {
                 cl->SetPipelineState(pso);

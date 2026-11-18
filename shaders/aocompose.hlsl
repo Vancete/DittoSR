@@ -22,7 +22,7 @@ void main(uint2 id : SV_DispatchThreadID) {
     float4 c = Color.Load(int3(p, 0));
     float4 nd = Nd.Load(int3(p, 0));
     if (nd.w <= 0.0) { Out[id] = c; return; }
-    float4 r = aoBlur(Res, Nd, p, int2(0, 2), nd);
+    float4 r = aoBlur(Res, Nd, p, int2(0, (int)blurStep), nd);
     float3 col = max(c.rgb, 0.0);
     float mx = max(col.r, max(col.g, col.b));
     float3 albedo = lerp((float3)0.5, 0.6 * col / max(mx, 1e-4), saturate(mx * 8.0));

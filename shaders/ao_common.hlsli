@@ -13,15 +13,16 @@ cbuffer A : register(b0) {
     float inverted;       // 1: reversed-Z (1 near)
     float frame;          // the frame, for the noise (0 - 1023)
     float aoStrength;     // 0 - 1: the occlusion's darkening
-    float giStrength;     // 0 - 2: the bounce light added
+    float giStrength;     // 0 - 4: the bounce light added
     float radiusWorld;    // the occluders' reach, view units (ini ao_radius; 0: the screen's cap alone)
     float radiusScreen;   // ... at most this share of the screen's height (ini ao_screen)
     float rays;           // the rays a pixel (4 - 32: one bit each)
-    float contact;        // how much more the rays the nearest occluders block darken (0 - 2)
+    float contact;        // how much more the rays the nearest occluders block darken (0 - 4)
     float giDark;         // the bounce light x this where the pixel is dark (0 - 4; 1: the same everywhere)
     float sCurve;         // the curve on the lights - the luma above the pivot (0 - 1; 0 off)
     float pivot;          // ... 30 % of the brightness: 0.071 linear HDR (0.3 ^ 2.2), 0.3 [0, 1] colour
-    float aoPad0, aoPad1, aoPad2;
+    float blurStep;       // the blur's step, pixels (0 - 4; 0: off - every tap the centre)
+    float aoPad1, aoPad2;
 };
 
 SamplerState linearClamp : register(s0);

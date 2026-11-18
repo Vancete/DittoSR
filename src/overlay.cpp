@@ -345,7 +345,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSMOOTH, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -375,6 +375,7 @@ struct Menu : Perf {  // (its Perf: a copy of g_perf, taken before each draw)
     Key kMenu{0}, kUp{VK_UP}, kDown{VK_DOWN}, kLeft{VK_LEFT}, kRight{VK_RIGHT}, kEnter{VK_RETURN}, kBack{VK_BACK};
     bool lmb = false;
     int drag = -1;  // (the slider the mouse holds)
+    bool relight = false;  // (Ditto Relight on: its sliders shown)
     float rowY[I_COUNT] = {}, rowH[I_COUNT] = {};
     float btnX[3][2] = {};
     float trackX0 = 0, trackX1 = 0;
@@ -443,7 +444,10 @@ bool key_pressed(Key &k, double t, bool repeat) {
 // the frame weight FSR 3.1's settings set (OptiScaler's presets, or the game) while not overridden; -1 none
 float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f : (float)g_stats.fsrFrameWeight; }
 
-bool visible(int i) { return (i != I_UPSCALER && i != I_COMPARE) || g_stats.hasReal; }
+bool visible(int i) {
+    if (i >= I_RAO && i <= I_RSMOOTH) return g_m.relight;
+    return (i != I_UPSCALER && i != I_COMPARE) || g_stats.hasReal;
+}
 
 // the sliders' and choices' ranges
 struct Range { float lo, hi, step; };
@@ -451,6 +455,15 @@ Range range_of(int i) {
     switch (i) {
     case I_SHARP: return {0.0f, 1.0f, 0.05f};
     case I_WEIGHT: return {0.25f, 4.0f, 0.25f};
+    case I_RAO: return {0.0f, 1.0f, 0.05f};
+    case I_RGI: return {0.0f, 4.0f, 0.1f};
+    case I_RGIDARK: return {0.0f, 4.0f, 0.1f};
+    case I_RSCURVE: return {0.0f, 1.0f, 0.05f};
+    case I_RRAYS: return {4.0f, 32.0f, 4.0f};
+    case I_RRADIUS: return {0.0f, 16.0f, 0.5f};
+    case I_RSCREEN: return {0.05f, 0.5f, 0.05f};
+    case I_RCONTACT: return {0.0f, 4.0f, 0.25f};
+    case I_RSMOOTH: return {0.0f, 4.0f, 1.0f};
     default: return {0, 1, 1};
     }
 }
@@ -458,6 +471,15 @@ float *slider_of(DittoSettings &s, int i) {
     switch (i) {
     case I_SHARP: return &s.sharpness;
     case I_WEIGHT: return &s.frameWeight;
+    case I_RAO: return &s.aoStrength;
+    case I_RGI: return &s.giStrength;
+    case I_RGIDARK: return &s.giDark;
+    case I_RSCURVE: return &s.sCurve;
+    case I_RRAYS: return &s.aoRays;
+    case I_RRADIUS: return &s.aoRadius;
+    case I_RSCREEN: return &s.aoScreen;
+    case I_RCONTACT: return &s.aoContact;
+    case I_RSMOOTH: return &s.aoSmooth;
     default: return nullptr;
     }
 }
@@ -478,7 +500,8 @@ bool adjust(DittoSettings &s, int i, int dir) {
     switch (i) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
-    case I_SHARP: case I_WEIGHT: {
+    case I_SHARP: case I_WEIGHT: case I_RAO: case I_RGI: case I_RGIDARK: case I_RSCURVE: case I_RRAYS: case I_RRADIUS:
+    case I_RSCREEN: case I_RCONTACT: case I_RSMOOTH: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
         // (the frame weight: moved, it overrides FSR 3.1's settings' - OptiScaler's presets - from the weight in use;
@@ -723,6 +746,17 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     y += 10 * S;
     section("EXPERIMENTAL");
     toggle_row(I_RELIGHT, "Ditto Relight", s.relight);
+    if (s.relight) {
+        slider_row(I_RAO, "Ambient occlusion", "the darkening");
+        slider_row(I_RGI, "Global illumination", "the bounce light");
+        slider_row(I_RGIDARK, "GI in dark areas", "x the bounce light there");
+        slider_row(I_RSCURVE, "Highlights", "the lights brighter");
+        slider_row(I_RRAYS, "Rays", "more: less noise, slower");
+        slider_row(I_RRADIUS, "Reach", "in the world; 0: no limit");
+        slider_row(I_RSCREEN, "Screen reach", "at most this of the screen");
+        slider_row(I_RCONTACT, "Contact shadows", "the nearest, darker");
+        slider_row(I_RSMOOTH, "Smoothing", "the blur; 0 off");
+    }
     y += 10 * S;
     section("ADVANCED");
     choice_row(I_DEBUG, "Debug view", kDebugNames[s.debugView < 0 || s.debugView > 4 ? 0 : s.debugView]);
@@ -843,8 +877,11 @@ void make_panel(Ui &u, float W, float H, float scale, double t, bool focus) {
     take_perf();
     DittoSettings s = ditto_settings();
     bool changed = false;
+    g_m.relight = s.relight;
     if (g_m.open && focus) input(s, changed, t);
     if (changed) ditto_set_settings(s);
+    g_m.relight = s.relight;
+    if (!visible(g_m.sel)) g_m.sel = I_RELIGHT;  // (its sliders hidden under the selection: Relight off, or Defaults)
     u.s = scale, u.alpha = ease(g_m.anim), u.dx = -(1.0f - ease(g_m.anim)) * 420.0f * scale;
     u.q.reserve(2048);
     // (the scroll: the selected row kept in view)
