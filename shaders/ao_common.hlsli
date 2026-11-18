@@ -21,6 +21,9 @@ cbuffer A : register(b0) {
     float2 mvToUv;        // the game's motion vectors to uv (the previous uv = uv + mv x this)
     float histOk;         // 1: the last frame's accumulation is there to blend with
     float giDark;         // the bounce light x this where the pixel is dark (0 - 4; 1: the same everywhere)
+    float sCurve;         // the S-curve on the result's luma (0 - 1; 0 off)
+    float pivot;          // ... around this luma (mid-grey: 0.18 linear HDR, 0.4 [0, 1] colour)
+    float2 aoPad;
 };
 
 SamplerState linearClamp : register(s0);

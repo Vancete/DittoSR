@@ -38,7 +38,10 @@ struct DittoSettings {
     float aoRadius = 4.0f, aoScreen = 0.15f, aoRays = 8.0f, aoContact = 2.0f;
     // ... the occlusion's strength (0 - 1), the bounce light's (0 - 2), and the bounce light x giDark where the pixel is
     // dark (0 - 4: 1 the same everywhere; above, the shadows lifted more by what surrounds them; below, kept darker)
-    float aoStrength = 1.0f, giStrength = 2.0f, giDark = 1.0f;
+    float aoStrength = 1.0f, giStrength = 2.0f, giDark = 0.3f;
+    // ... an S-curve on the result's luma around mid-grey (0 - 1; 0 off): brighter lights, darker shadows - in stops,
+    // x (1 + sCurve / 2) near mid-grey, at most sCurve stops further out
+    float sCurve = 0.0f;
     float frameWeight = 2.0f;  // x the new frame's share, 0.25 - 4: lower, more persistence (smoother, blurrier in motion)
     // the frame weight above wins over the one FSR 3.1's velocity factor and reactiveness scale set (OptiScaler's
     // presets and sliders); false: those set it whenever they are not both at 1
