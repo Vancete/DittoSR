@@ -5,7 +5,8 @@
 //     land elsewhere (their noise per pixel and per frame), the mean of ~7 frames what the eye should see,
 //   - onto the game's colour, which every later pass reads in its place: colour x lerp(1, occlusion, aoStrength) +
 //     giStrength x albedo x bounce light. The albedo, unknown (the colour is albedo x light): the colour's hue at 0.6 of
-//     its brightest channel, grey 0.5 where dark.
+//     its brightest channel, grey 0.5 where dark. Where the pixel is dark (its luma from 0.25 down to 0, the game's
+//     units), the bounce light x up to giDark: above 1 the shadows lifted more by what surrounds them, below kept dark.
 // t0 = the prepass' normal and depth, t1 = the game's colour, t2 = the main pass', t3 = the game's motion vectors,
 // t4 = the last frame's normal and depth, t5 = the last frame's accumulation; u0 = the colour (RGBA16F), u1 = this
 // frame's accumulation.
@@ -56,5 +57,6 @@ void main(uint2 id : SV_DispatchThreadID) {
     float3 col = max(c.rgb, 0.0);
     float mx = max(col.r, max(col.g, col.b));
     float3 albedo = lerp((float3)0.5, 0.6 * col / max(mx, 1e-4), saturate(mx * 8.0));
-    Out[id] = float4(col * lerp(1.0, r.a, aoStrength) + giStrength * albedo * r.rgb, c.a);
+    float dark = 1.0 - smoothstep(0.0, 0.25, dot(col, float3(0.2126, 0.7152, 0.0722)));
+    Out[id] = float4(col * lerp(1.0, r.a, aoStrength) + giStrength * lerp(1.0, giDark, dark) * albedo * r.rgb, c.a);
 }

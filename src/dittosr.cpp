@@ -509,14 +509,16 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
         if (made) {
             struct AoConstants {
                 float rs[2], rsRcp[2], tanX, tanY, zNear, zFar, inverted, frame, aoStrength, giStrength, radiusWorld, radiusScreen, rays,
-                    contact, mvToUv[2], histOk, pad;
+                    contact, mvToUv[2], histOk, giDark;
             } ka = {};
             ka.rs[0] = (float)rw, ka.rs[1] = (float)rh, ka.rsRcp[0] = 1.0f / rw, ka.rsRcp[1] = 1.0f / rh;
             float fov = fr.fovY > 0.01f && fr.fovY < 3.1f ? fr.fovY : 1.0472f;  // (none given - XeSS: 60 degrees)
             ka.tanY = tanf(0.5f * fov), ka.tanX = ka.tanY * (float)rw / (float)rh;
             ka.zNear = fr.zNear > 0.0f ? fr.zNear : 0.1f, ka.zFar = fr.zFar > 0.0f ? fr.zFar : 100000.0f;
             ka.inverted = fr.depthInverted ? 1.0f : 0.0f, ka.frame = (float)(frames_ % 1024);
-            ka.aoStrength = 1.0f, ka.giStrength = 2.0f;  // (the occlusion in full, the bounce light x 2)
+            ka.aoStrength = s_.aoStrength < 0.0f ? 0.0f : s_.aoStrength > 1.0f ? 1.0f : s_.aoStrength;
+            ka.giStrength = s_.giStrength < 0.0f ? 0.0f : s_.giStrength > 2.0f ? 2.0f : s_.giStrength;
+            ka.giDark = s_.giDark < 0.0f ? 0.0f : s_.giDark > 4.0f ? 4.0f : s_.giDark;
             ka.radiusWorld = s_.aoRadius, ka.radiusScreen = s_.aoScreen > 0.01f ? s_.aoScreen : 0.15f;
             ka.rays = s_.aoRays < 4.0f ? 4.0f : s_.aoRays > 32.0f ? 32.0f : floorf(s_.aoRays + 0.5f);
             ka.contact = s_.aoContact < 0.0f ? 0.0f : s_.aoContact > 2.0f ? 2.0f : s_.aoContact;
