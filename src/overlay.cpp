@@ -345,7 +345,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_RRAYS, I_RRADIUS, I_RSCREEN, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -451,6 +451,9 @@ Range range_of(int i) {
     switch (i) {
     case I_SHARP: return {0.0f, 1.0f, 0.05f};
     case I_WEIGHT: return {0.25f, 4.0f, 0.25f};
+    case I_RRAYS: return {4.0f, 32.0f, 1.0f};
+    case I_RRADIUS: return {0.0f, 10.0f, 0.25f};
+    case I_RSCREEN: return {0.02f, 0.5f, 0.01f};
     default: return {0, 1, 1};
     }
 }
@@ -458,6 +461,9 @@ float *slider_of(DittoSettings &s, int i) {
     switch (i) {
     case I_SHARP: return &s.sharpness;
     case I_WEIGHT: return &s.frameWeight;
+    case I_RRAYS: return &s.aoRays;
+    case I_RRADIUS: return &s.aoRadius;
+    case I_RSCREEN: return &s.aoScreen;
     default: return nullptr;
     }
 }
@@ -478,7 +484,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
     switch (i) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
-    case I_SHARP: case I_WEIGHT: {
+    case I_SHARP: case I_WEIGHT: case I_RRAYS: case I_RRADIUS: case I_RSCREEN: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
         // (the frame weight: moved, it overrides FSR 3.1's settings' - OptiScaler's presets - from the weight in use;
@@ -679,7 +685,7 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         float ty = y + 8 * S;
         u.text(F_BODY, x0, ty, label, kText);
         char b[32];
-        snprintf(b, sizeof b, "%.2f", v);
+        snprintf(b, sizeof b, r.step >= 1.0f ? "%.0f" : "%.2f", v);
         u.text(F_VALUE, x1 - u.measure(F_VALUE, b), ty, b, g_m.sel == i ? kAccent : kText);
         if (hint) u.text(F_SMALL, x0 + u.measure(F_BODY, label) + 8 * S, ty + (lh - u.h(F_SMALL)) / 2 + 1 * S, hint, kText3);
         float ky = y + rh - 14 * S, th = 4 * S;
@@ -723,6 +729,9 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     y += 10 * S;
     section("EXPERIMENTAL");
     toggle_row(I_RELIGHT, "Ditto Relight", s.relight);
+    slider_row(I_RRAYS, "Relight rays", nullptr);
+    slider_row(I_RRADIUS, "Relight radius", "view units, 0 none");
+    slider_row(I_RSCREEN, "Relight screen reach", "of its height");
     y += 10 * S;
     section("ADVANCED");
     choice_row(I_DEBUG, "Debug view", kDebugNames[s.debugView < 0 || s.debugView > 4 ? 0 : s.debugView]);

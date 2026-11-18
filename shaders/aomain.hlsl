@@ -4,7 +4,7 @@
 // reach in view space, capped to a share of the screen), rotated and dithered by a per-frame noise - DittoSR's
 // accumulation averages it. Each sample within reach and above the pixel's surface is a circular occluder: its size
 // by the sample's share of the disc and its slope to the camera (CORTAO's slope compensation), moved one radius into
-// its surface when it faces the pixel (no self-occlusion), left as it is when it faces away (a backface). 16 rays over
+// its surface when it faces the pixel (no self-occlusion), left as it is when it faces away (a backface). 4 - 32 rays over
 // the hemisphere (cosine-distributed: a golden spiral on the unit disc, lifted) - a ray inside an occluder's angular
 // size is blocked. The occlusion: 1 - the share of rays blocked.
 //   The GI: a ray blocked for the first time takes the colour of the occluder that blocks it (nearest first: the samples
@@ -18,11 +18,10 @@ Texture2D<float4> Color : register(t1);
 RWTexture2D<float4> Res : register(u0);
 
 #define SAMPLES 12
-#define RAYS 16
 static const float GOLDEN = 2.39996323;
 
-float3 rayDir(uint j) {
-    float a = float(j) * GOLDEN, r = sqrt((float(j) + 0.5) / float(RAYS));
+float3 rayDir(uint j, uint nr) {
+    float a = float(j) * GOLDEN, r = sqrt((float(j) + 0.5) / float(nr));
     return float3(cos(a) * r, sin(a) * r, sqrt(1.0 - r * r));
 }
 
@@ -33,6 +32,7 @@ void main(uint2 id : SV_DispatchThreadID) {
     float z = nd.w;
     if (z <= 0.0) { Res[id] = float4(0.0, 0.0, 0.0, 1.0); return; }
     float3 n = nd.xyz;
+    uint nr = clamp((uint)rays, 4u, 32u);
     float2 uv = (float2(id) + 0.5) * rsRcp;
     float3 P = viewPos(uv, z), V = -normalize(P);
     // the reach: the world radius, capped to radiusScreen of the screen's height at this depth (CORTAO's apparent
@@ -82,10 +82,10 @@ void main(uint2 id : SV_DispatchThreadID) {
         float3 hd = float3(dot(dir, tg), dot(dir, bt), dot(dir, n));
         float cosA = max(0.0, 1.0 - occR * occR * 0.5);
         uint ob = 0u;
-        [unroll] for (uint j = 0u; j < RAYS; j++) ob |= dot(rayDir(j), hd) > cosA ? (1u << j) : 0u;
+        [loop] for (uint j = 0u; j < nr; j++) ob |= dot(rayDir(j, nr), hd) > cosA ? (1u << j) : 0u;
         uint nb = ob & ~bits;
         bits |= ob;
         if (giStrength > 0.0 && nb != 0u && !back) gi += Color.SampleLevel(linearClamp, cuv, 0.0).rgb * float(countbits(nb));
     }
-    Res[id] = float4(gi / RAYS, 1.0 - float(countbits(bits)) / RAYS);
+    Res[id] = float4(gi / float(nr), 1.0 - float(countbits(bits)) / float(nr));
 }

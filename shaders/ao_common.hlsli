@@ -16,7 +16,8 @@ cbuffer A : register(b0) {
     float giStrength;     // 0 - 2: the bounce light added
     float radiusWorld;    // the occluders' reach, view units (ini ao_radius; 0: the screen's cap alone)
     float radiusScreen;   // ... at most this share of the screen's height (ini ao_screen)
-    float aoPad0, aoPad1;
+    float rays;           // the rays a pixel (4 - 32: one bit each)
+    float aoPad0;
 };
 
 SamplerState linearClamp : register(s0);

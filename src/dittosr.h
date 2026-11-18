@@ -32,9 +32,9 @@ struct DittoSettings {
     int sharpenMode = 0;
     // EXPERIMENTAL (D3D12), Ditto Relight: ambient occlusion and a one-bounce global illumination after CORTAO
     // (aomain.hlsl), applied to the colour before the upscale - the occlusion in full, the bounce light x 2; their reach:
-    // aoRadius view units (0: none), at most aoScreen of the screen's height
+    // aoRadius view units (0: none), at most aoScreen of the screen's height; aoRays rays a pixel (4 - 32)
     bool relight = false;
-    float aoRadius = 2.0f, aoScreen = 0.15f;
+    float aoRadius = 2.0f, aoScreen = 0.15f, aoRays = 16.0f;
     float frameWeight = 2.0f;  // x the new frame's share, 0.25 - 4: lower, more persistence (smoother, blurrier in motion)
     // the frame weight above wins over the one FSR 3.1's velocity factor and reactiveness scale set (OptiScaler's
     // presets and sliders); false: those set it whenever they are not both at 1
