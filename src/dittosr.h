@@ -38,7 +38,7 @@ struct DittoSettings {
     float aoRadius = 0.0f, aoScreen = 0.5f, aoRays = 8.0f, aoContact = 2.0f;
     // ... the occlusion's strength (0 - 1), the bounce light's (0 - 4), and the bounce light x giDark where the pixel is
     // dark (0 - 4: 1 the same everywhere; above, the shadows lifted more by what surrounds them; below, kept darker)
-    float aoStrength = 1.0f, giStrength = 2.0f, giDark = 0.5f;
+    float aoStrength = 1.0f, giStrength = 2.0f, giDark = 0.3f;
     // ... a curve on the lights (0 - 1; 0 off): the luma from 30 % of the brightness up brighter - starting flat, at most
     // sCurve stops; below, as it is
     float sCurve = 0.3f;
