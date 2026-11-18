@@ -158,7 +158,7 @@ the game is in front: a game in exclusive fullscreen may hide it - borderless or
 | `[dittosr]` | `version`      | the DittoSR version the file was written for: the loader and the install scripts update older settings by it |
 | `[dittosr]` | `enabled`      | `1` DittoSR; `0` AMD's FSR instead (needs AMD's DLL alongside as `.orig.dll`) |
 | `[dittosr]` | `sharpness`    | `0` soft, `0.6` (default) as reconstructed, `1` sharpened |
-| `[dittosr]` | `frame_weight` | each new frame's weight, 0.25 to 4 (default 2): lower is steadier and smoother, higher is crisper in motion with more shimmer |
+| `[dittosr]` | `frame_weight` | each new frame's weight, 0.25 to 4 (default 2): lower is steadier and smoother, higher is crisper in motion with more shimmer. Below 1.5x DittoSR uses less of it, half at 1x (native AA), where every pixel gets a new sample each frame; the menu and the ini keep the value as set |
 | `[debug]`   | `enabled`      | `1`: F10 switches DittoSR ↔ AMD's FSR live, and the log describes the first upscales in full |
 | `[debug]`   | `indicator`    | `1`: a small pink DittoSR face in the top-left corner while DittoSR upscales |
 

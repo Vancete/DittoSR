@@ -272,6 +272,10 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     // (moving, less contrast between the pixels a sample landed near and the rest: each frame's own pattern of them
     // shimmers - at rest it is what resolves the detail)
     float near = motionNear > 0.0 ? lerp(shareNear, motionNear, mf) : shareNear;
+    // (below 1.5x, still and stable, less of each near sample: x 0.67 at 1x, easing back by 1.5x - at 1x one lands near
+    // every pixel each frame, and the still grass shimmered 2.52 -> 1.64 with it (frame weight halved). Not moving:
+    // there it trailed the tiles' moving square, -0.4 dB)
+    near *= 1.0 - 0.33 * (1.0 - saturate((ratio - 1.0) * 2.0)) * sp * (1.0 - saturate(mlen));
     float landw = smoothstep(0.05, 0.8, cf);
     float a = base * lerp(shareFar, near, landw);
     // (frame_weight: the user's persistence - the reactions below still take over where something changed. Above 1, in

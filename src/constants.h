@@ -58,6 +58,12 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
     k.motionNear = s.motionNear, k.splitClip = s.splitClip;
     k.history10 = history10 ? 1.0f : 0.0f;
     k.frameWeight = s.frameWeight < 0.25f ? 0.25f : s.frameWeight > 4.0f ? 4.0f : s.frameWeight;
+    // (below 1.5x the weight in use - the user's or FSR 3.1's settings' - x 0.5 at 1x, easing back by 1.5x: at 1x every
+    // pixel has a sample near it each frame, and at 1.5x's weight each one took too much of it - the panning grass
+    // shimmered more than at 1.5x (5.13 against 4.05). Halved: 2.92, its PSNR +0.64 dB, the still grass +0.49 dB, the
+    // glints' shimmer 1.54 -> 0.89, the tiles' moving square as it was (-0.05 dB). The menu shows the value as set)
+    float r15 = k.ratio <= 1.0f ? 0.0f : k.ratio >= 1.5f ? 1.0f : (k.ratio - 1.0f) / 0.5f;
+    k.frameWeight *= 0.5f + 0.5f * r15;
     k.autoReactive = hasReactive ? 0.0f : s.autoReactive;  // (the game's own mask wins)
     k.stabStep = s.stabStep > 0.01f ? s.stabStep : 0.34f;
     // (upscale.hlsl: 0.03 up to 2x, 0.05 from 3x, the extra bounded by the samples' range - unbounded, at 2x beyond 0.02
