@@ -345,7 +345,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_RAO, I_RGIMODE, I_RGI, I_RGIDARK, I_FGRES, I_FGRAYS, I_FGSTEPS, I_FGINT, I_FGREFL, I_FGRADIUS, I_FGTHICK, I_FGCLAMP, I_FGMAXD, I_FGREFINE, I_FGREJ, I_FGSPATIAL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RTEMP, I_RTEMPW, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_RAO, I_RGIMODE, I_RGI, I_RGIDARK, I_FGRES, I_FGRAYS, I_FGSTEPS, I_FGINT, I_FGREFL, I_FGRADIUS, I_FGTHICK, I_FGCLAMP, I_FGMAXD, I_FGREFINE, I_FGREJ, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_FGSPATIAL, I_RTEMP, I_RTEMPW, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -447,7 +447,7 @@ float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f 
 
 bool visible(int i) {
     if (i == I_RGI || i == I_RGIDARK) return g_m.relight && g_m.giMode == 0;
-    if (i >= I_FGRES && i <= I_FGSPATIAL) return g_m.relight && g_m.giMode == 1;
+    if (i >= I_FGRES && i <= I_FGREJ) return g_m.relight && g_m.giMode == 1;
     if (i >= I_RAO && i <= I_RTEMPW) return g_m.relight;
     return (i != I_UPSCALER && i != I_COMPARE) || g_stats.hasReal;
 }
@@ -498,7 +498,7 @@ float *slider_of(DittoSettings &s, int i) {
     case I_FGCLAMP: return &s.fgClamp;
     case I_FGMAXD: return &s.fgMaxDist;
     case I_FGREJ: return &s.fgRejection;
-    case I_FGSPATIAL: return &s.fgSpatial;
+    case I_FGSPATIAL: return &s.aoSpatial;
     case I_RRADIUS: return &s.aoRadius;
     case I_RSCREEN: return &s.aoScreen;
     case I_RCONTACT: return &s.aoContact;
@@ -792,13 +792,13 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
             slider_row(I_FGMAXD, "Max distance", "the receivers'");
             toggle_row(I_FGREFINE, "Refine hits", s.fgRefine);
             slider_row(I_FGREJ, "Hit rejection", "1 strictest, 0 off");
-            slider_row(I_FGSPATIAL, "Spatial radius", "the filter's spacing");
         }
         slider_row(I_RSCURVE, "Highlights", "the lights brighter");
         slider_row(I_RRAYS, "Rays", "more: less noise, slower");
         slider_row(I_RRADIUS, "Reach", "in the world; 0: no limit");
         slider_row(I_RSCREEN, "Screen reach", "at most this of the screen");
         slider_row(I_RCONTACT, "Contact shadows", "the nearest, darker");
+        slider_row(I_FGSPATIAL, "Spatial radius", "the filter's spacing");
         toggle_row(I_RTEMP, "Temporal smoothing", s.aoTemporal);
         slider_row(I_RTEMPW, "Temporal weight", "the history's share");
     }

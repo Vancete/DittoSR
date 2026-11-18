@@ -111,7 +111,8 @@ static void load_config() {
     s.fgThickness = ini_float(ini, "fgi_thickness", s.fgThickness), s.fgClamp = ini_float(ini, "fgi_radiance_clamp", s.fgClamp);
     s.fgMaxDist = ini_float(ini, "fgi_max_distance", s.fgMaxDist), s.fgReflectance = ini_float(ini, "fgi_reflectance", s.fgReflectance);
     s.fgRefine = GetPrivateProfileIntA("dittosr", "fgi_refine_hits", s.fgRefine, ini) != 0;
-    s.fgRejection = ini_float(ini, "fgi_hit_rejection", s.fgRejection), s.fgSpatial = ini_float(ini, "fgi_spatial_radius", s.fgSpatial);
+    s.fgRejection = ini_float(ini, "fgi_hit_rejection", s.fgRejection);
+    s.aoSpatial = ini_float(ini, "ao_spatial_radius", s.aoSpatial);
     s.fgNormalBias = ini_float(ini, "fgi_normal_bias", s.fgNormalBias);
     s.envTol = ini_float(ini, "env_tol", s.envTol), s.envDecay = ini_float(ini, "env_decay", s.envDecay);
     s.envGain = ini_float(ini, "env_gain", s.envGain), s.envRest = ini_float(ini, "env_rest", s.envRest);
@@ -202,6 +203,7 @@ bool ditto_save_settings() {
     ok = put("ao_radius", s.aoRadius, d.aoRadius, false) && ok;
     ok = put("ao_screen", s.aoScreen, d.aoScreen, false) && ok;
     ok = put("ao_contact", s.aoContact, d.aoContact, false) && ok;
+    ok = put("ao_spatial_radius", s.aoSpatial, d.aoSpatial, false) && ok;
     ok = put("ao_temporal", s.aoTemporal ? 1.0f : 0.0f, d.aoTemporal ? 1.0f : 0.0f, false) && ok;
     ok = put("ao_temporal_weight", s.aoTemporalWeight, d.aoTemporalWeight, false) && ok;
     ok = put("gi_mode", (float)s.giMode, (float)d.giMode, false) && ok;
@@ -216,7 +218,6 @@ bool ditto_save_settings() {
     ok = put("fgi_reflectance", s.fgReflectance, d.fgReflectance, false) && ok;
     ok = put("fgi_refine_hits", s.fgRefine ? 1.0f : 0.0f, d.fgRefine ? 1.0f : 0.0f, false) && ok;
     ok = put("fgi_hit_rejection", s.fgRejection, d.fgRejection, false) && ok;
-    ok = put("fgi_spatial_radius", s.fgSpatial, d.fgSpatial, false) && ok;
     ok = put("auto_reactive", s.autoReactive, d.autoReactive, false) && ok;
     ok = put("debug_view", (float)s.debugView, (float)d.debugView, false) && ok;
     if (!held("indicator")) ok = WritePrivateProfileStringA("debug", "indicator", s.indicator ? "1" : "0", ini) != 0 && ok;

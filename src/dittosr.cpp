@@ -17,6 +17,7 @@
 #include "cs_aoprep.h"
 #include "cs_aomain.h"
 #include "cs_aotemporal.h"
+#include "cs_aofilter.h"
 #include "cs_aofgtrace.h"
 #include "cs_aofgblur.h"
 #include "cs_aofgtemporal.h"
@@ -164,6 +165,7 @@ DittoSR::~DittoSR() {
     if (psoAoPrep_) psoAoPrep_->Release();
     if (psoAoMain_) psoAoMain_->Release();
     if (psoAoTemporal_) psoAoTemporal_->Release();
+    if (psoAoFilter_) psoAoFilter_->Release();
     if (psoAoFgTrace_) psoAoFgTrace_->Release();
     if (psoAoFgBlur_) psoAoFgBlur_->Release();
     if (psoAoFgTemporal_) psoAoFgTemporal_->Release();
@@ -206,7 +208,7 @@ bool DittoSR::createPipelines() {
     HRESULT hr = dev_->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&rootSig_));
     blob->Release();
     if (FAILED(hr)) return ditto_log("CreateRootSignature 0x%08x\n", (unsigned)hr), false;
-    struct { const BYTE *code; size_t size; ID3D12PipelineState **pso; const char *name; } cs[12] = {
+    struct { const BYTE *code; size_t size; ID3D12PipelineState **pso; const char *name; } cs[13] = {
         {g_cs_convert, sizeof g_cs_convert, &psoConvert_, "convert"},
         {g_cs_motion, sizeof g_cs_motion, &psoMotion_, "motion"},
         {g_cs_upscale, sizeof g_cs_upscale, &psoUpscale_, "upscale"},
@@ -215,6 +217,7 @@ bool DittoSR::createPipelines() {
         {g_cs_aoprep, sizeof g_cs_aoprep, &psoAoPrep_, "ao prepass"},
         {g_cs_aomain, sizeof g_cs_aomain, &psoAoMain_, "ao"},
         {g_cs_aotemporal, sizeof g_cs_aotemporal, &psoAoTemporal_, "ao temporal"},
+        {g_cs_aofilter, sizeof g_cs_aofilter, &psoAoFilter_, "ao filter"},
         {g_cs_aofgtrace, sizeof g_cs_aofgtrace, &psoAoFgTrace_, "fastgi trace"},
         {g_cs_aofgblur, sizeof g_cs_aofgblur, &psoAoFgBlur_, "fastgi filter"},
         {g_cs_aofgtemporal, sizeof g_cs_aofgtemporal, &psoAoFgTemporal_, "fastgi temporal"},
@@ -309,7 +312,7 @@ bool DittoSR::makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f) {
 
 void DittoSR::releaseTextures() {
     for (Tex *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &change1_, &expo_[0], &expo_[1],
-                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoFg_, &aoFg2_, &aoFgH_[0], &aoFgH_[1]})
+                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoFg_, &aoFg2_, &aoFgH_[0], &aoFgH_[1]})
         if (t->res) t->res->Release(), *t = Tex();
     texValid_ = false;
 }
@@ -530,9 +533,10 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     if (s_.relight && depth && !s_.debugView) {
         bool made = aoNd_.res && aoNd_.w == rw && aoNd_.h == rh;
         if (!made) {
-            for (Tex *t : {&aoNd_, &aoRes_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoFg_, &aoFg2_, &aoFgH_[0], &aoFgH_[1]})
+            for (Tex *t : {&aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoFg_, &aoFg2_, &aoFgH_[0], &aoFgH_[1]})
                 if (t->res) t->res->Release(), *t = Tex();
             made = makeTex(aoNd_, rw, rh, DXGI_FORMAT_R32G32B32A32_FLOAT) && makeTex(aoRes_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
+                   makeTex(aoF_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
                    makeTex(aoCol_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT);
             aoOk_ = false;
         }
@@ -565,7 +569,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             ka.fgGain = (s_.fgIntensity < 0.0f ? 0.0f : s_.fgIntensity > 4.0f ? 4.0f : s_.fgIntensity) * (s_.fgReflectance < 0.0f ? 0.0f : s_.fgReflectance > 1.0f ? 1.0f : s_.fgReflectance);
             ka.fgClamp = s_.fgClamp > 0.1f ? s_.fgClamp : 0.1f, ka.fgMaxDist = (s_.fgMaxDist < 1.0f ? 1.0f : s_.fgMaxDist > 60000.0f ? 60000.0f : s_.fgMaxDist);
             ka.fgRefine = s_.fgRefine ? 1.0f : 0.0f, ka.fgReject = (s_.fgRejection < 0.0f ? 0.0f : s_.fgRejection > 1.0f ? 1.0f : s_.fgRejection);
-            ka.fgSpatial = (s_.fgSpatial < 1.0f ? 1.0f : s_.fgSpatial > 2.0f ? 2.0f : s_.fgSpatial);
+            ka.fgSpatial = (s_.aoSpatial < 1.0f ? 1.0f : s_.aoSpatial > 2.0f ? 2.0f : s_.aoSpatial);
             ka.fgPhase = (float)(frames_ % 8) * 0.618033989f;  // (the noise moving: DittoSR's accumulation averages it)
             ka.fgMvScale[0] = s_.mvSign * fr.mvToUv[0], ka.fgMvScale[1] = s_.mvSign * fr.mvToUv[1];
             ka.fgMvSize[0] = fr.mvRes[0], ka.fgMvSize[1] = fr.mvRes[1];
@@ -621,6 +625,18 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 ID3D12Resource *u[kUavs] = {aoRes_.res};
                 DXGI_FORMAT uf[kUavs] = {aoRes_.fmt};
                 runA(psoAoMain_, s, f, u, uf);
+            }
+            transition(cl, aoRes_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            for (int axis = 0; axis < 2; axis++) {  // (FastGI's filter on Ditto's AO and GI: x into aoF_, y back)
+                Tex &src = axis ? aoF_ : aoRes_, &dst = axis ? aoRes_ : aoF_;
+                transition(cl, src, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                transition(cl, dst, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                ka.fgAxis = (float)axis;
+                ID3D12Resource *s[kSrvs] = {aoNd_.res, src.res};
+                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, src.fmt};
+                ID3D12Resource *u[kUavs] = {dst.res};
+                DXGI_FORMAT uf[kUavs] = {dst.fmt};
+                runA(psoAoFilter_, s, f, u, uf);
             }
             transition(cl, aoRes_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             if (fg) {  // (FastGI's GI: Trace, BlurHorizontal, BlurVertical, Temporal - at its low resolution)

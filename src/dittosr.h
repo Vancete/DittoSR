@@ -46,16 +46,19 @@ struct DittoSettings {
     // by the game's motion vectors) x aoTemporalWeight (0 - 0.95), less in motion - Ditto's AO and GI at render size,
     // FastGI's GI at its own resolution
     bool aoTemporal = true;
+    // ... the spatial filter (FastGI's: 5 taps x then y, by depth and normal) - its taps aoSpatial apart (1 - 2; Ditto's
+    // AO and GI at render size: x 2 render pixels, as FastGI's at Half on the screen), before the temporal smoothing
+    float aoSpatial = 1.0f;
     float aoTemporalWeight = 0.85f;
     // ... the GI: 0 Ditto's (the occluders' colour), 1 FastGI's (aofg*.hlsl; giStrength and giDark unused) - the AO the
     // same. FastGI's options, its defaults (its units: the game's view units - FastGI's metres): its resolution's
     // divisor (2 Half, 3 Third, 4 Quarter), rays (1 - 8), steps (4 - 32), intensity (0 - 4), radius, thickness,
-    // radiance clamp, max distance (1 - 60000), diffuse reflectance (0 - 1), refine hits, hit rejection (0 - 1), spatial
-    // radius (1 - 2), normal bias (ini only, as FastGI hides it)
+    // radiance clamp, max distance (1 - 60000), diffuse reflectance (0 - 1), refine hits, hit rejection (0 - 1), normal
+    // bias (ini only, as FastGI hides it)
     int giMode = 0;
     int fgDiv = 2;
     float fgRays = 4.0f, fgSteps = 8.0f, fgIntensity = 0.6f, fgRadius = 3.0f, fgThickness = 0.25f, fgClamp = 4.0f;
-    float fgMaxDist = 60.0f, fgReflectance = 0.5f, fgRejection = 0.75f, fgSpatial = 1.0f;
+    float fgMaxDist = 60.0f, fgReflectance = 0.5f, fgRejection = 0.75f;
     float fgNormalBias = 0.03f;
     bool fgRefine = true;
     float frameWeight = 2.0f;  // x the new frame's share, 0.25 - 4: lower, more persistence (smoother, blurrier in motion)
@@ -182,7 +185,7 @@ private:
     ID3D12PipelineState *psoUpscaleAs_ = nullptr, *psoUpscaleAs16_ = nullptr;  // (the anti-shimmer variants)
     // (the 1x variants, the motion pass fused in: [fp16][anti-shimmer]; null: the motion pass as at other ratios)
     ID3D12PipelineState *psoUpscaleFm_[2][2] = {};
-    ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr;  // (EXPERIMENTAL: Ditto Relight)
+    ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr;  // (EXPERIMENTAL: Ditto Relight)
     ID3D12PipelineState *psoAoFgTrace_ = nullptr, *psoAoFgBlur_ = nullptr, *psoAoFgTemporal_ = nullptr;  // (... FastGI's GI)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
@@ -195,7 +198,7 @@ private:
     uint32_t heapSize_ = 0, heapNext_ = 0, descInc_ = 0;
     Tex mda_[2], hist_[2], aux_[2], stab_[2], change1_, env_[2];
     Tex expo_[2];  // (the auto exposure, 1 x 1: the game asked for it and gave none)
-    Tex aoNd_, aoRes_, aoCol_;  // (EXPERIMENTAL, Ditto Relight: normal and depth, occlusion and bounce, the colour)
+    Tex aoNd_, aoRes_, aoF_, aoCol_;  // (EXPERIMENTAL, Ditto Relight: normal and depth, occlusion and bounce, the filter's x, the colour)
     // (... their temporal smoothing's history and its depth, ping-ponged (aoCur_ this frame's); aoOk_: valid, aoLast_:
     // the frame it was written)
     Tex aoH_[2], aoHD_[2];
