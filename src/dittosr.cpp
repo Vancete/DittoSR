@@ -14,6 +14,9 @@
 #include "cs_motion.h"
 #include "cs_convert.h"
 #include "cs_sharpen.h"
+#include "cs_aoprep.h"
+#include "cs_aomain.h"
+#include "cs_aocompose.h"
 #include "cs_upscale.h"
 #include "cs_upscale16.h"
 #include "cs_upscale_as.h"
@@ -147,6 +150,9 @@ DittoSR::~DittoSR() {
     if (psoMotion_) psoMotion_->Release();
     if (psoUpscale_) psoUpscale_->Release();
     if (psoSharpen_) psoSharpen_->Release();
+    if (psoAoPrep_) psoAoPrep_->Release();
+    if (psoAoMain_) psoAoMain_->Release();
+    if (psoAoComp_) psoAoComp_->Release();
     if (psoUpscale16_) psoUpscale16_->Release();
     if (psoUpscaleAs_) psoUpscaleAs_->Release();
     if (psoUpscaleAs16_) psoUpscaleAs16_->Release();
@@ -185,12 +191,15 @@ bool DittoSR::createPipelines() {
     HRESULT hr = dev_->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&rootSig_));
     blob->Release();
     if (FAILED(hr)) return ditto_log("CreateRootSignature 0x%08x\n", (unsigned)hr), false;
-    struct { const BYTE *code; size_t size; ID3D12PipelineState **pso; const char *name; } cs[5] = {
+    struct { const BYTE *code; size_t size; ID3D12PipelineState **pso; const char *name; } cs[8] = {
         {g_cs_convert, sizeof g_cs_convert, &psoConvert_, "convert"},
         {g_cs_motion, sizeof g_cs_motion, &psoMotion_, "motion"},
         {g_cs_upscale, sizeof g_cs_upscale, &psoUpscale_, "upscale"},
         {g_cs_sharpen, sizeof g_cs_sharpen, &psoSharpen_, "sharpen"},
         {g_cs_upscale_as, sizeof g_cs_upscale_as, &psoUpscaleAs_, "upscale (anti-shimmer)"},
+        {g_cs_aoprep, sizeof g_cs_aoprep, &psoAoPrep_, "ao prepass"},
+        {g_cs_aomain, sizeof g_cs_aomain, &psoAoMain_, "ao"},
+        {g_cs_aocompose, sizeof g_cs_aocompose, &psoAoComp_, "ao compose"},
     };
     for (auto &c : cs) {
         D3D12_COMPUTE_PIPELINE_STATE_DESC pd = {};
@@ -268,7 +277,7 @@ bool DittoSR::makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f) {
 
 void DittoSR::releaseTextures() {
     for (Tex *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &change1_, &expo_[0], &expo_[1],
-                   &env_[0], &env_[1]})
+                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoCol_})
         if (t->res) t->res->Release(), *t = Tex();
     texValid_ = false;
 }
@@ -374,6 +383,7 @@ bool ditto_frame_from_ffx(const ffxDispatchDescUpscale *d, const DittoCreateInfo
     f->depthInverted = (ci.flags & FFX_UPSCALE_ENABLE_DEPTH_INVERTED) != 0;
     f->hdr = (ci.flags & FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE) != 0;
     f->preExposure = d->preExposure > 0.0f ? d->preExposure : 1.0f;
+    f->fovY = d->cameraFovAngleVertical, f->zNear = d->cameraNear, f->zFar = d->cameraFar;
     f->reset = d->reset;
     return true;
 }
@@ -482,13 +492,73 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     }
     DXGI_FORMAT exfIn = expoIn ? expoIn->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
 
+    // (EXPERIMENTAL, Ditto Relight: ambient occlusion and global illumination after CORTAO - aoprep, aomain, aocompose at
+    // render size - into aoCol_, the colour every later pass reads in the game's place; their own root constants)
+    DXGI_FORMAT cfmt = cd.Format;
+    if (s_.relight && depth && !s_.debugView) {
+        bool made = aoNd_.res && aoNd_.w == rw && aoNd_.h == rh;
+        if (!made) {
+            for (Tex *t : {&aoNd_, &aoRes_, &aoCol_})
+                if (t->res) t->res->Release(), *t = Tex();
+            made = makeTex(aoNd_, rw, rh, DXGI_FORMAT_R32G32B32A32_FLOAT) && makeTex(aoRes_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
+                   makeTex(aoCol_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        }
+        if (made) {
+            struct AoConstants {
+                float rs[2], rsRcp[2], tanX, tanY, zNear, zFar, inverted, frame, aoStrength, giStrength, radiusWorld, radiusScreen, pad[2];
+            } ka = {};
+            ka.rs[0] = (float)rw, ka.rs[1] = (float)rh, ka.rsRcp[0] = 1.0f / rw, ka.rsRcp[1] = 1.0f / rh;
+            float fov = fr.fovY > 0.01f && fr.fovY < 3.1f ? fr.fovY : 1.0472f;  // (none given - XeSS: 60 degrees)
+            ka.tanY = tanf(0.5f * fov), ka.tanX = ka.tanY * (float)rw / (float)rh;
+            ka.zNear = fr.zNear > 0.0f ? fr.zNear : 0.1f, ka.zFar = fr.zFar > 0.0f ? fr.zFar : 100000.0f;
+            ka.inverted = fr.depthInverted ? 1.0f : 0.0f, ka.frame = (float)(frames_ % 1024);
+            ka.aoStrength = 1.0f, ka.giStrength = 2.0f;  // (the occlusion in full, the bounce light x 2)
+            ka.radiusWorld = s_.aoRadius, ka.radiusScreen = s_.aoScreen > 0.01f ? s_.aoScreen : 0.15f;
+            auto runA = [&](ID3D12PipelineState *pso, ID3D12Resource *const srv[kSrvs], const DXGI_FORMAT sf[kSrvs], ID3D12Resource *const uav[kUavs],
+                            const DXGI_FORMAT uf[kUavs]) {
+                cl->SetPipelineState(pso);
+                cl->SetComputeRoot32BitConstants(0, sizeof ka / 4, &ka, 0);
+                cl->SetComputeRootDescriptorTable(1, table(srv, sf, uav, uf));
+                cl->Dispatch((rw + 7) / 8, (rh + 7) / 8, 1);
+            };
+            transition(cl, aoNd_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            {
+                ID3D12Resource *s[kSrvs] = {depth};
+                DXGI_FORMAT f[kSrvs] = {dd.Format};
+                ID3D12Resource *u[kUavs] = {aoNd_.res};
+                DXGI_FORMAT uf[kUavs] = {aoNd_.fmt};
+                runA(psoAoPrep_, s, f, u, uf);
+            }
+            transition(cl, aoNd_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            transition(cl, aoRes_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            {
+                ID3D12Resource *s[kSrvs] = {aoNd_.res, color};
+                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, cd.Format};
+                ID3D12Resource *u[kUavs] = {aoRes_.res};
+                DXGI_FORMAT uf[kUavs] = {aoRes_.fmt};
+                runA(psoAoMain_, s, f, u, uf);
+            }
+            transition(cl, aoRes_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            transition(cl, aoCol_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            {
+                ID3D12Resource *s[kSrvs] = {aoNd_.res, color, aoRes_.res};
+                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, cd.Format, aoRes_.fmt};
+                ID3D12Resource *u[kUavs] = {aoCol_.res};
+                DXGI_FORMAT uf[kUavs] = {aoCol_.fmt};
+                runA(psoAoComp_, s, f, u, uf);
+            }
+            transition(cl, aoCol_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            color = aoCol_.res, cfmt = aoCol_.fmt;
+        }
+    }
+
     // convert (render size), and in its extra row's first group the change against the history (1 x 1)
     transition(cl, mdaC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     transition(cl, change1_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     transition(cl, histP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     {
         ID3D12Resource *s[kSrvs] = {depth, mv, color, histP.res, nullptr, expoIn};
-        DXGI_FORMAT f[kSrvs] = {dd.Format, md.Format, cd.Format, histP.fmt, X, exfIn};
+        DXGI_FORMAT f[kSrvs] = {dd.Format, md.Format, cfmt, histP.fmt, X, exfIn};
         ID3D12Resource *u[kUavs] = {mdaC.res, change1_.res, autoExpo ? expoC.res : nullptr};
         DXGI_FORMAT uf[kUavs] = {mdaC.fmt, change1_.fmt, autoExpo ? expoC.fmt : X};
         run(psoConvert_, s, f, u, uf, (rw + 7) / 8, (rh + 7) / 8 + 1);
@@ -508,7 +578,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
         transition(cl, envP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         transition(cl, envC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         ID3D12Resource *s[kSrvs] = {auxP.res, mdaC.res, color, mdaP.res, envP.res, expo};
-        DXGI_FORMAT f[kSrvs] = {auxP.fmt, mdaC.fmt, cd.Format, mdaP.fmt, envP.fmt, exf};
+        DXGI_FORMAT f[kSrvs] = {auxP.fmt, mdaC.fmt, cfmt, mdaP.fmt, envP.fmt, exf};
         ID3D12Resource *u[kUavs] = {auxC.res, envC.res};
         DXGI_FORMAT uf[kUavs] = {auxC.fmt, envC.fmt};
         run(psoMotion_, s, f, u, uf, (rw + 7) / 8, (rh + 7) / 8);
@@ -521,7 +591,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     transition(cl, stabP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     {
         ID3D12Resource *s[kSrvs] = {histP.res, mdaC.res, color, auxC.res, change1_.res, expo, reac, stabP.res};
-        DXGI_FORMAT f[kSrvs] = {histP.fmt, mdaC.fmt, cd.Format, auxC.fmt, change1_.fmt, exf, rf, stabP.fmt};
+        DXGI_FORMAT f[kSrvs] = {histP.fmt, mdaC.fmt, cfmt, auxC.fmt, change1_.fmt, exf, rf, stabP.fmt};
         ID3D12Resource *u[kUavs] = {histC.res, out, stabC.res};
         DXGI_FORMAT uf[kUavs] = {histC.fmt, od.Format, stabC.fmt};
         bool as = s_.antiShimmer != 0.0f;

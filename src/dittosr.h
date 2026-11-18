@@ -30,6 +30,11 @@ struct DittoSettings {
     // the sharpening's filter: 0 CAS; 1 RCAS (FSR 1's robust CAS: one weight for the 3 channels, less on noise) - the
     // sharpening pass then runs at every ratio (no fused sharpening)
     int sharpenMode = 0;
+    // EXPERIMENTAL (D3D12), Ditto Relight: ambient occlusion and a one-bounce global illumination after CORTAO
+    // (aomain.hlsl), applied to the colour before the upscale - the occlusion in full, the bounce light x 2; their reach:
+    // aoRadius view units (0: none), at most aoScreen of the screen's height
+    bool relight = false;
+    float aoRadius = 2.0f, aoScreen = 0.15f;
     float frameWeight = 2.0f;  // x the new frame's share, 0.25 - 4: lower, more persistence (smoother, blurrier in motion)
     // the frame weight above wins over the one FSR 3.1's velocity factor and reactiveness scale set (OptiScaler's
     // presets and sliders); false: those set it whenever they are not both at 1
@@ -113,6 +118,7 @@ struct DittoFrame {
     float preExposure = 1.0f;
     float reactiveMul = 1.0f;  // x the reactive mask
     bool reset = false;
+    float fovY = 0, zNear = 0, zFar = 0;  // the camera (FSR 3.1's dispatch; 0: unknown) - the experimental AO / GI
 };
 
 class DittoSR {
@@ -151,6 +157,7 @@ private:
     ID3D12PipelineState *psoConvert_ = nullptr, *psoMotion_ = nullptr, *psoUpscale_ = nullptr, *psoSharpen_ = nullptr;
     ID3D12PipelineState *psoUpscale16_ = nullptr, *psoSharpen16_ = nullptr;  // (null: no native 16-bit math)
     ID3D12PipelineState *psoUpscaleAs_ = nullptr, *psoUpscaleAs16_ = nullptr;  // (the anti-shimmer variants)
+    ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoComp_ = nullptr;  // (EXPERIMENTAL: Ditto Relight)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     // the game's output last checked (outputWritable): its format, whether it allows unordered access, and the verdict
@@ -162,6 +169,7 @@ private:
     uint32_t heapSize_ = 0, heapNext_ = 0, descInc_ = 0;
     Tex mda_[2], hist_[2], aux_[2], stab_[2], change1_, env_[2];
     Tex expo_[2];  // (the auto exposure, 1 x 1: the game asked for it and gave none)
+    Tex aoNd_, aoRes_, aoCol_;  // (EXPERIMENTAL, Ditto Relight: normal and depth, occlusion and bounce, the colour)
     bool split_ = false;
     int cur_ = 0;
     bool texValid_ = false;

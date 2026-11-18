@@ -345,7 +345,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -500,6 +500,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
     }
     case I_INDICATOR: s.indicator = !s.indicator; return true;
     case I_SHMODE: s.sharpenMode = !s.sharpenMode; return true;
+    case I_RELIGHT: s.relight = !s.relight; return true;
     }
     return false;
 }
@@ -720,6 +721,9 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         choice_row(I_SHIMMER, "Anti-shimmer", b);
     }
     y += 10 * S;
+    section("EXPERIMENTAL");
+    toggle_row(I_RELIGHT, "Ditto Relight", s.relight);
+    y += 10 * S;
     section("ADVANCED");
     choice_row(I_DEBUG, "Debug view", kDebugNames[s.debugView < 0 || s.debugView > 4 ? 0 : s.debugView]);
     toggle_row(I_INDICATOR, "Indicator", s.indicator);
@@ -830,7 +834,7 @@ void input(DittoSettings &s, bool &changed, double t) {
             }
         }
     } else if (click) {
-        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR ? -1 : 1);
+        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR && hit != I_RELIGHT ? -1 : 1);
     }
 }
 

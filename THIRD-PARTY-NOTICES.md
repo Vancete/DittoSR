@@ -5,6 +5,7 @@ DittoSR includes or derives from the following. Binary releases ship this file a
 | Component | Where | License |
 |---|---|---|
 | Snapdragon Game Super Resolution 2 (Qualcomm) | `shaders/convert.hlsl`: the depth clip and the convert pass's structure; the upscale grew from GSR 2's | BSD 3-Clause, [licenses/LICENSE-snapdragon-gsr.txt](licenses/LICENSE-snapdragon-gsr.txt) |
+| CORTAO (Daniel Isheden) | `shaders/aomain.hlsl` and `ao_common.hlsli`: the experimental AO / GI's circular occluders, sample spiral and ray set, after CORTAO's reference main pass | MIT, [licenses/LICENSE-cortao.txt](licenses/LICENSE-cortao.txt) |
 | AMD FidelityFX API headers | `src/ffx_api/` | MIT, [src/ffx_api/LICENSE.txt](src/ffx_api/LICENSE.txt) |
 | OptiScaler plugin SDK header | `src/optiscaler/` | MIT, [src/optiscaler/LICENSE.txt](src/optiscaler/LICENSE.txt) |
 | Vulkan headers (The Khronos Group) | `third_party/vulkan/include/` | Apache-2.0 OR MIT (the notice in each file) |

@@ -97,6 +97,8 @@ static void load_config() {
     s.historySharpen = ini_float(ini, "history_sharpen", s.historySharpen);
     s.fusedSharpen = ini_float(ini, "fused_sharpen", s.fusedSharpen);
     s.sharpenMode = GetPrivateProfileIntA("dittosr", "sharpen_mode", s.sharpenMode, ini) == 1 ? 1 : 0;
+    s.relight = GetPrivateProfileIntA("dittosr", "relight", s.relight, ini) != 0;
+    s.aoRadius = ini_float(ini, "ao_radius", s.aoRadius), s.aoScreen = ini_float(ini, "ao_screen", s.aoScreen);
     s.envTol = ini_float(ini, "env_tol", s.envTol), s.envDecay = ini_float(ini, "env_decay", s.envDecay);
     s.envGain = ini_float(ini, "env_gain", s.envGain), s.envRest = ini_float(ini, "env_rest", s.envRest);
     s.rampLo = ini_float(ini, "ramp_lo", s.rampLo), s.rampHi = ini_float(ini, "ramp_hi", s.rampHi);
@@ -177,6 +179,7 @@ bool ditto_save_settings() {
     ok = put("anti_shimmer", s.antiShimmer, d.antiShimmer, false) && ok;
     ok = put("frame_weight_override", s.frameWeightOverride ? 1.0f : 0.0f, d.frameWeightOverride ? 1.0f : 0.0f, false) && ok;
     ok = put("sharpen_mode", (float)s.sharpenMode, (float)d.sharpenMode, false) && ok;
+    ok = put("relight", s.relight ? 1.0f : 0.0f, 0.0f, false) && ok;
     ok = put("auto_reactive", s.autoReactive, d.autoReactive, false) && ok;
     ok = put("debug_view", (float)s.debugView, (float)d.debugView, false) && ok;
     if (!held("indicator")) ok = WritePrivateProfileStringA("debug", "indicator", s.indicator ? "1" : "0", ini) != 0 && ok;
