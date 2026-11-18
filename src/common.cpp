@@ -102,7 +102,8 @@ static void load_config() {
     s.aoRays = ini_float(ini, "ao_rays", s.aoRays), s.aoContact = ini_float(ini, "ao_contact", s.aoContact);
     s.aoStrength = ini_float(ini, "ao_strength", s.aoStrength), s.giStrength = ini_float(ini, "gi_strength", s.giStrength);
     s.giDark = ini_float(ini, "gi_dark", s.giDark), s.sCurve = ini_float(ini, "s_curve", s.sCurve);
-    s.aoSmooth = ini_float(ini, "ao_smooth", s.aoSmooth);
+    s.aoTemporal = GetPrivateProfileIntA("dittosr", "ao_temporal", s.aoTemporal, ini) != 0;
+    s.aoTemporalWeight = ini_float(ini, "ao_temporal_weight", s.aoTemporalWeight);
     s.giMode = GetPrivateProfileIntA("dittosr", "gi_mode", s.giMode, ini) == 1 ? 1 : 0;
     s.fgDiv = GetPrivateProfileIntA("dittosr", "fgi_resolution", s.fgDiv, ini);
     s.fgRays = ini_float(ini, "fgi_rays", s.fgRays), s.fgSteps = ini_float(ini, "fgi_steps", s.fgSteps);
@@ -111,8 +112,6 @@ static void load_config() {
     s.fgMaxDist = ini_float(ini, "fgi_max_distance", s.fgMaxDist), s.fgReflectance = ini_float(ini, "fgi_reflectance", s.fgReflectance);
     s.fgRefine = GetPrivateProfileIntA("dittosr", "fgi_refine_hits", s.fgRefine, ini) != 0;
     s.fgRejection = ini_float(ini, "fgi_hit_rejection", s.fgRejection), s.fgSpatial = ini_float(ini, "fgi_spatial_radius", s.fgSpatial);
-    s.fgTemporal = GetPrivateProfileIntA("dittosr", "fgi_temporal", s.fgTemporal, ini) != 0;
-    s.fgTemporalWeight = ini_float(ini, "fgi_temporal_weight", s.fgTemporalWeight);
     s.fgNormalBias = ini_float(ini, "fgi_normal_bias", s.fgNormalBias);
     s.envTol = ini_float(ini, "env_tol", s.envTol), s.envDecay = ini_float(ini, "env_decay", s.envDecay);
     s.envGain = ini_float(ini, "env_gain", s.envGain), s.envRest = ini_float(ini, "env_rest", s.envRest);
@@ -203,7 +202,8 @@ bool ditto_save_settings() {
     ok = put("ao_radius", s.aoRadius, d.aoRadius, false) && ok;
     ok = put("ao_screen", s.aoScreen, d.aoScreen, false) && ok;
     ok = put("ao_contact", s.aoContact, d.aoContact, false) && ok;
-    ok = put("ao_smooth", s.aoSmooth, d.aoSmooth, false) && ok;
+    ok = put("ao_temporal", s.aoTemporal ? 1.0f : 0.0f, d.aoTemporal ? 1.0f : 0.0f, false) && ok;
+    ok = put("ao_temporal_weight", s.aoTemporalWeight, d.aoTemporalWeight, false) && ok;
     ok = put("gi_mode", (float)s.giMode, (float)d.giMode, false) && ok;
     ok = put("fgi_resolution", (float)s.fgDiv, (float)d.fgDiv, false) && ok;
     ok = put("fgi_rays", s.fgRays, d.fgRays, false) && ok;
@@ -217,8 +217,6 @@ bool ditto_save_settings() {
     ok = put("fgi_refine_hits", s.fgRefine ? 1.0f : 0.0f, d.fgRefine ? 1.0f : 0.0f, false) && ok;
     ok = put("fgi_hit_rejection", s.fgRejection, d.fgRejection, false) && ok;
     ok = put("fgi_spatial_radius", s.fgSpatial, d.fgSpatial, false) && ok;
-    ok = put("fgi_temporal", s.fgTemporal ? 1.0f : 0.0f, d.fgTemporal ? 1.0f : 0.0f, false) && ok;
-    ok = put("fgi_temporal_weight", s.fgTemporalWeight, d.fgTemporalWeight, false) && ok;
     ok = put("auto_reactive", s.autoReactive, d.autoReactive, false) && ok;
     ok = put("debug_view", (float)s.debugView, (float)d.debugView, false) && ok;
     if (!held("indicator")) ok = WritePrivateProfileStringA("debug", "indicator", s.indicator ? "1" : "0", ini) != 0 && ok;

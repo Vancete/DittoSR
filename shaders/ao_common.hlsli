@@ -21,7 +21,7 @@ cbuffer A : register(b0) {
     float giDark;         // the bounce light x this where the pixel is dark (0 - 4; 1: the same everywhere)
     float sCurve;         // the curve on the lights - the luma above the pivot (0 - 1; 0 off)
     float pivot;          // ... 30 % of the brightness: 0.071 linear HDR (0.3 ^ 2.2), 0.3 [0, 1] colour
-    float blurStep;       // the blur's step, pixels (0 - 4; 0: off - every tap the centre)
+    float aoTemporal;     // the AO and GI's history's weight (temporal weight, 0 - 0.95; 0: none, or no valid history)
     float giMode;         // the GI: 0 Ditto's (the occluders' colour), 1 FastGI's (aofg*.hlsl)
     // FastGI's options (its units: the game's view units - FastGI's metres)
     float fgDiv;          // its resolution: the render size / this (2 Half, 3 Third, 4 Quarter)
@@ -36,10 +36,10 @@ cbuffer A : register(b0) {
     float fgRefine;       // 1: the first crossing refined (refine hits)
     float fgReject;       // hit rejection (0 - 1)
     float fgSpatial;      // the filter's taps' spacing (spatial radius, 1 - 2)
-    float fgTemporal;     // the history's weight (temporal weight, 0 - 0.95; 0: none, or no valid history)
+    float fgTemporal;     // ... FastGI's GI's (the same weight, its own history)
     float fgPhase;        // the noise's offset this frame
     float fgAxis;         // the filter's axis this pass (0 x, 1 y)
-    float2 fgMvScale;     // the game's motion vectors -> uv (the previous uv = uv + mv x this; temporal)
+    float2 fgMvScale;     // the game's motion vectors -> uv (the previous uv = uv + mv x this; both temporals)
     float2 fgMvSize;      // ... their resolution
     float aoPad1, aoPad2;
 };
@@ -62,25 +62,6 @@ void basisOf(float3 n, out float3 t, out float3 b) {
     float3 h = abs(n.z) < 0.999 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
     t = normalize(cross(h, n));
     b = cross(n, t);
-}
-
-// The blur's one axis (aoblur along x, aocompose along y): 9 taps step apart (2 pixels), Gaussian (sigma 4 pixels),
-// each x its depth's closeness to the centre's (relative, steep) and its normal's (cos^8)
-float4 aoBlur(Texture2D<float4> R, Texture2D<float4> N, int2 p, int2 step, float4 nd) {
-    int2 m = int2(rs) - 1;
-    float4 acc = 0.0;
-    float ws = 0.0;
-    [unroll] for (int k = -4; k <= 4; k++) {
-        int2 q = clamp(p + step * k, int2(0, 0), m);
-        float4 qn = N.Load(int3(q, 0));
-        if (qn.w <= 0.0) continue;
-        float wn = saturate(dot(qn.xyz, nd.xyz));
-        wn *= wn, wn *= wn, wn *= wn;
-        float w = exp2(-0.5 * 1.442695 * float(k * k) / 4.0) * exp2(-abs(qn.w - nd.w) / nd.w * 48.0) * wn;
-        acc += R.Load(int3(q, 0)) * w;
-        ws += w;
-    }
-    return ws > 0.0 ? acc / ws : R.Load(int3(p, 0));
 }
 
 // FastGI's low resolution (the render size / fgDiv, rounded up) and the render pixel a low pixel stands for (its centre's)

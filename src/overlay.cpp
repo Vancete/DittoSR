@@ -345,7 +345,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_RAO, I_RGIMODE, I_RGI, I_RGIDARK, I_FGRES, I_FGRAYS, I_FGSTEPS, I_FGINT, I_FGREFL, I_FGRADIUS, I_FGTHICK, I_FGCLAMP, I_FGMAXD, I_FGREFINE, I_FGREJ, I_FGSPATIAL, I_FGTEMP, I_FGTEMPW, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSMOOTH, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_RAO, I_RGIMODE, I_RGI, I_RGIDARK, I_FGRES, I_FGRAYS, I_FGSTEPS, I_FGINT, I_FGREFL, I_FGRADIUS, I_FGTHICK, I_FGCLAMP, I_FGMAXD, I_FGREFINE, I_FGREJ, I_FGSPATIAL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RTEMP, I_RTEMPW, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -447,8 +447,8 @@ float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f 
 
 bool visible(int i) {
     if (i == I_RGI || i == I_RGIDARK) return g_m.relight && g_m.giMode == 0;
-    if (i >= I_FGRES && i <= I_FGTEMPW) return g_m.relight && g_m.giMode == 1;
-    if (i >= I_RAO && i <= I_RSMOOTH) return g_m.relight;
+    if (i >= I_FGRES && i <= I_FGSPATIAL) return g_m.relight && g_m.giMode == 1;
+    if (i >= I_RAO && i <= I_RTEMPW) return g_m.relight;
     return (i != I_UPSCALER && i != I_COMPARE) || g_stats.hasReal;
 }
 
@@ -473,11 +473,10 @@ Range range_of(int i) {
     case I_FGMAXD: return {10.0f, 1000.0f, 10.0f};
     case I_FGREJ: return {0.0f, 1.0f, 0.05f};
     case I_FGSPATIAL: return {1.0f, 2.0f, 0.25f};
-    case I_FGTEMPW: return {0.0f, 0.95f, 0.05f};
     case I_RRADIUS: return {0.0f, 16.0f, 0.5f};
     case I_RSCREEN: return {0.05f, 0.5f, 0.05f};
     case I_RCONTACT: return {0.0f, 4.0f, 0.25f};
-    case I_RSMOOTH: return {0.0f, 4.0f, 1.0f};
+    case I_RTEMPW: return {0.0f, 0.95f, 0.05f};
     default: return {0, 1, 1};
     }
 }
@@ -500,11 +499,10 @@ float *slider_of(DittoSettings &s, int i) {
     case I_FGMAXD: return &s.fgMaxDist;
     case I_FGREJ: return &s.fgRejection;
     case I_FGSPATIAL: return &s.fgSpatial;
-    case I_FGTEMPW: return &s.fgTemporalWeight;
     case I_RRADIUS: return &s.aoRadius;
     case I_RSCREEN: return &s.aoScreen;
     case I_RCONTACT: return &s.aoContact;
-    case I_RSMOOTH: return &s.aoSmooth;
+    case I_RTEMPW: return &s.aoTemporalWeight;
     default: return nullptr;
     }
 }
@@ -526,7 +524,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
     case I_SHARP: case I_WEIGHT: case I_RAO: case I_RGI: case I_RGIDARK: case I_RSCURVE: case I_RRAYS: case I_RRADIUS:
-    case I_RSCREEN: case I_RCONTACT: case I_RSMOOTH: case I_FGRAYS: case I_FGSTEPS: case I_FGINT: case I_FGREFL: case I_FGRADIUS: case I_FGTHICK: case I_FGCLAMP: case I_FGMAXD: case I_FGREJ: case I_FGSPATIAL: case I_FGTEMPW: {
+    case I_RSCREEN: case I_RCONTACT: case I_RTEMPW: case I_FGRAYS: case I_FGSTEPS: case I_FGINT: case I_FGREFL: case I_FGRADIUS: case I_FGTHICK: case I_FGCLAMP: case I_FGMAXD: case I_FGREJ: case I_FGSPATIAL: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
         // (the frame weight: moved, it overrides FSR 3.1's settings' - OptiScaler's presets - from the weight in use;
@@ -552,7 +550,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_RGIMODE: s.giMode = !s.giMode; return true;
     case I_FGRES: s.fgDiv = (s.fgDiv - 2 + (dir < 0 ? 2 : 1)) % 3 + 2; return true;
     case I_FGREFINE: s.fgRefine = !s.fgRefine; return true;
-    case I_FGTEMP: s.fgTemporal = !s.fgTemporal; return true;
+    case I_RTEMP: s.aoTemporal = !s.aoTemporal; return true;
     }
     return false;
 }
@@ -795,15 +793,14 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
             toggle_row(I_FGREFINE, "Refine hits", s.fgRefine);
             slider_row(I_FGREJ, "Hit rejection", "1 strictest, 0 off");
             slider_row(I_FGSPATIAL, "Spatial radius", "the filter's spacing");
-            toggle_row(I_FGTEMP, "Temporal smoothing", s.fgTemporal);
-            slider_row(I_FGTEMPW, "Temporal weight", "the history's share");
         }
         slider_row(I_RSCURVE, "Highlights", "the lights brighter");
         slider_row(I_RRAYS, "Rays", "more: less noise, slower");
         slider_row(I_RRADIUS, "Reach", "in the world; 0: no limit");
         slider_row(I_RSCREEN, "Screen reach", "at most this of the screen");
         slider_row(I_RCONTACT, "Contact shadows", "the nearest, darker");
-        slider_row(I_RSMOOTH, "Smoothing", "the blur; 0 off");
+        toggle_row(I_RTEMP, "Temporal smoothing", s.aoTemporal);
+        slider_row(I_RTEMPW, "Temporal weight", "the history's share");
     }
     y += 10 * S;
     section("ADVANCED");
@@ -916,7 +913,7 @@ void input(DittoSettings &s, bool &changed, double t) {
             }
         }
     } else if (click) {
-        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR && hit != I_RELIGHT && hit != I_FGREFINE && hit != I_FGTEMP ? -1 : 1);
+        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR && hit != I_RELIGHT && hit != I_FGREFINE && hit != I_RTEMP ? -1 : 1);
     }
 }
 

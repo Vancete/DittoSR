@@ -1,5 +1,5 @@
 // Ditto Relight (experimental), the composition (render size): the occlusion and bounce light
-//   - blurred along y (aoblur.hlsl did x: a 17 x 17 depth- and normal-weighted Gaussian in all),
+//   - smoothed over the frames (aotemporal.hlsl, temporal smoothing on) or as the main pass left them,
 //   - onto the game's colour, which every later pass reads in its place: colour x lerp(1, occlusion, aoStrength) +
 //     giStrength x albedo x bounce light. The albedo, unknown (the colour is albedo x light): the colour's hue at 0.6 of
 //     its brightest channel, grey 0.5 where dark. Where the pixel is dark (its luma from 0.25 down to 0, the game's
@@ -7,7 +7,7 @@
 //   - a curve on the lights (sCurve > 0): from 30 % of the brightness up (pivot - 30 % perceived, gamma 2.2), e stops over
 //     it brightened by sCurve tanh(e / 2)^2 stops - starting flat (no kink where it begins), at most sCurve stops; below
 //     the pivot as it is. The colour scaled, its hue kept.
-// t0 = the prepass' normal and depth, t1 = the game's colour, t2 = the blur's first half, t3 = FastGI's (giMode 1);
+// t0 = the prepass' normal and depth, t1 = the game's colour, t2 = the occlusion and bounce light, t3 = FastGI's (giMode 1);
 // u0 = the colour (RGBA16F).
 #include "ao_common.hlsli"
 
@@ -24,7 +24,7 @@ void main(uint2 id : SV_DispatchThreadID) {
     float4 c = Color.Load(int3(p, 0));
     float4 nd = Nd.Load(int3(p, 0));
     if (nd.w <= 0.0) { Out[id] = c; return; }
-    float4 r = aoBlur(Res, Nd, p, int2(0, (int)blurStep), nd);
+    float4 r = Res.Load(int3(p, 0));
     if (giMode > 0.5) {
         // (FastGI's Composite: its GI up from its low resolution - the 2 x 2 around the pixel, bilinear x fgGeo: none
         // where no tap is this surface, not the background's light on a thin foreground - x intensity x reflectance)

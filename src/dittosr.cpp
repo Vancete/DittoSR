@@ -16,7 +16,7 @@
 #include "cs_sharpen.h"
 #include "cs_aoprep.h"
 #include "cs_aomain.h"
-#include "cs_aoblur.h"
+#include "cs_aotemporal.h"
 #include "cs_aofgtrace.h"
 #include "cs_aofgblur.h"
 #include "cs_aofgtemporal.h"
@@ -163,7 +163,7 @@ DittoSR::~DittoSR() {
     if (psoSharpen_) psoSharpen_->Release();
     if (psoAoPrep_) psoAoPrep_->Release();
     if (psoAoMain_) psoAoMain_->Release();
-    if (psoAoBlur_) psoAoBlur_->Release();
+    if (psoAoTemporal_) psoAoTemporal_->Release();
     if (psoAoFgTrace_) psoAoFgTrace_->Release();
     if (psoAoFgBlur_) psoAoFgBlur_->Release();
     if (psoAoFgTemporal_) psoAoFgTemporal_->Release();
@@ -214,7 +214,7 @@ bool DittoSR::createPipelines() {
         {g_cs_upscale_as, sizeof g_cs_upscale_as, &psoUpscaleAs_, "upscale (anti-shimmer)"},
         {g_cs_aoprep, sizeof g_cs_aoprep, &psoAoPrep_, "ao prepass"},
         {g_cs_aomain, sizeof g_cs_aomain, &psoAoMain_, "ao"},
-        {g_cs_aoblur, sizeof g_cs_aoblur, &psoAoBlur_, "ao blur"},
+        {g_cs_aotemporal, sizeof g_cs_aotemporal, &psoAoTemporal_, "ao temporal"},
         {g_cs_aofgtrace, sizeof g_cs_aofgtrace, &psoAoFgTrace_, "fastgi trace"},
         {g_cs_aofgblur, sizeof g_cs_aofgblur, &psoAoFgBlur_, "fastgi filter"},
         {g_cs_aofgtemporal, sizeof g_cs_aofgtemporal, &psoAoFgTemporal_, "fastgi temporal"},
@@ -309,7 +309,7 @@ bool DittoSR::makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f) {
 
 void DittoSR::releaseTextures() {
     for (Tex *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &change1_, &expo_[0], &expo_[1],
-                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoBlur_, &aoCol_, &aoFg_, &aoFg2_, &aoFgH_[0], &aoFgH_[1]})
+                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoFg_, &aoFg2_, &aoFgH_[0], &aoFgH_[1]})
         if (t->res) t->res->Release(), *t = Tex();
     texValid_ = false;
 }
@@ -530,15 +530,16 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     if (s_.relight && depth && !s_.debugView) {
         bool made = aoNd_.res && aoNd_.w == rw && aoNd_.h == rh;
         if (!made) {
-            for (Tex *t : {&aoNd_, &aoRes_, &aoBlur_, &aoCol_, &aoFg_, &aoFg2_, &aoFgH_[0], &aoFgH_[1]})
+            for (Tex *t : {&aoNd_, &aoRes_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoFg_, &aoFg2_, &aoFgH_[0], &aoFgH_[1]})
                 if (t->res) t->res->Release(), *t = Tex();
             made = makeTex(aoNd_, rw, rh, DXGI_FORMAT_R32G32B32A32_FLOAT) && makeTex(aoRes_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
-                   makeTex(aoBlur_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) && makeTex(aoCol_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT);
+                   makeTex(aoCol_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT);
+            aoOk_ = false;
         }
         if (made) {
             struct AoConstants {
                 float rs[2], rsRcp[2], tanX, tanY, zNear, zFar, inverted, frame, aoStrength, giStrength, radiusWorld, radiusScreen, rays,
-                    contact, giDark, sCurve, pivot, smooth, giMode, fgDiv, fgRays, fgSteps, fgRadius, fgThick, fgBias, fgGain, fgClamp,
+                    contact, giDark, sCurve, pivot, aoTemporal, giMode, fgDiv, fgRays, fgSteps, fgRadius, fgThick, fgBias, fgGain, fgClamp,
                     fgMaxDist, fgRefine, fgReject, fgSpatial, fgTemporal, fgPhase, fgAxis, fgMvScale[2], fgMvSize[2], pad[2];
             } ka = {};
             ka.rs[0] = (float)rw, ka.rs[1] = (float)rh, ka.rsRcp[0] = 1.0f / rw, ka.rsRcp[1] = 1.0f / rh;
@@ -554,7 +555,6 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             ka.radiusWorld = s_.aoRadius, ka.radiusScreen = s_.aoScreen > 0.01f ? s_.aoScreen : 0.15f;
             ka.rays = s_.aoRays < 4.0f ? 4.0f : s_.aoRays > 32.0f ? 32.0f : floorf(s_.aoRays + 0.5f);
             ka.contact = s_.aoContact < 0.0f ? 0.0f : s_.aoContact > 4.0f ? 4.0f : s_.aoContact;
-            ka.smooth = s_.aoSmooth < 0.0f ? 0.0f : s_.aoSmooth > 4.0f ? 4.0f : floorf(s_.aoSmooth + 0.5f);
             ka.giMode = s_.giMode == 1 ? 1.0f : 0.0f;
             // (FastGI's options, clamped as FastGI clamps them)
             ka.fgDiv = (float)(s_.fgDiv < 2 ? 2 : s_.fgDiv > 4 ? 4 : s_.fgDiv);
@@ -580,7 +580,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             // (FastGI's: its intensity 0 skips its GI - none added; its textures made at its resolution, the history
             // reset with them)
             bool fg = ka.giMode > 0.5f && ka.fgGain > 0.0f;
-            bool fgT = fg && s_.fgTemporal;
+            bool fgT = fg && s_.aoTemporal;
             if (fg && !(aoFg_.res && aoFg_.w == hw && aoFg_.h == hh)) {
                 for (Tex *t : {&aoFg_, &aoFg2_, &aoFgH_[0], &aoFgH_[1]})
                     if (t->res) t->res->Release(), *t = Tex();
@@ -592,7 +592,15 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             fgT = fgT && fg;
             // (the history valid: written the last frame, at this resolution, no reset)
             bool fgValid = fgT && fgOk_ && fgLast_ + 1 == frames_ && !reset;
-            ka.fgTemporal = fgValid ? (s_.fgTemporalWeight < 0.0f ? 0.0f : s_.fgTemporalWeight > 0.95f ? 0.95f : s_.fgTemporalWeight) : 0.0f;
+            float tw = s_.aoTemporalWeight < 0.0f ? 0.0f : s_.aoTemporalWeight > 0.95f ? 0.95f : s_.aoTemporalWeight;
+            ka.fgTemporal = fgValid ? tw : 0.0f;
+            // (Ditto's AO and GI's temporal smoothing: its history at render size, made when first on; valid as FastGI's)
+            bool aoT = s_.aoTemporal;
+            if (aoT && !aoH_[0].res)
+                aoT = makeTex(aoH_[0], rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) && makeTex(aoH_[1], rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
+                      makeTex(aoHD_[0], rw, rh, DXGI_FORMAT_R32_FLOAT) && makeTex(aoHD_[1], rw, rh, DXGI_FORMAT_R32_FLOAT);
+            bool aoValid = aoT && aoOk_ && aoLast_ + 1 == frames_ && !reset;
+            ka.aoTemporal = aoValid ? tw : 0.0f;
             Tex *fgOut = &aoFg_;
             if (fg && ka.giStrength <= 0.0f) ka.giStrength = 1.0f;  // (Ditto's GI strength unused: not 0, the passes run)
             if (!fg && ka.giMode > 0.5f) ka.giStrength = 0.0f;  // (FastGI's intensity 0, or no textures: no GI)
@@ -652,19 +660,28 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 }
             }
             if (!fgT) fgOk_ = false;
-            transition(cl, aoBlur_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            {
-                ID3D12Resource *s[kSrvs] = {aoNd_.res, aoRes_.res};
-                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, aoRes_.fmt};
-                ID3D12Resource *u[kUavs] = {aoBlur_.res};
-                DXGI_FORMAT uf[kUavs] = {aoBlur_.fmt};
-                runA(psoAoBlur_, s, f, u, uf);
+            Tex *aoOut = &aoRes_;
+            if (aoT) {  // (the temporal smoothing, render size: no valid history - never read, the main pass' in its place)
+                Tex &cur = aoH_[aoCur_], &prev = aoH_[aoCur_ ^ 1], &curD = aoHD_[aoCur_], &prevD = aoHD_[aoCur_ ^ 1];
+                transition(cl, prev, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                transition(cl, prevD, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                transition(cl, cur, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                transition(cl, curD, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                ID3D12Resource *s[kSrvs] = {aoNd_.res, aoRes_.res, aoValid ? prev.res : aoRes_.res, prevD.res, mv};
+                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, aoRes_.fmt, aoValid ? prev.fmt : aoRes_.fmt, prevD.fmt, md.Format};
+                ID3D12Resource *u[kUavs] = {cur.res, curD.res};
+                DXGI_FORMAT uf[kUavs] = {cur.fmt, curD.fmt};
+                runA(psoAoTemporal_, s, f, u, uf);
+                transition(cl, cur, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                aoOut = &cur;
+                aoCur_ ^= 1, aoOk_ = true, aoLast_ = frames_;
+            } else {
+                aoOk_ = false;
             }
-            transition(cl, aoBlur_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             transition(cl, aoCol_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             {
-                ID3D12Resource *s[kSrvs] = {aoNd_.res, color, aoBlur_.res, fg ? fgOut->res : nullptr};
-                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, cd.Format, aoBlur_.fmt, fgOut->fmt};
+                ID3D12Resource *s[kSrvs] = {aoNd_.res, color, aoOut->res, fg ? fgOut->res : nullptr};
+                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, cd.Format, aoOut->fmt, fgOut->fmt};
                 ID3D12Resource *u[kUavs] = {aoCol_.res};
                 DXGI_FORMAT uf[kUavs] = {aoCol_.fmt};
                 runA(psoAoComp_, s, f, u, uf);
