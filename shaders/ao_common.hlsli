@@ -18,12 +18,10 @@ cbuffer A : register(b0) {
     float radiusScreen;   // ... at most this share of the screen's height (ini ao_screen)
     float rays;           // the rays a pixel (4 - 32: one bit each)
     float contact;        // how much more the rays the nearest occluders block darken (0 - 2)
-    float2 mvToUv;        // the game's motion vectors to uv (the previous uv = uv + mv x this)
-    float histOk;         // 1: the last frame's accumulation is there to blend with
     float giDark;         // the bounce light x this where the pixel is dark (0 - 4; 1: the same everywhere)
-    float sCurve;         // the S-curve on the result's luma (0 - 1; 0 off)
-    float pivot;          // ... around this luma (mid-grey: 0.18 linear HDR, 0.4 [0, 1] colour)
-    float2 aoPad;
+    float sCurve;         // the curve on the lights - the luma above mid-grey (0 - 1; 0 off)
+    float pivot;          // ... mid-grey: 0.18 linear HDR, 0.4 [0, 1] colour
+    float aoPad0, aoPad1, aoPad2;
 };
 
 SamplerState linearClamp : register(s0);

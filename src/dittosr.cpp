@@ -277,7 +277,7 @@ bool DittoSR::makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f) {
 
 void DittoSR::releaseTextures() {
     for (Tex *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &change1_, &expo_[0], &expo_[1],
-                   &env_[0], &env_[1], &aoNd_[0], &aoNd_[1], &aoRes_, &aoAcc_[0], &aoAcc_[1], &aoCol_})
+                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoCol_})
         if (t->res) t->res->Release(), *t = Tex();
     texValid_ = false;
 }
@@ -493,23 +493,20 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     DXGI_FORMAT exfIn = expoIn ? expoIn->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
 
     // (EXPERIMENTAL, Ditto Relight: ambient occlusion and global illumination after CORTAO - aoprep, aomain, aocompose at
-    // render size - into aoCol_, the colour every later pass reads in the game's place; their own root constants. Their
-    // result accumulated over the frames: the last frame's depth and accumulation, ping-ponged by cur_)
+    // render size - into aoCol_, the colour every later pass reads in the game's place; their own root constants)
     DXGI_FORMAT cfmt = cd.Format;
     if (s_.relight && depth && !s_.debugView) {
-        bool made = aoNd_[0].res && aoNd_[0].w == rw && aoNd_[0].h == rh;
+        bool made = aoNd_.res && aoNd_.w == rw && aoNd_.h == rh;
         if (!made) {
-            for (Tex *t : {&aoNd_[0], &aoNd_[1], &aoRes_, &aoAcc_[0], &aoAcc_[1], &aoCol_})
+            for (Tex *t : {&aoNd_, &aoRes_, &aoCol_})
                 if (t->res) t->res->Release(), *t = Tex();
-            made = makeTex(aoNd_[0], rw, rh, DXGI_FORMAT_R32G32B32A32_FLOAT) && makeTex(aoNd_[1], rw, rh, DXGI_FORMAT_R32G32B32A32_FLOAT) &&
-                   makeTex(aoRes_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) && makeTex(aoAcc_[0], rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
-                   makeTex(aoAcc_[1], rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) && makeTex(aoCol_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT);
-            aoLast_ = ~0ull;
+            made = makeTex(aoNd_, rw, rh, DXGI_FORMAT_R32G32B32A32_FLOAT) && makeTex(aoRes_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
+                   makeTex(aoCol_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT);
         }
         if (made) {
             struct AoConstants {
                 float rs[2], rsRcp[2], tanX, tanY, zNear, zFar, inverted, frame, aoStrength, giStrength, radiusWorld, radiusScreen, rays,
-                    contact, mvToUv[2], histOk, giDark, sCurve, pivot, pad[2];
+                    contact, giDark, sCurve, pivot, pad[3];
             } ka = {};
             ka.rs[0] = (float)rw, ka.rs[1] = (float)rh, ka.rsRcp[0] = 1.0f / rw, ka.rsRcp[1] = 1.0f / rh;
             float fov = fr.fovY > 0.01f && fr.fovY < 3.1f ? fr.fovY : 1.0472f;  // (none given - XeSS: 60 degrees)
@@ -524,9 +521,6 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             ka.radiusWorld = s_.aoRadius, ka.radiusScreen = s_.aoScreen > 0.01f ? s_.aoScreen : 0.15f;
             ka.rays = s_.aoRays < 4.0f ? 4.0f : s_.aoRays > 32.0f ? 32.0f : floorf(s_.aoRays + 0.5f);
             ka.contact = s_.aoContact < 0.0f ? 0.0f : s_.aoContact > 2.0f ? 2.0f : s_.aoContact;
-            ka.mvToUv[0] = fr.mvToUv[0], ka.mvToUv[1] = fr.mvToUv[1];
-            ka.histOk = aoLast_ + 1 == frames_ && !reset ? 1.0f : 0.0f;  // (it ran the last frame, nothing cut since)
-            aoLast_ = frames_;
             auto runA = [&](ID3D12PipelineState *pso, ID3D12Resource *const srv[kSrvs], const DXGI_FORMAT sf[kSrvs], ID3D12Resource *const uav[kUavs],
                             const DXGI_FORMAT uf[kUavs]) {
                 cl->SetPipelineState(pso);
@@ -534,37 +528,32 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 cl->SetComputeRootDescriptorTable(1, table(srv, sf, uav, uf));
                 cl->Dispatch((rw + 7) / 8, (rh + 7) / 8, 1);
             };
-            Tex &ndC = aoNd_[cur_], &ndP = aoNd_[cur_ ^ 1], &accC = aoAcc_[cur_], &accP = aoAcc_[cur_ ^ 1];
-            transition(cl, ndC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            transition(cl, aoNd_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             {
                 ID3D12Resource *s[kSrvs] = {depth};
                 DXGI_FORMAT f[kSrvs] = {dd.Format};
-                ID3D12Resource *u[kUavs] = {ndC.res};
-                DXGI_FORMAT uf[kUavs] = {ndC.fmt};
+                ID3D12Resource *u[kUavs] = {aoNd_.res};
+                DXGI_FORMAT uf[kUavs] = {aoNd_.fmt};
                 runA(psoAoPrep_, s, f, u, uf);
             }
-            transition(cl, ndC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            transition(cl, aoNd_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             transition(cl, aoRes_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             {
-                ID3D12Resource *s[kSrvs] = {ndC.res, color};
-                DXGI_FORMAT f[kSrvs] = {ndC.fmt, cd.Format};
+                ID3D12Resource *s[kSrvs] = {aoNd_.res, color};
+                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, cd.Format};
                 ID3D12Resource *u[kUavs] = {aoRes_.res};
                 DXGI_FORMAT uf[kUavs] = {aoRes_.fmt};
                 runA(psoAoMain_, s, f, u, uf);
             }
             transition(cl, aoRes_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            transition(cl, ndP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            transition(cl, accP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            transition(cl, accC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             transition(cl, aoCol_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             {
-                ID3D12Resource *s[kSrvs] = {ndC.res, color, aoRes_.res, mv, ndP.res, accP.res};
-                DXGI_FORMAT f[kSrvs] = {ndC.fmt, cd.Format, aoRes_.fmt, md.Format, ndP.fmt, accP.fmt};
-                ID3D12Resource *u[kUavs] = {aoCol_.res, accC.res};
-                DXGI_FORMAT uf[kUavs] = {aoCol_.fmt, accC.fmt};
+                ID3D12Resource *s[kSrvs] = {aoNd_.res, color, aoRes_.res};
+                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, cd.Format, aoRes_.fmt};
+                ID3D12Resource *u[kUavs] = {aoCol_.res};
+                DXGI_FORMAT uf[kUavs] = {aoCol_.fmt};
                 runA(psoAoComp_, s, f, u, uf);
             }
-            transition(cl, accC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             transition(cl, aoCol_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             color = aoCol_.res, cfmt = aoCol_.fmt;
         }

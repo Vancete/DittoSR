@@ -1,7 +1,7 @@
 // DittoSR's experimental AO / GI, the main pass (render size) - CORTAO's (MIT, licenses/LICENSE-cortao.txt) main pass
 // without its lookup tables (each ray tested against each occluder directly), plus the GI:
 //   12 samples on a golden-angle spiral over a disc around the pixel, facing the camera (its radius: the occluders'
-// reach in view space, capped to a share of the screen), rotated and dithered by a per-frame noise - DittoSR's
+// reach in view space, capped to a share of the screen), rotated and dithered by a fixed 4 x 4 pattern - the
 // accumulation averages it. Each sample within reach and above the pixel's surface is a circular occluder: its size
 // by the sample's share of the disc and its slope to the camera (CORTAO's slope compensation), moved one radius into
 // its surface when it faces the pixel (no self-occlusion), left as it is when it faces away (a backface). 4 - 32 rays over
@@ -45,13 +45,16 @@ void main(uint2 id : SV_DispatchThreadID) {
     float circle = R * rsqrt(max(z * z - R * R, 1e-12)) * z;
     // (the pixel pushed off its surface by about a pixel: no self-occlusion)
     P += n * (1.41421356 * tanX * rsRcp.x * z);
-    // the noise: the spiral's rotation and radial dither, the rays' rotation - per pixel and per frame
-    float2 fp = float2(id) + 5.588238 * frame;
-    float rot = 6.2831853 * ign(fp), dith = ign(fp.yx + 17.0), rrot = 6.2831853 * ign(fp + float2(37.0, 11.0));
+    // the noise: the spiral's rotation and radial dither, the rays' rotation - a fixed 4 x 4 pattern (Bayer's order: the
+    // 16 rotations spread over the tile, the dither and the rays' turn on golden-ratio steps of it) that the
+    // composition's 4 x 4 filter averages out
+    static const uint BAYER[16] = {0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u};
+    float b = float(BAYER[(id.x & 3u) + 4u * (id.y & 3u)]);
+    float rot = 6.2831853 * (b + 0.5) / 16.0, dith = frac(b * 0.618034 + 0.31), rrot = 6.2831853 * frac(b * 0.381966 + 0.11);
     float2 sr = float2(cos(rot), sin(rot)) * circle;
     float3 right, up;
     basisOf(V, right, up);
-    if (ign(fp + 71.0) < 0.5) right = -right;
+    if (((uint)b & 1u) != 0u) right = -right;
     float3 t0, b0;
     basisOf(n, t0, b0);
     float cr = cos(rrot), sn = sin(rrot);

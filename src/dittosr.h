@@ -39,8 +39,8 @@ struct DittoSettings {
     // ... the occlusion's strength (0 - 1), the bounce light's (0 - 2), and the bounce light x giDark where the pixel is
     // dark (0 - 4: 1 the same everywhere; above, the shadows lifted more by what surrounds them; below, kept darker)
     float aoStrength = 1.0f, giStrength = 2.0f, giDark = 0.3f;
-    // ... an S-curve on the result's luma around mid-grey (0 - 1; 0 off): brighter lights, darker shadows - in stops,
-    // x (1 + sCurve / 2) near mid-grey, at most sCurve stops further out
+    // ... a curve on the lights (0 - 1; 0 off): the luma above mid-grey brighter - in stops over it, x (1 + sCurve / 2)
+    // just above, at most sCurve stops further up; mid-grey and below as they are
     float sCurve = 0.0f;
     float frameWeight = 2.0f;  // x the new frame's share, 0.25 - 4: lower, more persistence (smoother, blurrier in motion)
     // the frame weight above wins over the one FSR 3.1's velocity factor and reactiveness scale set (OptiScaler's
@@ -176,10 +176,7 @@ private:
     uint32_t heapSize_ = 0, heapNext_ = 0, descInc_ = 0;
     Tex mda_[2], hist_[2], aux_[2], stab_[2], change1_, env_[2];
     Tex expo_[2];  // (the auto exposure, 1 x 1: the game asked for it and gave none)
-    // (EXPERIMENTAL, Ditto Relight: normal and depth - this frame's and the last -, occlusion and bounce, their
-    // accumulation over the frames, the colour; aoLast_: the frame it last ran)
-    Tex aoNd_[2], aoRes_, aoAcc_[2], aoCol_;
-    uint64_t aoLast_ = ~0ull;
+    Tex aoNd_, aoRes_, aoCol_;  // (EXPERIMENTAL, Ditto Relight: normal and depth, occlusion and bounce, the colour)
     bool split_ = false;
     int cur_ = 0;
     bool texValid_ = false;

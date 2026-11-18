@@ -734,7 +734,7 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     slider_row(I_RAO, "Ambient occlusion", nullptr);
     slider_row(I_RGI, "Global illumination", nullptr);
     slider_row(I_RGIDARK, "GI in dark areas", "x the bounce light there");
-    slider_row(I_RSCURVE, "Contrast", "S-curve: lights up, shadows down");
+    slider_row(I_RSCURVE, "Highlights", "the lights brighter");
     y += 10 * S;
     section("ADVANCED");
     choice_row(I_DEBUG, "Debug view", kDebugNames[s.debugView < 0 || s.debugView > 4 ? 0 : s.debugView]);
