@@ -22,11 +22,9 @@ if not exist "%SPV%" set "SPV=%VULKAN_SDK%\Bin\dxc.exe"
 if not exist "%SPV%" (echo no dxc with SPIR-V: put the DirectXShaderCompiler release in tools\dxc\ or install the Vulkan SDK & exit /b 1)
 
 rem D3D12 (DXIL)
-for %%s in (convert motion upscale sharpen aoprep aomain aotemporal aocompose aofgtrace aofgblur aofgtemporal) do (
+for %%s in (convert motion upscale sharpen aoprep aomain aofilter aotemporal aocompose) do (
   %DXC% -nologo -T cs_6_0 -E main -O3 -Fh "%OUT%\gen\cs_%%s.h" -Vn g_cs_%%s "%ROOT%shaders\%%s.hlsl" || exit /b 1
 )
-rem Ditto Relight: FastGI's filter on Ditto's AO and GI (render size)
-%DXC% -nologo -T cs_6_0 -D DITTO_FILTER=1 -E main -O3 -Fh "%OUT%\gen\cs_aofilter.h" -Vn g_cs_aofilter "%ROOT%shaders\aofgblur.hlsl" || exit /b 1
 rem the FP16 variants: native 16-bit types (SM 6.2), picked at run time where the GPU supports them
 for %%s in (upscale sharpen) do (
   %DXC% -nologo -T cs_6_2 -enable-16bit-types -D DITTO_FP16=1 -E main -O3 -Fh "%OUT%\gen\cs_%%s16.h" -Vn g_cs_%%s16 "%ROOT%shaders\%%s.hlsl" || exit /b 1

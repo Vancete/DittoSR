@@ -21,26 +21,11 @@ cbuffer A : register(b0) {
     float giDark;         // the bounce light x this where the pixel is dark (0 - 4; 1: the same everywhere)
     float sCurve;         // the curve on the lights - the luma above the pivot (0 - 1; 0 off)
     float pivot;          // ... 30 % of the brightness: 0.071 linear HDR (0.3 ^ 2.2), 0.3 [0, 1] colour
-    float aoTemporal;     // the AO and GI's history's weight (temporal weight, 0 - 0.95; 0: none, or no valid history)
-    float giMode;         // the GI: 0 Ditto's (the occluders' colour), 1 FastGI's (aofg*.hlsl)
-    // FastGI's options (its units: the game's view units - FastGI's metres)
-    float fgDiv;          // its resolution: the render size / this (2 Half, 3 Third, 4 Quarter)
-    float fgRays;         // rays a pixel (1 - 8)
-    float fgSteps;        // depth checks a ray (4 - 32)
-    float fgRadius;       // the rays' length (>= 0.1)
-    float fgThick;        // the depth a hit may lie behind the surface (>= 0.01)
-    float fgBias;         // the rays' origin off the surface (normal bias, >= 0.001)
-    float fgGain;         // intensity (0 - 4) x diffuse reflectance (0 - 1)
-    float fgClamp;        // the samples' luminance at most (radiance clamp, >= 0.1)
-    float fgMaxDist;      // the receivers' distance at most, fading over its last 20 % (1 - 60000)
-    float fgRefine;       // 1: the first crossing refined (refine hits)
-    float fgReject;       // hit rejection (0 - 1)
-    float fgSpatial;      // the filter's taps' spacing (spatial radius, 1 - 2)
-    float fgTemporal;     // ... FastGI's GI's (the same weight, its own history)
-    float fgPhase;        // the noise's offset this frame
-    float fgAxis;         // the filter's axis this pass (0 x, 1 y)
-    float2 fgMvScale;     // the game's motion vectors -> uv (the previous uv = uv + mv x this; both temporals)
-    float2 fgMvSize;      // ... their resolution
+    float temporal;       // the history's weight (temporal smoothing, 0 - 0.95; 0: off, or no valid history)
+    float spatial;        // the spatial filter's taps' spacing (1 - 2: x 2 pixels)
+    float axis;           // ... its axis this pass (0 x, 1 y)
+    float2 mvScale;       // the game's motion vectors -> uv (the previous uv = uv + mv x this; temporal smoothing)
+    float2 mvSize;        // ... their resolution
     float aoPad1, aoPad2;
 };
 
@@ -64,12 +49,8 @@ void basisOf(float3 n, out float3 t, out float3 b) {
     b = cross(n, t);
 }
 
-// FastGI's low resolution (the render size / fgDiv, rounded up) and the render pixel a low pixel stands for (its centre's)
-uint2 fgLow() { uint d = (uint)fgDiv; return ((uint2)rs + d - 1u) / d; }
-int2 fgFull(int2 q) { return min(int2((float2(q) + 0.5) / float2(fgLow()) * rs), int2(rs) - 1); }
-
-// FastGI's GeometryWeight: a tap's depth within max(0.02, 1.5 %) of the centre's, its normal's closeness (cos^4); 0 the sky
-float fgGeo(float dc, float dt, float3 nc, float3 nt) {
+// the filter's taps' weight (FastGI's GeometryWeight): a tap's depth within max(0.02, 1.5 %) of the centre's, its normal's closeness (cos^4); 0 the sky
+float geoWeight(float dc, float dt, float3 nc, float3 nt) {
     float wd = saturate(1.0 - abs(dc - dt) / max(0.02, dc * 0.015));
     float wn = saturate(dot(nc, nt));
     wn *= wn;

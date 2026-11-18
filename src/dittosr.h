@@ -7,7 +7,7 @@
 #include "ffx_api/ffx_upscale.h"
 
 // the version both front ends report (the FidelityFX API provider, the libxess.dll proxy)
-#define DITTOSR_VERSION "0.5.0"
+#define DITTOSR_VERSION "0.5.1"
 #define DITTOSR_VERSION_NAME "DittoSR " DITTOSR_VERSION
 
 struct DittoSettings {
@@ -31,36 +31,23 @@ struct DittoSettings {
     // sharpening pass then runs at every ratio (no fused sharpening)
     int sharpenMode = 0;
     // EXPERIMENTAL (D3D12), Ditto Relight: ambient occlusion and a one-bounce global illumination after CORTAO
-    // (aomain.hlsl), applied to the colour before the upscale - the occlusion in full, the bounce light x 2; their reach:
-    // aoRadius view units (0: no limit in the world), at most aoScreen of the screen's height; aoRays rays a pixel (4 - 32); aoContact:
-    // how much more the rays blocked by the nearest occluders darken (0 - 4: contact shadows)
+    // (aomain.hlsl), applied to the colour before the upscale - the occlusion x 0.75, the bounce light x 2; their reach:
+    // aoRadius view units (0: no limit in the world), at most aoScreen of the screen's height; aoRays rays a pixel
+    // (4 - 32); aoContact: how much more the rays blocked by the nearest occluders darken (0 - 4: contact shadows)
     bool relight = false;
-    float aoRadius = 0.0f, aoScreen = 0.5f, aoRays = 8.0f, aoContact = 2.0f;
+    float aoRadius = 0.0f, aoScreen = 0.5f, aoRays = 4.0f, aoContact = 2.0f;
     // ... the occlusion's strength (0 - 1), the bounce light's (0 - 4), and the bounce light x giDark where the pixel is
     // dark (0 - 4: 1 the same everywhere; above, the shadows lifted more by what surrounds them; below, kept darker)
-    float aoStrength = 1.0f, giStrength = 2.0f, giDark = 0.3f;
+    float aoStrength = 0.75f, giStrength = 2.0f, giDark = 0.3f;
     // ... a curve on the lights (0 - 1; 0 off): the luma from 30 % of the brightness up brighter - starting flat, at most
     // sCurve stops; below, as it is
     float sCurve = 0.3f;
-    // ... the temporal smoothing (FastGI's; aotemporal.hlsl): the AO and GI blended with their history (reprojected
-    // by the game's motion vectors) x aoTemporalWeight (0 - 0.95), less in motion - Ditto's AO and GI at render size,
-    // FastGI's GI at its own resolution
+    // ... their noise evened out after FastGI's: a spatial filter (aofilter.hlsl: 5 taps x then y, by depth and normal)
+    // its taps aoSpatial x 2 pixels apart (1 - 2), then a temporal smoothing (aotemporal.hlsl: their history, reprojected
+    // by the game's motion vectors, x aoTemporalWeight (0 - 0.95), less in motion)
+    float aoSpatial = 2.0f;
     bool aoTemporal = true;
-    // ... the spatial filter (FastGI's: 5 taps x then y, by depth and normal) - its taps aoSpatial apart (1 - 2; Ditto's
-    // AO and GI at render size: x 2 render pixels, as FastGI's at Half on the screen), before the temporal smoothing
-    float aoSpatial = 1.0f;
     float aoTemporalWeight = 0.85f;
-    // ... the GI: 0 Ditto's (the occluders' colour), 1 FastGI's (aofg*.hlsl; giStrength and giDark unused) - the AO the
-    // same. FastGI's options, its defaults (its units: the game's view units - FastGI's metres): its resolution's
-    // divisor (2 Half, 3 Third, 4 Quarter), rays (1 - 8), steps (4 - 32), intensity (0 - 4), radius, thickness,
-    // radiance clamp, max distance (1 - 60000), diffuse reflectance (0 - 1), refine hits, hit rejection (0 - 1), normal
-    // bias (ini only, as FastGI hides it)
-    int giMode = 0;
-    int fgDiv = 2;
-    float fgRays = 4.0f, fgSteps = 8.0f, fgIntensity = 0.6f, fgRadius = 3.0f, fgThickness = 0.25f, fgClamp = 4.0f;
-    float fgMaxDist = 60.0f, fgReflectance = 0.5f, fgRejection = 0.75f;
-    float fgNormalBias = 0.03f;
-    bool fgRefine = true;
     float frameWeight = 2.0f;  // x the new frame's share, 0.25 - 4: lower, more persistence (smoother, blurrier in motion)
     // the frame weight above wins over the one FSR 3.1's velocity factor and reactiveness scale set (OptiScaler's
     // presets and sliders); false: those set it whenever they are not both at 1
@@ -186,7 +173,6 @@ private:
     // (the 1x variants, the motion pass fused in: [fp16][anti-shimmer]; null: the motion pass as at other ratios)
     ID3D12PipelineState *psoUpscaleFm_[2][2] = {};
     ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr;  // (EXPERIMENTAL: Ditto Relight)
-    ID3D12PipelineState *psoAoFgTrace_ = nullptr, *psoAoFgBlur_ = nullptr, *psoAoFgTemporal_ = nullptr;  // (... FastGI's GI)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     // the game's output last checked (outputWritable): its format, whether it allows unordered access, and the verdict
@@ -205,12 +191,6 @@ private:
     int aoCur_ = 0;
     bool aoOk_ = false;
     uint64_t aoLast_ = ~0ull;
-    // (... FastGI's GI at its low resolution: traced and filtered, the filter's scratch, the temporal history (written:
-    // fgCur_); fgOk_: the history valid, fgLast_: the frame it was written)
-    Tex aoFg_, aoFg2_, aoFgH_[2];
-    int fgCur_ = 0;
-    bool fgOk_ = false;
-    uint64_t fgLast_ = ~0ull;
     bool split_ = false;
     int cur_ = 0;
     bool texValid_ = false;

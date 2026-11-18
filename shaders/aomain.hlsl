@@ -13,7 +13,6 @@
 //   The contact term: the rays blocked first by an occluder near the pixel (closer than half the reach, more the
 // closer) darken more, x contact - a tyre on the road, a box against a wall: what a ray's yes / no leaves as faint as a
 // distant wall's shade. The occlusion x (1 - contact x that share).
-//   giMode 1: the GI FastGI's instead (aofgtrace.hlsl, at half the size) - the occlusion as it is.
 // t0 = the prepass' normal and depth, t1 = the game's colour; u0 = rgb the bounce light, a the occlusion.
 #include "ao_common.hlsli"
 
@@ -47,7 +46,7 @@ void main(uint2 id : SV_DispatchThreadID) {
     // (the pixel pushed off its surface by about a pixel: no self-occlusion)
     P += n * (1.41421356 * tanX * rsRcp.x * z);
     // the noise: the spiral's rotation and radial dither, the rays' rotation - per pixel and per frame (a fixed pattern
-    // streaked: neighbours' samples on the same texels of a bright strip, in blocks); the blur and DittoSR's accumulation
+    // streaked: neighbours' samples on the same texels of a bright strip, in blocks); the filters and DittoSR's accumulation
     // even it out
     float2 fp = float2(id) + 5.588238 * frame;
     float rot = 6.2831853 * ign(fp), dith = ign(fp.yx + 17.0), rrot = 6.2831853 * ign(fp + float2(37.0, 11.0));
@@ -94,8 +93,8 @@ void main(uint2 id : SV_DispatchThreadID) {
         bits |= ob;
         float prox = saturate(1.0 - 2.0 * sqrt(l2) / R);
         near += prox * prox * float(countbits(nb));
-        if (giStrength > 0.0 && giMode < 0.5 && nb != 0u && !back) gi += Color.SampleLevel(linearClamp, cuv, 0.0).rgb * float(countbits(nb));
+        if (giStrength > 0.0 && nb != 0u && !back) gi += Color.SampleLevel(linearClamp, cuv, 0.0).rgb * float(countbits(nb));
     }
     float ao = (1.0 - float(countbits(bits)) / float(nr)) * saturate(1.0 - contact * near / float(nr));
-    Res[id] = float4(gi / float(nr), ao);  // (giMode 1: no GI here - aofgtrace's, at half the size)
+    Res[id] = float4(gi / float(nr), ao);
 }

@@ -1,10 +1,9 @@
-// Ditto Relight (experimental), the temporal smoothing (render size; FastGI's temporal resolve, aofgtemporal.hlsl, on
-// the main pass' occlusion and bounce light): blended with their history where the pixel was - x aoTemporal, less
+// Ditto Relight (experimental), the temporal smoothing (render size; after FastGI's temporal resolve, on
+// the filtered occlusion and bounce light (aofilter.hlsl)): blended with their history where the pixel was - x temporal, less
 // with the image's motion. The history reprojected by the game's motion vectors; its 4 taps each rejected by its depth
 // against this one's (2 %) before the bilinear, the result clamped to the current 5-tap neighbourhood's range - the
 // main pass' noise (per pixel and per frame) evened out over the frames, DittoSR's own accumulation taking the rest.
-// (In place of the 17 x 17 blur until then: no softening across the image, no cost of its 18 taps.)
-// t0 = the prepass' normal and depth, t1 = the main pass' (GI rgb, occlusion a), t2 = the history, t3 = its depth,
+// t0 = the prepass' normal and depth, t1 = the filtered (GI rgb, occlusion a), t2 = the history, t3 = its depth,
 // t4 = the game's motion vectors; u0 = this frame's (the next one's history, and the composition's), u1 = its depth.
 #include "ao_common.hlsli"
 
@@ -22,11 +21,11 @@ void main(uint2 id : SV_DispatchThreadID) {
     float4 current = Res.Load(int3(id, 0));
     float expected = Nd.Load(int3(id, 0)).w;
     OutDepth[id] = expected;
-    if (expected <= 0.0 || aoTemporal <= 0.0) { Out[id] = current; return; }
+    if (expected <= 0.0 || temporal <= 0.0) { Out[id] = current; return; }
     int2 m = int2(rs) - 1;
     float2 uv = (float2(id) + 0.5) * rsRcp;
-    float2 mv = Mv.Load(int3(clamp(int2(uv * fgMvSize), int2(0, 0), int2(fgMvSize) - 1), 0));
-    float2 puv = uv + mv * fgMvScale;
+    float2 mv = Mv.Load(int3(clamp(int2(uv * mvSize), int2(0, 0), int2(mvSize) - 1), 0));
+    float2 puv = uv + mv * mvScale;
     if (any(puv <= 0.0) || any(puv >= 1.0)) { Out[id] = current; return; }
     float2 pixel = puv * rs - 0.5, base = floor(pixel), fr = pixel - base;
     float4 history = 0.0;
@@ -56,6 +55,6 @@ void main(uint2 id : SV_DispatchThreadID) {
     history = clamp(history, max(0.0, lo - margin), hi + margin);
     // (less persistence in motion on screen)
     float motion = length((puv - uv) * rs);
-    float w = aoTemporal * saturate(ws) / (1.0 + motion * 0.1);
+    float w = temporal * saturate(ws) / (1.0 + motion * 0.1);
     Out[id] = lerp(current, history, w);
 }

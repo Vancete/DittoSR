@@ -18,9 +18,6 @@
 #include "cs_aomain.h"
 #include "cs_aotemporal.h"
 #include "cs_aofilter.h"
-#include "cs_aofgtrace.h"
-#include "cs_aofgblur.h"
-#include "cs_aofgtemporal.h"
 #include "cs_aocompose.h"
 #include "cs_upscale.h"
 #include "cs_upscale16.h"
@@ -166,9 +163,6 @@ DittoSR::~DittoSR() {
     if (psoAoMain_) psoAoMain_->Release();
     if (psoAoTemporal_) psoAoTemporal_->Release();
     if (psoAoFilter_) psoAoFilter_->Release();
-    if (psoAoFgTrace_) psoAoFgTrace_->Release();
-    if (psoAoFgBlur_) psoAoFgBlur_->Release();
-    if (psoAoFgTemporal_) psoAoFgTemporal_->Release();
     if (psoAoComp_) psoAoComp_->Release();
     if (psoUpscale16_) psoUpscale16_->Release();
     if (psoUpscaleAs_) psoUpscaleAs_->Release();
@@ -208,7 +202,7 @@ bool DittoSR::createPipelines() {
     HRESULT hr = dev_->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&rootSig_));
     blob->Release();
     if (FAILED(hr)) return ditto_log("CreateRootSignature 0x%08x\n", (unsigned)hr), false;
-    struct { const BYTE *code; size_t size; ID3D12PipelineState **pso; const char *name; } cs[13] = {
+    struct { const BYTE *code; size_t size; ID3D12PipelineState **pso; const char *name; } cs[10] = {
         {g_cs_convert, sizeof g_cs_convert, &psoConvert_, "convert"},
         {g_cs_motion, sizeof g_cs_motion, &psoMotion_, "motion"},
         {g_cs_upscale, sizeof g_cs_upscale, &psoUpscale_, "upscale"},
@@ -218,9 +212,6 @@ bool DittoSR::createPipelines() {
         {g_cs_aomain, sizeof g_cs_aomain, &psoAoMain_, "ao"},
         {g_cs_aotemporal, sizeof g_cs_aotemporal, &psoAoTemporal_, "ao temporal"},
         {g_cs_aofilter, sizeof g_cs_aofilter, &psoAoFilter_, "ao filter"},
-        {g_cs_aofgtrace, sizeof g_cs_aofgtrace, &psoAoFgTrace_, "fastgi trace"},
-        {g_cs_aofgblur, sizeof g_cs_aofgblur, &psoAoFgBlur_, "fastgi filter"},
-        {g_cs_aofgtemporal, sizeof g_cs_aofgtemporal, &psoAoFgTemporal_, "fastgi temporal"},
         {g_cs_aocompose, sizeof g_cs_aocompose, &psoAoComp_, "ao compose"},
     };
     for (auto &c : cs) {
@@ -312,7 +303,7 @@ bool DittoSR::makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f) {
 
 void DittoSR::releaseTextures() {
     for (Tex *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &change1_, &expo_[0], &expo_[1],
-                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoFg_, &aoFg2_, &aoFgH_[0], &aoFgH_[1]})
+                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1]})
         if (t->res) t->res->Release(), *t = Tex();
     texValid_ = false;
 }
@@ -527,24 +518,23 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     }
     DXGI_FORMAT exfIn = expoIn ? expoIn->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
 
-    // (EXPERIMENTAL, Ditto Relight: ambient occlusion and global illumination after CORTAO - aoprep, aomain, aocompose at
-    // render size - into aoCol_, the colour every later pass reads in the game's place; their own root constants)
+    // (EXPERIMENTAL, Ditto Relight: ambient occlusion and global illumination after CORTAO - aoprep, aomain, aofilter x
+    // and y, aotemporal, aocompose at render size - into aoCol_, the colour every later pass reads in the game's place;
+    // their own root constants)
     DXGI_FORMAT cfmt = cd.Format;
     if (s_.relight && depth && !s_.debugView) {
         bool made = aoNd_.res && aoNd_.w == rw && aoNd_.h == rh;
         if (!made) {
-            for (Tex *t : {&aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoFg_, &aoFg2_, &aoFgH_[0], &aoFgH_[1]})
+            for (Tex *t : {&aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1]})
                 if (t->res) t->res->Release(), *t = Tex();
             made = makeTex(aoNd_, rw, rh, DXGI_FORMAT_R32G32B32A32_FLOAT) && makeTex(aoRes_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
-                   makeTex(aoF_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
-                   makeTex(aoCol_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT);
+                   makeTex(aoF_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) && makeTex(aoCol_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT);
             aoOk_ = false;
         }
         if (made) {
             struct AoConstants {
                 float rs[2], rsRcp[2], tanX, tanY, zNear, zFar, inverted, frame, aoStrength, giStrength, radiusWorld, radiusScreen, rays,
-                    contact, giDark, sCurve, pivot, aoTemporal, giMode, fgDiv, fgRays, fgSteps, fgRadius, fgThick, fgBias, fgGain, fgClamp,
-                    fgMaxDist, fgRefine, fgReject, fgSpatial, fgTemporal, fgPhase, fgAxis, fgMvScale[2], fgMvSize[2], pad[2];
+                    contact, giDark, sCurve, pivot, temporal, spatial, axis, mvScale[2], mvSize[2], pad[2];
             } ka = {};
             ka.rs[0] = (float)rw, ka.rs[1] = (float)rh, ka.rsRcp[0] = 1.0f / rw, ka.rsRcp[1] = 1.0f / rh;
             float fov = fr.fovY > 0.01f && fr.fovY < 3.1f ? fr.fovY : 1.0472f;  // (none given - XeSS: 60 degrees)
@@ -556,59 +546,27 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             ka.giDark = s_.giDark < 0.0f ? 0.0f : s_.giDark > 4.0f ? 4.0f : s_.giDark;
             ka.sCurve = s_.sCurve < 0.0f ? 0.0f : s_.sCurve > 1.0f ? 1.0f : s_.sCurve;
             ka.pivot = fr.hdr || float_format(cd.Format) ? 0.071f : 0.3f;  // (30 % of the brightness: linear HDR 0.3 ^ 2.2, or [0, 1] colour)
-            ka.radiusWorld = s_.aoRadius, ka.radiusScreen = s_.aoScreen > 0.01f ? s_.aoScreen : 0.15f;
+            ka.radiusWorld = s_.aoRadius, ka.radiusScreen = s_.aoScreen > 0.01f ? s_.aoScreen : 0.5f;
             ka.rays = s_.aoRays < 4.0f ? 4.0f : s_.aoRays > 32.0f ? 32.0f : floorf(s_.aoRays + 0.5f);
             ka.contact = s_.aoContact < 0.0f ? 0.0f : s_.aoContact > 4.0f ? 4.0f : s_.aoContact;
-            ka.giMode = s_.giMode == 1 ? 1.0f : 0.0f;
-            // (FastGI's options, clamped as FastGI clamps them)
-            ka.fgDiv = (float)(s_.fgDiv < 2 ? 2 : s_.fgDiv > 4 ? 4 : s_.fgDiv);
-            ka.fgRays = s_.fgRays < 1.0f ? 1.0f : s_.fgRays > 8.0f ? 8.0f : floorf(s_.fgRays + 0.5f);
-            ka.fgSteps = s_.fgSteps < 4.0f ? 4.0f : s_.fgSteps > 32.0f ? 32.0f : floorf(s_.fgSteps + 0.5f);
-            ka.fgRadius = s_.fgRadius > 0.1f ? s_.fgRadius : 0.1f, ka.fgThick = s_.fgThickness > 0.01f ? s_.fgThickness : 0.01f;
-            ka.fgBias = s_.fgNormalBias > 0.001f ? s_.fgNormalBias : 0.001f;
-            ka.fgGain = (s_.fgIntensity < 0.0f ? 0.0f : s_.fgIntensity > 4.0f ? 4.0f : s_.fgIntensity) * (s_.fgReflectance < 0.0f ? 0.0f : s_.fgReflectance > 1.0f ? 1.0f : s_.fgReflectance);
-            ka.fgClamp = s_.fgClamp > 0.1f ? s_.fgClamp : 0.1f, ka.fgMaxDist = (s_.fgMaxDist < 1.0f ? 1.0f : s_.fgMaxDist > 60000.0f ? 60000.0f : s_.fgMaxDist);
-            ka.fgRefine = s_.fgRefine ? 1.0f : 0.0f, ka.fgReject = (s_.fgRejection < 0.0f ? 0.0f : s_.fgRejection > 1.0f ? 1.0f : s_.fgRejection);
-            ka.fgSpatial = (s_.aoSpatial < 1.0f ? 1.0f : s_.aoSpatial > 2.0f ? 2.0f : s_.aoSpatial);
-            ka.fgPhase = (float)(frames_ % 8) * 0.618033989f;  // (the noise moving: DittoSR's accumulation averages it)
-            ka.fgMvScale[0] = s_.mvSign * fr.mvToUv[0], ka.fgMvScale[1] = s_.mvSign * fr.mvToUv[1];
-            ka.fgMvSize[0] = fr.mvRes[0], ka.fgMvSize[1] = fr.mvRes[1];
-            UINT dv = (UINT)ka.fgDiv, hw = (rw + dv - 1) / dv, hh = (rh + dv - 1) / dv;  // (FastGI's GI: its low resolution)
-            auto runA = [&](ID3D12PipelineState *pso, ID3D12Resource *const srv[kSrvs], const DXGI_FORMAT sf[kSrvs], ID3D12Resource *const uav[kUavs],
-                            const DXGI_FORMAT uf[kUavs], bool half = false) {
-                cl->SetPipelineState(pso);
-                cl->SetComputeRoot32BitConstants(0, sizeof ka / 4, &ka, 0);
-                cl->SetComputeRootDescriptorTable(1, table(srv, sf, uav, uf));
-                cl->Dispatch(((half ? hw : rw) + 7) / 8, ((half ? hh : rh) + 7) / 8, 1);
-            };
-            // (FastGI's: its intensity 0 skips its GI - none added; its textures made at its resolution, the history
-            // reset with them)
-            bool fg = ka.giMode > 0.5f && ka.fgGain > 0.0f;
-            bool fgT = fg && s_.aoTemporal;
-            if (fg && !(aoFg_.res && aoFg_.w == hw && aoFg_.h == hh)) {
-                for (Tex *t : {&aoFg_, &aoFg2_, &aoFgH_[0], &aoFgH_[1]})
-                    if (t->res) t->res->Release(), *t = Tex();
-                fg = makeTex(aoFg_, hw, hh, DXGI_FORMAT_R16G16B16A16_FLOAT) && makeTex(aoFg2_, hw, hh, DXGI_FORMAT_R16G16B16A16_FLOAT);
-                fgOk_ = false;
-            }
-            if (fgT && !aoFgH_[0].res)
-                fgT = makeTex(aoFgH_[0], hw, hh, DXGI_FORMAT_R16G16B16A16_FLOAT) && makeTex(aoFgH_[1], hw, hh, DXGI_FORMAT_R16G16B16A16_FLOAT);
-            fgT = fgT && fg;
-            // (the history valid: written the last frame, at this resolution, no reset)
-            bool fgValid = fgT && fgOk_ && fgLast_ + 1 == frames_ && !reset;
-            float tw = s_.aoTemporalWeight < 0.0f ? 0.0f : s_.aoTemporalWeight > 0.95f ? 0.95f : s_.aoTemporalWeight;
-            ka.fgTemporal = fgValid ? tw : 0.0f;
-            // (Ditto's AO and GI's temporal smoothing: its history at render size, made when first on; valid as FastGI's)
+            ka.spatial = s_.aoSpatial < 1.0f ? 1.0f : s_.aoSpatial > 2.0f ? 2.0f : s_.aoSpatial;
+            ka.mvScale[0] = s_.mvSign * fr.mvToUv[0], ka.mvScale[1] = s_.mvSign * fr.mvToUv[1];
+            ka.mvSize[0] = fr.mvRes[0], ka.mvSize[1] = fr.mvRes[1];
+            // (the temporal smoothing's history: made when first on; valid when written the last frame, at this size, no reset)
             bool aoT = s_.aoTemporal;
             if (aoT && !aoH_[0].res)
                 aoT = makeTex(aoH_[0], rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) && makeTex(aoH_[1], rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
                       makeTex(aoHD_[0], rw, rh, DXGI_FORMAT_R32_FLOAT) && makeTex(aoHD_[1], rw, rh, DXGI_FORMAT_R32_FLOAT);
             bool aoValid = aoT && aoOk_ && aoLast_ + 1 == frames_ && !reset;
-            ka.aoTemporal = aoValid ? tw : 0.0f;
-            Tex *fgOut = &aoFg_;
-            if (fg && ka.giStrength <= 0.0f) ka.giStrength = 1.0f;  // (Ditto's GI strength unused: not 0, the passes run)
-            if (!fg && ka.giMode > 0.5f) ka.giStrength = 0.0f;  // (FastGI's intensity 0, or no textures: no GI)
-            ka.giMode = fg ? 1.0f : 0.0f;
+            float tw = s_.aoTemporalWeight < 0.0f ? 0.0f : s_.aoTemporalWeight > 0.95f ? 0.95f : s_.aoTemporalWeight;
+            ka.temporal = aoValid ? tw : 0.0f;
+            auto runA = [&](ID3D12PipelineState *pso, ID3D12Resource *const srv[kSrvs], const DXGI_FORMAT sf[kSrvs], ID3D12Resource *const uav[kUavs],
+                            const DXGI_FORMAT uf[kUavs]) {
+                cl->SetPipelineState(pso);
+                cl->SetComputeRoot32BitConstants(0, sizeof ka / 4, &ka, 0);
+                cl->SetComputeRootDescriptorTable(1, table(srv, sf, uav, uf));
+                cl->Dispatch((rw + 7) / 8, (rh + 7) / 8, 1);
+            };
             transition(cl, aoNd_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             {
                 ID3D12Resource *s[kSrvs] = {depth};
@@ -626,12 +584,11 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 DXGI_FORMAT uf[kUavs] = {aoRes_.fmt};
                 runA(psoAoMain_, s, f, u, uf);
             }
-            transition(cl, aoRes_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            for (int axis = 0; axis < 2; axis++) {  // (FastGI's filter on Ditto's AO and GI: x into aoF_, y back)
+            for (int axis = 0; axis < 2; axis++) {  // (the spatial filter: x into aoF_, y back)
                 Tex &src = axis ? aoF_ : aoRes_, &dst = axis ? aoRes_ : aoF_;
                 transition(cl, src, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 transition(cl, dst, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                ka.fgAxis = (float)axis;
+                ka.axis = (float)axis;
                 ID3D12Resource *s[kSrvs] = {aoNd_.res, src.res};
                 DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, src.fmt};
                 ID3D12Resource *u[kUavs] = {dst.res};
@@ -639,45 +596,8 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 runA(psoAoFilter_, s, f, u, uf);
             }
             transition(cl, aoRes_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            if (fg) {  // (FastGI's GI: Trace, BlurHorizontal, BlurVertical, Temporal - at its low resolution)
-                transition(cl, aoFg_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                {
-                    ID3D12Resource *s[kSrvs] = {aoNd_.res, color, depth};
-                    DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, cd.Format, dd.Format};
-                    ID3D12Resource *u[kUavs] = {aoFg_.res};
-                    DXGI_FORMAT uf[kUavs] = {aoFg_.fmt};
-                    runA(psoAoFgTrace_, s, f, u, uf, true);
-                }
-                for (int axis = 0; axis < 2; axis++) {  // (x into the scratch, y back)
-                    Tex &src = axis ? aoFg2_ : aoFg_, &dst = axis ? aoFg_ : aoFg2_;
-                    transition(cl, src, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-                    transition(cl, dst, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                    ka.fgAxis = (float)axis;
-                    ID3D12Resource *s[kSrvs] = {aoNd_.res, src.res};
-                    DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, src.fmt};
-                    ID3D12Resource *u[kUavs] = {dst.res};
-                    DXGI_FORMAT uf[kUavs] = {dst.fmt};
-                    runA(psoAoFgBlur_, s, f, u, uf, true);
-                }
-                transition(cl, aoFg_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-                if (fgT) {
-                    Tex &cur = aoFgH_[fgCur_], &prev = aoFgH_[fgCur_ ^ 1];
-                    transition(cl, prev, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-                    transition(cl, cur, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                    // (no valid history: never read - the filtered GI in its place, its weight 0)
-                    ID3D12Resource *s[kSrvs] = {aoNd_.res, aoFg_.res, fgValid ? prev.res : aoFg_.res, mv};
-                    DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, aoFg_.fmt, fgValid ? prev.fmt : aoFg_.fmt, md.Format};
-                    ID3D12Resource *u[kUavs] = {cur.res};
-                    DXGI_FORMAT uf[kUavs] = {cur.fmt};
-                    runA(psoAoFgTemporal_, s, f, u, uf, true);
-                    transition(cl, cur, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-                    fgOut = &cur;
-                    fgCur_ ^= 1, fgOk_ = true, fgLast_ = frames_;
-                }
-            }
-            if (!fgT) fgOk_ = false;
             Tex *aoOut = &aoRes_;
-            if (aoT) {  // (the temporal smoothing, render size: no valid history - never read, the main pass' in its place)
+            if (aoT) {  // (the temporal smoothing: no valid history - never read, the filtered in its place)
                 Tex &cur = aoH_[aoCur_], &prev = aoH_[aoCur_ ^ 1], &curD = aoHD_[aoCur_], &prevD = aoHD_[aoCur_ ^ 1];
                 transition(cl, prev, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 transition(cl, prevD, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -696,8 +616,8 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             }
             transition(cl, aoCol_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             {
-                ID3D12Resource *s[kSrvs] = {aoNd_.res, color, aoOut->res, fg ? fgOut->res : nullptr};
-                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, cd.Format, aoOut->fmt, fgOut->fmt};
+                ID3D12Resource *s[kSrvs] = {aoNd_.res, color, aoOut->res};
+                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, cd.Format, aoOut->fmt};
                 ID3D12Resource *u[kUavs] = {aoCol_.res};
                 DXGI_FORMAT uf[kUavs] = {aoCol_.fmt};
                 runA(psoAoComp_, s, f, u, uf);
