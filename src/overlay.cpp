@@ -345,7 +345,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RSCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -451,10 +451,6 @@ Range range_of(int i) {
     switch (i) {
     case I_SHARP: return {0.0f, 1.0f, 0.05f};
     case I_WEIGHT: return {0.25f, 4.0f, 0.25f};
-    case I_RAO: return {0.0f, 1.0f, 0.05f};
-    case I_RGI: return {0.0f, 2.0f, 0.1f};
-    case I_RGIDARK: return {0.0f, 4.0f, 0.1f};
-    case I_RSCURVE: return {0.0f, 1.0f, 0.05f};
     default: return {0, 1, 1};
     }
 }
@@ -462,10 +458,6 @@ float *slider_of(DittoSettings &s, int i) {
     switch (i) {
     case I_SHARP: return &s.sharpness;
     case I_WEIGHT: return &s.frameWeight;
-    case I_RAO: return &s.aoStrength;
-    case I_RGI: return &s.giStrength;
-    case I_RGIDARK: return &s.giDark;
-    case I_RSCURVE: return &s.sCurve;
     default: return nullptr;
     }
 }
@@ -486,7 +478,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
     switch (i) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
-    case I_SHARP: case I_WEIGHT: case I_RAO: case I_RGI: case I_RGIDARK: case I_RSCURVE: {
+    case I_SHARP: case I_WEIGHT: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
         // (the frame weight: moved, it overrides FSR 3.1's settings' - OptiScaler's presets - from the weight in use;
@@ -731,10 +723,6 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     y += 10 * S;
     section("EXPERIMENTAL");
     toggle_row(I_RELIGHT, "Ditto Relight", s.relight);
-    slider_row(I_RAO, "Ambient occlusion", nullptr);
-    slider_row(I_RGI, "Global illumination", nullptr);
-    slider_row(I_RGIDARK, "GI in dark areas", "x the bounce light there");
-    slider_row(I_RSCURVE, "Highlights", "the lights brighter");
     y += 10 * S;
     section("ADVANCED");
     choice_row(I_DEBUG, "Debug view", kDebugNames[s.debugView < 0 || s.debugView > 4 ? 0 : s.debugView]);

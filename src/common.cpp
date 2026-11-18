@@ -183,10 +183,6 @@ bool ditto_save_settings() {
     ok = put("frame_weight_override", s.frameWeightOverride ? 1.0f : 0.0f, d.frameWeightOverride ? 1.0f : 0.0f, false) && ok;
     ok = put("sharpen_mode", (float)s.sharpenMode, (float)d.sharpenMode, false) && ok;
     ok = put("relight", s.relight ? 1.0f : 0.0f, 0.0f, false) && ok;
-    ok = put("ao_strength", s.aoStrength, d.aoStrength, false) && ok;
-    ok = put("gi_strength", s.giStrength, d.giStrength, false) && ok;
-    ok = put("gi_dark", s.giDark, d.giDark, false) && ok;
-    ok = put("s_curve", s.sCurve, d.sCurve, false) && ok;
     ok = put("auto_reactive", s.autoReactive, d.autoReactive, false) && ok;
     ok = put("debug_view", (float)s.debugView, (float)d.debugView, false) && ok;
     if (!held("indicator")) ok = WritePrivateProfileStringA("debug", "indicator", s.indicator ? "1" : "0", ini) != 0 && ok;
