@@ -85,6 +85,5 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
     // shimmer 3.79 -> 3.06, the still image 33.14 -> 33.40 dB and its shimmer 1.89 -> 1.56; the tiles 29.50 -> 29.37)
     k.shareFar *= 1.0f - 0.5f * hr;
     k.envTol = s.envTol, k.envDecay = s.envDecay, k.envGain = s.envGain, k.envRest = s.envRest;
-    // (RCAS above 1x only: at 1x (native AA) CAS always - fused into the upscale, no pass of its own: 0.2 ms less at 4K)
-    k.sharpenMode = s.sharpenMode == 1 && k.ratio > 1.001f ? 1.0f : 0.0f;
+    k.sharpenMode = s.sharpenMode == 1 ? 1.0f : 0.0f;
 }
