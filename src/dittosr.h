@@ -44,6 +44,17 @@ struct DittoSettings {
     float sCurve = 0.3f;
     // ... the blur's step (0 - 4 pixels; 0 off): its 9 x 9 taps that far apart - wider, smoother and softer
     float aoSmooth = 2.0f;
+    // ... the GI: 0 Ditto's (the occluders' colour), 1 FastGI's (aofg*.hlsl; giStrength and giDark unused) - the AO the
+    // same. FastGI's options, its defaults (its units: the game's view units - FastGI's metres): its resolution's
+    // divisor (2 Half, 3 Third, 4 Quarter), rays (1 - 8), steps (4 - 32), intensity (0 - 4), radius, thickness,
+    // radiance clamp, max distance (1 - 60000), diffuse reflectance (0 - 1), refine hits, hit rejection (0 - 1), spatial
+    // radius (1 - 2), temporal smoothing and its weight (0 - 0.95), normal bias (ini only, as FastGI hides it)
+    int giMode = 0;
+    int fgDiv = 2;
+    float fgRays = 4.0f, fgSteps = 8.0f, fgIntensity = 0.6f, fgRadius = 3.0f, fgThickness = 0.25f, fgClamp = 4.0f;
+    float fgMaxDist = 60.0f, fgReflectance = 0.5f, fgRejection = 0.75f, fgSpatial = 1.0f, fgTemporalWeight = 0.85f;
+    float fgNormalBias = 0.03f;
+    bool fgRefine = true, fgTemporal = false;
     float frameWeight = 2.0f;  // x the new frame's share, 0.25 - 4: lower, more persistence (smoother, blurrier in motion)
     // the frame weight above wins over the one FSR 3.1's velocity factor and reactiveness scale set (OptiScaler's
     // presets and sliders); false: those set it whenever they are not both at 1
@@ -169,6 +180,7 @@ private:
     // (the 1x variants, the motion pass fused in: [fp16][anti-shimmer]; null: the motion pass as at other ratios)
     ID3D12PipelineState *psoUpscaleFm_[2][2] = {};
     ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoBlur_ = nullptr, *psoAoComp_ = nullptr;  // (EXPERIMENTAL: Ditto Relight)
+    ID3D12PipelineState *psoAoFgTrace_ = nullptr, *psoAoFgBlur_ = nullptr, *psoAoFgTemporal_ = nullptr;  // (... FastGI's GI)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     // the game's output last checked (outputWritable): its format, whether it allows unordered access, and the verdict
@@ -181,6 +193,12 @@ private:
     Tex mda_[2], hist_[2], aux_[2], stab_[2], change1_, env_[2];
     Tex expo_[2];  // (the auto exposure, 1 x 1: the game asked for it and gave none)
     Tex aoNd_, aoRes_, aoBlur_, aoCol_;  // (EXPERIMENTAL, Ditto Relight: normal and depth, occlusion and bounce, blurred, the colour)
+    // (... FastGI's GI at its low resolution: traced and filtered, the filter's scratch, the temporal history (written:
+    // fgCur_); fgOk_: the history valid, fgLast_: the frame it was written)
+    Tex aoFg_, aoFg2_, aoFgH_[2];
+    int fgCur_ = 0;
+    bool fgOk_ = false;
+    uint64_t fgLast_ = ~0ull;
     bool split_ = false;
     int cur_ = 0;
     bool texValid_ = false;

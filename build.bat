@@ -22,7 +22,7 @@ if not exist "%SPV%" set "SPV=%VULKAN_SDK%\Bin\dxc.exe"
 if not exist "%SPV%" (echo no dxc with SPIR-V: put the DirectXShaderCompiler release in tools\dxc\ or install the Vulkan SDK & exit /b 1)
 
 rem D3D12 (DXIL)
-for %%s in (convert motion upscale sharpen aoprep aomain aoblur aocompose) do (
+for %%s in (convert motion upscale sharpen aoprep aomain aoblur aocompose aofgtrace aofgblur aofgtemporal) do (
   %DXC% -nologo -T cs_6_0 -E main -O3 -Fh "%OUT%\gen\cs_%%s.h" -Vn g_cs_%%s "%ROOT%shaders\%%s.hlsl" || exit /b 1
 )
 rem the FP16 variants: native 16-bit types (SM 6.2), picked at run time where the GPU supports them

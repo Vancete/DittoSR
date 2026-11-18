@@ -345,7 +345,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSMOOTH, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_RAO, I_RGIMODE, I_RGI, I_RGIDARK, I_FGRES, I_FGRAYS, I_FGSTEPS, I_FGINT, I_FGREFL, I_FGRADIUS, I_FGTHICK, I_FGCLAMP, I_FGMAXD, I_FGREFINE, I_FGREJ, I_FGSPATIAL, I_FGTEMP, I_FGTEMPW, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSMOOTH, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -376,6 +376,7 @@ struct Menu : Perf {  // (its Perf: a copy of g_perf, taken before each draw)
     bool lmb = false;
     int drag = -1;  // (the slider the mouse holds)
     bool relight = false;  // (Ditto Relight on: its sliders shown)
+    int giMode = 0;  // (its GI: 1 FastGI's - its own sliders, no GI in dark areas)
     float rowY[I_COUNT] = {}, rowH[I_COUNT] = {};
     float btnX[3][2] = {};
     float trackX0 = 0, trackX1 = 0;
@@ -445,6 +446,8 @@ bool key_pressed(Key &k, double t, bool repeat) {
 float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f : (float)g_stats.fsrFrameWeight; }
 
 bool visible(int i) {
+    if (i == I_RGI || i == I_RGIDARK) return g_m.relight && g_m.giMode == 0;
+    if (i >= I_FGRES && i <= I_FGTEMPW) return g_m.relight && g_m.giMode == 1;
     if (i >= I_RAO && i <= I_RSMOOTH) return g_m.relight;
     return (i != I_UPSCALER && i != I_COMPARE) || g_stats.hasReal;
 }
@@ -460,6 +463,17 @@ Range range_of(int i) {
     case I_RGIDARK: return {0.0f, 4.0f, 0.1f};
     case I_RSCURVE: return {0.0f, 1.0f, 0.05f};
     case I_RRAYS: return {4.0f, 32.0f, 4.0f};
+    case I_FGRAYS: return {1.0f, 8.0f, 1.0f};
+    case I_FGSTEPS: return {4.0f, 32.0f, 4.0f};
+    case I_FGINT: return {0.0f, 4.0f, 0.1f};
+    case I_FGREFL: return {0.0f, 1.0f, 0.05f};
+    case I_FGRADIUS: return {0.25f, 16.0f, 0.25f};
+    case I_FGTHICK: return {0.05f, 2.0f, 0.05f};
+    case I_FGCLAMP: return {0.5f, 16.0f, 0.5f};
+    case I_FGMAXD: return {10.0f, 1000.0f, 10.0f};
+    case I_FGREJ: return {0.0f, 1.0f, 0.05f};
+    case I_FGSPATIAL: return {1.0f, 2.0f, 0.25f};
+    case I_FGTEMPW: return {0.0f, 0.95f, 0.05f};
     case I_RRADIUS: return {0.0f, 16.0f, 0.5f};
     case I_RSCREEN: return {0.05f, 0.5f, 0.05f};
     case I_RCONTACT: return {0.0f, 4.0f, 0.25f};
@@ -476,6 +490,17 @@ float *slider_of(DittoSettings &s, int i) {
     case I_RGIDARK: return &s.giDark;
     case I_RSCURVE: return &s.sCurve;
     case I_RRAYS: return &s.aoRays;
+    case I_FGRAYS: return &s.fgRays;
+    case I_FGSTEPS: return &s.fgSteps;
+    case I_FGINT: return &s.fgIntensity;
+    case I_FGREFL: return &s.fgReflectance;
+    case I_FGRADIUS: return &s.fgRadius;
+    case I_FGTHICK: return &s.fgThickness;
+    case I_FGCLAMP: return &s.fgClamp;
+    case I_FGMAXD: return &s.fgMaxDist;
+    case I_FGREJ: return &s.fgRejection;
+    case I_FGSPATIAL: return &s.fgSpatial;
+    case I_FGTEMPW: return &s.fgTemporalWeight;
     case I_RRADIUS: return &s.aoRadius;
     case I_RSCREEN: return &s.aoScreen;
     case I_RCONTACT: return &s.aoContact;
@@ -501,7 +526,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
     case I_SHARP: case I_WEIGHT: case I_RAO: case I_RGI: case I_RGIDARK: case I_RSCURVE: case I_RRAYS: case I_RRADIUS:
-    case I_RSCREEN: case I_RCONTACT: case I_RSMOOTH: {
+    case I_RSCREEN: case I_RCONTACT: case I_RSMOOTH: case I_FGRAYS: case I_FGSTEPS: case I_FGINT: case I_FGREFL: case I_FGRADIUS: case I_FGTHICK: case I_FGCLAMP: case I_FGMAXD: case I_FGREJ: case I_FGSPATIAL: case I_FGTEMPW: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
         // (the frame weight: moved, it overrides FSR 3.1's settings' - OptiScaler's presets - from the weight in use;
@@ -524,6 +549,10 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_INDICATOR: s.indicator = !s.indicator; return true;
     case I_SHMODE: s.sharpenMode = !s.sharpenMode; return true;
     case I_RELIGHT: s.relight = !s.relight; return true;
+    case I_RGIMODE: s.giMode = !s.giMode; return true;
+    case I_FGRES: s.fgDiv = (s.fgDiv - 2 + (dir < 0 ? 2 : 1)) % 3 + 2; return true;
+    case I_FGREFINE: s.fgRefine = !s.fgRefine; return true;
+    case I_FGTEMP: s.fgTemporal = !s.fgTemporal; return true;
     }
     return false;
 }
@@ -748,8 +777,27 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     toggle_row(I_RELIGHT, "Ditto Relight", s.relight);
     if (s.relight) {
         slider_row(I_RAO, "Ambient occlusion", "the darkening");
-        slider_row(I_RGI, "Global illumination", "the bounce light");
-        slider_row(I_RGIDARK, "GI in dark areas", "x the bounce light there");
+        choice_row(I_RGIMODE, "GI technique", s.giMode ? "FastGI" : "Ditto");
+        if (s.giMode == 0) {
+            slider_row(I_RGI, "Global illumination", "the bounce light");
+            slider_row(I_RGIDARK, "GI in dark areas", "x the bounce light there");
+        } else {  // (FastGI's options, as its inspector names them)
+            const char *res[3] = {"Half", "Third", "Quarter"};
+            choice_row(I_FGRES, "Resolution", res[(s.fgDiv < 2 ? 2 : s.fgDiv > 4 ? 4 : s.fgDiv) - 2]);
+            slider_row(I_FGRAYS, "Rays", "per pixel: less noise, slower");
+            slider_row(I_FGSTEPS, "Steps", "depth checks a ray");
+            slider_row(I_FGINT, "Intensity", nullptr);
+            slider_row(I_FGREFL, "Diffuse reflectance", nullptr);
+            slider_row(I_FGRADIUS, "Radius", "the rays' length, world units");
+            slider_row(I_FGTHICK, "Thickness", "a hit's depth tolerance");
+            slider_row(I_FGCLAMP, "Radiance clamp", "the samples' luminance");
+            slider_row(I_FGMAXD, "Max distance", "the receivers'");
+            toggle_row(I_FGREFINE, "Refine hits", s.fgRefine);
+            slider_row(I_FGREJ, "Hit rejection", "1 strictest, 0 off");
+            slider_row(I_FGSPATIAL, "Spatial radius", "the filter's spacing");
+            toggle_row(I_FGTEMP, "Temporal smoothing", s.fgTemporal);
+            slider_row(I_FGTEMPW, "Temporal weight", "the history's share");
+        }
         slider_row(I_RSCURVE, "Highlights", "the lights brighter");
         slider_row(I_RRAYS, "Rays", "more: less noise, slower");
         slider_row(I_RRADIUS, "Reach", "in the world; 0: no limit");
@@ -868,7 +916,7 @@ void input(DittoSettings &s, bool &changed, double t) {
             }
         }
     } else if (click) {
-        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR && hit != I_RELIGHT ? -1 : 1);
+        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR && hit != I_RELIGHT && hit != I_FGREFINE && hit != I_FGTEMP ? -1 : 1);
     }
 }
 
@@ -877,10 +925,10 @@ void make_panel(Ui &u, float W, float H, float scale, double t, bool focus) {
     take_perf();
     DittoSettings s = ditto_settings();
     bool changed = false;
-    g_m.relight = s.relight;
+    g_m.relight = s.relight, g_m.giMode = s.giMode;
     if (g_m.open && focus) input(s, changed, t);
     if (changed) ditto_set_settings(s);
-    g_m.relight = s.relight;
+    g_m.relight = s.relight, g_m.giMode = s.giMode;
     if (!visible(g_m.sel)) g_m.sel = I_RELIGHT;  // (its sliders hidden under the selection: Relight off, or Defaults)
     u.s = scale, u.alpha = ease(g_m.anim), u.dx = -(1.0f - ease(g_m.anim)) * 420.0f * scale;
     u.q.reserve(2048);
