@@ -20,6 +20,19 @@ Texture2D<float4> InputColor : register(t2);
 Texture2D<float4> Motion : register(t3);
 Texture2D<float> Change : register(t4);
 Texture2D<float> Reactive : register(t6);
+#if FUSED_MOTION
+// (at 1x: the motion pass' inputs and outputs - its checks done here, one render pixel this output pixel)
+Texture2D<float4> PrevMotion : register(t8);
+Texture2D<float4> PrevMda : register(t9);
+Texture2D<float2> PrevEnv : register(t10);
+RWTexture2D<float4> AuxOut : register(u3);
+RWTexture2D<float2> EnvOut : register(u4);
+#define MC_MDA MotionDepthClip
+#define MC_PREVMDA PrevMda
+#define MC_PREVMOTION PrevMotion
+#define MC_PREVENV PrevEnv
+#include "motion_core.hlsli"
+#endif
 VKFMT(HISTFMT) RWTexture2D<float4> History : register(u0);
 #if ANTI_SHIMMER
 Texture2D<float2> PrevStab : register(t7);  // (x the stability level, y the anti-shimmer's running sign)
@@ -166,6 +179,15 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
         if (i != 4) { hf3 dc = cc[i] - cc[4]; m1h += dc; m2h += dc * dc; }
     }
     hf lmnh = ymn.x, lmxh = ymx.x;
+#if FUSED_MOTION
+    // (1x: the motion pass' checks here - the 3x3 the tile's around this pixel (b0 = id), its luma the YCoCg's Y; written
+    // for the next frame's, every pixel, before any return)
+    float4 axF;
+    float2 envF;
+    motionCore(uv, mda4, (float)cc[4].x, (float)lmnh, (float)lmxh, axF, envF);
+    AuxOut[id] = axF;
+    EnvOut[id] = envF;
+#endif
     float gx = (float)((cc[2].x + (hf)2.0 * cc[5].x + cc[8].x) - (cc[0].x + (hf)2.0 * cc[3].x + cc[6].x));
     float gy = (float)((cc[6].x + (hf)2.0 * cc[7].x + cc[8].x) - (cc[0].x + (hf)2.0 * cc[1].x + cc[2].x));
     float g2 = gx * gx + gy * gy, rg = rsqrt(max(g2, 1e-10));
@@ -210,7 +232,11 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
     }
     // the motion pass's, at render size: x = the motion's change against its neighbours' (rj), y = the disocclusion
     // (dz), z = the derived reactive mask
+#if FUSED_MOTION
+    float4 ax = axF;
+#else
     float4 ax = Motion.SampleLevel(linearClamp, uv, 0.0);
+#endif
     float rj = ax.x, dz = ax.y;
     // (where the history is lost - something revealed, another object's edge - the fill takes the place of the
     // Gaussians' estimate: sharp from the first frame)

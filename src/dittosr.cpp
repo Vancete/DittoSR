@@ -22,12 +22,16 @@
 #include "cs_upscale16.h"
 #include "cs_upscale_as.h"
 #include "cs_upscale16_as.h"
+#include "cs_upscale_fm.h"
+#include "cs_upscale_as_fm.h"
+#include "cs_upscale16_fm.h"
+#include "cs_upscale16_as_fm.h"
 #include "cs_sharpen16.h"
 
 namespace {
 
 constexpr UINT kConstants = sizeof(DittoConstants) / 4;
-constexpr UINT kSrvs = 8, kUavs = 3, kTable = kSrvs + kUavs;
+constexpr UINT kSrvs = 11, kUavs = 5, kTable = kSrvs + kUavs;  // (t8 - t10, u3, u4: the 1x upscale's motion pass)
 constexpr UINT kTablesPerFrame = 5;
 constexpr UINT kFramesInRing = 256;
 constexpr UINT kUpGX = 16, kUpGY = 8;  // (the upscale's group: upscale.hlsl GX, GY)  // (descriptors are rewritten 256 frames later: long past the GPU's use)
@@ -149,6 +153,9 @@ DittoSR::~DittoSR() {
     if (timeQ_) timeQ_->Release();
     if (psoConvert_) psoConvert_->Release();
     if (psoMotion_) psoMotion_->Release();
+    for (auto &a : psoUpscaleFm_)
+        for (ID3D12PipelineState *p : a)
+            if (p) p->Release();
     if (psoUpscale_) psoUpscale_->Release();
     if (psoSharpen_) psoSharpen_->Release();
     if (psoAoPrep_) psoAoPrep_->Release();
@@ -230,6 +237,19 @@ bool DittoSR::createPipelines() {
             if (psoUpscale16_) psoUpscale16_->Release(), psoUpscale16_ = nullptr;
             if (psoUpscaleAs16_) psoUpscaleAs16_->Release(), psoUpscaleAs16_ = nullptr;
             if (psoSharpen16_) psoSharpen16_->Release(), psoSharpen16_ = nullptr;
+        }
+    }
+    // the 1x variants (the motion pass fused in): optional - where one fails, the motion pass as at other ratios
+    {
+        struct { const BYTE *code; size_t size; ID3D12PipelineState **pso; } fm[4] = {
+            {g_cs_upscale_fm, sizeof g_cs_upscale_fm, &psoUpscaleFm_[0][0]}, {g_cs_upscale_as_fm, sizeof g_cs_upscale_as_fm, &psoUpscaleFm_[0][1]},
+            {g_cs_upscale16_fm, sizeof g_cs_upscale16_fm, &psoUpscaleFm_[1][0]}, {g_cs_upscale16_as_fm, sizeof g_cs_upscale16_as_fm, &psoUpscaleFm_[1][1]}};
+        for (int i = 0; i < 4; i++) {
+            if (i >= 2 && !psoUpscale16_) break;
+            D3D12_COMPUTE_PIPELINE_STATE_DESC pd = {};
+            pd.pRootSignature = rootSig_;
+            pd.CS.pShaderBytecode = fm[i].code, pd.CS.BytecodeLength = fm[i].size;
+            if (FAILED(dev_->CreateComputePipelineState(&pd, IID_PPV_ARGS(fm[i].pso)))) *fm[i].pso = nullptr;
         }
     }
     // (the vendor, for fp16 = -1)
@@ -461,7 +481,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     // (up to 2.5x: above it the separate pass - its moving clamp to the output's 4 neighbours holds the shimmer of a
     // 3x pan, which the fused term's bound by the samples' range cannot: grass at 3x 2.70 against 2.24, as sharp)
     // (RCAS: the sharpening pass at every ratio - the fused term is the blend's detail, not a filter of the output)
-    k.fusedSharpen = !split_ && !s_.debugView && !s_.sharpenMode && s_.fusedSharpen > 0.0f && k.ratio <= 2.55f ? s_.fusedSharpen : 0.0f;
+    k.fusedSharpen = !split_ && !s_.debugView && !k.sharpenMode && s_.fusedSharpen > 0.0f && k.ratio <= 2.55f ? s_.fusedSharpen : 0.0f;
     // (a float colour declared LDR is read as HDR: as [0, 1] colour it would be clipped at 1 - Witcher 3 through
     // OptiScaler, its highlights flattened)
     if (!fr.hdr && float_format(cd.Format)) {
@@ -591,32 +611,39 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     transition(cl, change1_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     transition(cl, mdaP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     transition(cl, auxP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    // motion (render size): the motion checks, the derived reactive mask
+    // motion (render size): the motion checks, the derived reactive mask - at 1x in the upscale (fm: one render pixel an
+    // output pixel, its checks no longer repeated; the colour's 3x3 in the upscale's tile already; one pass, one read of
+    // the convert pass' and of the colour less - 0.2 ms at 4K)
+    bool as = s_.antiShimmer != 0.0f;
+    ID3D12PipelineState *fmPso = rw == ow && rh == oh ? psoUpscaleFm_[fp16 ? 1 : 0][as ? 1 : 0] : nullptr;
+    Tex &envC = env_[cur_], &envP = env_[cur_ ^ 1];  // (the luma envelope: the previous frame's, this one's)
+    transition(cl, envP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    transition(cl, envC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     transition(cl, auxC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    {
-        Tex &envC = env_[cur_], &envP = env_[cur_ ^ 1];  // (the luma envelope: t4 the previous frame's, u1 this one's)
-        transition(cl, envP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        transition(cl, envC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    if (!fmPso) {
         ID3D12Resource *s[kSrvs] = {auxP.res, mdaC.res, color, mdaP.res, envP.res, expo};
         DXGI_FORMAT f[kSrvs] = {auxP.fmt, mdaC.fmt, cfmt, mdaP.fmt, envP.fmt, exf};
         ID3D12Resource *u[kUavs] = {auxC.res, envC.res};
         DXGI_FORMAT uf[kUavs] = {auxC.fmt, envC.fmt};
         run(psoMotion_, s, f, u, uf, (rw + 7) / 8, (rh + 7) / 8);
+        transition(cl, auxC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     }
     if (tickMs_ > 0.0) cl->EndQuery(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, kStamps * ts + 2);
-    transition(cl, auxC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     // upscale (output size): the history, the stability levels (and the game's output, a debug view)
     transition(cl, histC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     transition(cl, stabC, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     transition(cl, stabP, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     {
-        ID3D12Resource *s[kSrvs] = {histP.res, mdaC.res, color, auxC.res, change1_.res, expo, reac, stabP.res};
-        DXGI_FORMAT f[kSrvs] = {histP.fmt, mdaC.fmt, cfmt, auxC.fmt, change1_.fmt, exf, rf, stabP.fmt};
-        ID3D12Resource *u[kUavs] = {histC.res, out, stabC.res};
-        DXGI_FORMAT uf[kUavs] = {histC.fmt, od.Format, stabC.fmt};
-        bool as = s_.antiShimmer != 0.0f;
-        run(fp16 ? (as ? psoUpscaleAs16_ : psoUpscale16_) : (as ? psoUpscaleAs_ : psoUpscale_), s, f, u, uf, (ow + kUpGX - 1) / kUpGX, (oh + kUpGY - 1) / kUpGY);
+        // (fm: t3 unused - the motion pass' own inputs t8 - t10, its outputs u3, u4)
+        ID3D12Resource *s[kSrvs] = {histP.res, mdaC.res, color, fmPso ? nullptr : auxC.res, change1_.res, expo, reac, stabP.res,
+                                    fmPso ? auxP.res : nullptr, fmPso ? mdaP.res : nullptr, fmPso ? envP.res : nullptr};
+        DXGI_FORMAT f[kSrvs] = {histP.fmt, mdaC.fmt, cfmt, fmPso ? X : auxC.fmt, change1_.fmt, exf, rf, stabP.fmt, auxP.fmt, mdaP.fmt, envP.fmt};
+        ID3D12Resource *u[kUavs] = {histC.res, out, stabC.res, fmPso ? auxC.res : nullptr, fmPso ? envC.res : nullptr};
+        DXGI_FORMAT uf[kUavs] = {histC.fmt, od.Format, stabC.fmt, auxC.fmt, envC.fmt};
+        run(fmPso ? fmPso : fp16 ? (as ? psoUpscaleAs16_ : psoUpscale16_) : (as ? psoUpscaleAs_ : psoUpscale_), s, f, u, uf, (ow + kUpGX - 1) / kUpGX,
+            (oh + kUpGY - 1) / kUpGY);
     }
+    if (fmPso) transition(cl, auxC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     if (tickMs_ > 0.0) cl->EndQuery(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, kStamps * ts + 3);
     transition(cl, histC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     transition(cl, stabC, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);

@@ -32,6 +32,11 @@ for %%s in (upscale sharpen) do (
 rem the anti-shimmer variants of the upscale (D3D12; picked when anti_shimmer > 0 - none of its cost otherwise)
 %DXC% -nologo -T cs_6_0 -D ANTI_SHIMMER=1 -E main -O3 -Fh "%OUT%\gen\cs_upscale_as.h" -Vn g_cs_upscale_as "%ROOT%shaders\upscale.hlsl" || exit /b 1
 %DXC% -nologo -T cs_6_2 -enable-16bit-types -D DITTO_FP16=1 -D ANTI_SHIMMER=1 -E main -O3 -Fh "%OUT%\gen\cs_upscale16_as.h" -Vn g_cs_upscale16_as "%ROOT%shaders\upscale.hlsl" || exit /b 1
+rem the 1x variants of the four (D3D12): the motion pass fused in (FUSED_MOTION)
+%DXC% -nologo -T cs_6_0 -D FUSED_MOTION=1 -E main -O3 -Fh "%OUT%\gen\cs_upscale_fm.h" -Vn g_cs_upscale_fm "%ROOT%shaders\upscale.hlsl" || exit /b 1
+%DXC% -nologo -T cs_6_0 -D FUSED_MOTION=1 -D ANTI_SHIMMER=1 -E main -O3 -Fh "%OUT%\gen\cs_upscale_as_fm.h" -Vn g_cs_upscale_as_fm "%ROOT%shaders\upscale.hlsl" || exit /b 1
+%DXC% -nologo -T cs_6_2 -enable-16bit-types -D DITTO_FP16=1 -D FUSED_MOTION=1 -E main -O3 -Fh "%OUT%\gen\cs_upscale16_fm.h" -Vn g_cs_upscale16_fm "%ROOT%shaders\upscale.hlsl" || exit /b 1
+%DXC% -nologo -T cs_6_2 -enable-16bit-types -D DITTO_FP16=1 -D FUSED_MOTION=1 -D ANTI_SHIMMER=1 -E main -O3 -Fh "%OUT%\gen\cs_upscale16_as_fm.h" -Vn g_cs_upscale16_as_fm "%ROOT%shaders\upscale.hlsl" || exit /b 1
 rem the in-game menu (overlay.cpp): a vertex and a pixel shader
 %DXC% -nologo -T vs_6_0 -E vs -O3 -Fh "%OUT%\gen\ov_vs.h" -Vn g_ov_vs "%ROOT%shaders\overlay.hlsl" || exit /b 1
 %DXC% -nologo -T ps_6_0 -E ps -O3 -Fh "%OUT%\gen\ov_ps.h" -Vn g_ov_ps "%ROOT%shaders\overlay.hlsl" || exit /b 1

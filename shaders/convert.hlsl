@@ -80,6 +80,7 @@ void change(uint li) {
 }
 
 groupshared float gsLog[64];
+groupshared float gsDepth[100];  // (the group's 8 x 8 and a pixel around: the depths, un-inverted)
 
 // The auto exposure (the game set FSR's auto exposure flag and gave no exposure): FSR 3.1's, 1 / (9.6 x the scene's
 // average luminance - geometric, of the colour without its pre-exposure), here over 32 x 32 points of the render image,
@@ -116,30 +117,21 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
         else if (gid.x == 1 && autoExposure > 0.5) autoexp(li);
         return;
     }
-    if (any(id >= (uint2)rs)) return;
-    float2 dsz;
-    InputDepth.GetDimensions(dsz.x, dsz.y);
-    // (the gather between texels id - 1 and id, in the depth texture's own uv: it may be larger than the render size)
-    float2 gatherCoord = float2(id) / dsz, step2 = 2.0 / dsz;
-    float4 btmLeft = InputDepth.GatherRed(linearClamp, gatherCoord);
-    float4 btmRight = InputDepth.GatherRed(linearClamp, gatherCoord + float2(step2.x, 0.0));
-    float4 topLeft = InputDepth.GatherRed(linearClamp, gatherCoord + float2(0.0, step2.y));
-    float4 topRight = InputDepth.GatherRed(linearClamp, gatherCoord + step2);
-    if (depthInverted > 0.5) btmLeft = 1.0 - btmLeft, btmRight = 1.0 - btmRight, topLeft = 1.0 - topLeft, topRight = 1.0 - topRight;
     // (the nearest of the 3x3: a moving silhouette's own motion over the background around it - its depths from the
-    // gathers above, which cover the 4 x 4 from id - 1 (a gather's x, y, z, w: (0, 1), (1, 1), (1, 0), (0, 0)); at the
-    // image's edges, where the gathers clamp to the depth texture's own size, its own loads as before)
-    float dmin;
-    float2 v;
-    [branch] if (all(id >= 1) && all(id + 1 < (uint2)rs)) {
-        float d3[9] = {btmLeft.w, btmLeft.z, btmRight.w, btmLeft.x, btmLeft.y, btmRight.x, topLeft.w, topLeft.z, topRight.w};
-        int2 best = int2(0, 0);
-        dmin = d3[4];
-        [unroll] for (int i = 0; i < 9; i++)
-            if (d3[i] < dmin) { dmin = d3[i]; best = int2(i % 3 - 1, i / 3 - 1); }
-        v = motionOf(int2(id), best);
-    } else {
-        v = motionAt(int2(id), dmin);
+    // group's 10 x 10 tile, each loaded once (clamped to the render image, as motionAt): 1.56 loads a pixel, not the 4
+    // gathers (16 texels for its 9) each pixel made until 0.5.0)
+    int2 ds = int2(rs) - 1;
+    for (int i = (int)li; i < 100; i += 64)
+        gsDepth[i] = depthAt(int2(gid * 8) - 1 + int2(i % 10, i / 10), ds);
+    GroupMemoryBarrierWithGroupSync();
+    if (any(id >= (uint2)rs)) return;
+    int2 o = int2(id) - int2(gid * 8);
+    int2 best = int2(0, 0);
+    float dmin = gsDepth[(o.y + 1) * 10 + o.x + 1];  // (the centre unless a neighbour is strictly nearer)
+    [unroll] for (int i = 0; i < 9; i++) {
+        float dd = gsDepth[(o.y + i / 3) * 10 + o.x + i % 3];
+        if (dd < dmin) { dmin = dd; best = int2(i % 3 - 1, i / 3 - 1); }
     }
+    float2 v = motionOf(int2(id), best);
     Out[id] = float4(2.0 * v, 0.0, 1.0 - dmin);
 }
