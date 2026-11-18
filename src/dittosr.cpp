@@ -16,6 +16,7 @@
 #include "cs_sharpen.h"
 #include "cs_aoprep.h"
 #include "cs_aomain.h"
+#include "cs_aoblur.h"
 #include "cs_aocompose.h"
 #include "cs_upscale.h"
 #include "cs_upscale16.h"
@@ -152,6 +153,7 @@ DittoSR::~DittoSR() {
     if (psoSharpen_) psoSharpen_->Release();
     if (psoAoPrep_) psoAoPrep_->Release();
     if (psoAoMain_) psoAoMain_->Release();
+    if (psoAoBlur_) psoAoBlur_->Release();
     if (psoAoComp_) psoAoComp_->Release();
     if (psoUpscale16_) psoUpscale16_->Release();
     if (psoUpscaleAs_) psoUpscaleAs_->Release();
@@ -191,7 +193,7 @@ bool DittoSR::createPipelines() {
     HRESULT hr = dev_->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&rootSig_));
     blob->Release();
     if (FAILED(hr)) return ditto_log("CreateRootSignature 0x%08x\n", (unsigned)hr), false;
-    struct { const BYTE *code; size_t size; ID3D12PipelineState **pso; const char *name; } cs[8] = {
+    struct { const BYTE *code; size_t size; ID3D12PipelineState **pso; const char *name; } cs[9] = {
         {g_cs_convert, sizeof g_cs_convert, &psoConvert_, "convert"},
         {g_cs_motion, sizeof g_cs_motion, &psoMotion_, "motion"},
         {g_cs_upscale, sizeof g_cs_upscale, &psoUpscale_, "upscale"},
@@ -199,6 +201,7 @@ bool DittoSR::createPipelines() {
         {g_cs_upscale_as, sizeof g_cs_upscale_as, &psoUpscaleAs_, "upscale (anti-shimmer)"},
         {g_cs_aoprep, sizeof g_cs_aoprep, &psoAoPrep_, "ao prepass"},
         {g_cs_aomain, sizeof g_cs_aomain, &psoAoMain_, "ao"},
+        {g_cs_aoblur, sizeof g_cs_aoblur, &psoAoBlur_, "ao blur"},
         {g_cs_aocompose, sizeof g_cs_aocompose, &psoAoComp_, "ao compose"},
     };
     for (auto &c : cs) {
@@ -277,7 +280,7 @@ bool DittoSR::makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f) {
 
 void DittoSR::releaseTextures() {
     for (Tex *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &change1_, &expo_[0], &expo_[1],
-                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoCol_})
+                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoBlur_, &aoCol_})
         if (t->res) t->res->Release(), *t = Tex();
     texValid_ = false;
 }
@@ -498,10 +501,10 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     if (s_.relight && depth && !s_.debugView) {
         bool made = aoNd_.res && aoNd_.w == rw && aoNd_.h == rh;
         if (!made) {
-            for (Tex *t : {&aoNd_, &aoRes_, &aoCol_})
+            for (Tex *t : {&aoNd_, &aoRes_, &aoBlur_, &aoCol_})
                 if (t->res) t->res->Release(), *t = Tex();
             made = makeTex(aoNd_, rw, rh, DXGI_FORMAT_R32G32B32A32_FLOAT) && makeTex(aoRes_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
-                   makeTex(aoCol_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT);
+                   makeTex(aoBlur_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) && makeTex(aoCol_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT);
         }
         if (made) {
             struct AoConstants {
@@ -517,7 +520,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             ka.giStrength = s_.giStrength < 0.0f ? 0.0f : s_.giStrength > 2.0f ? 2.0f : s_.giStrength;
             ka.giDark = s_.giDark < 0.0f ? 0.0f : s_.giDark > 4.0f ? 4.0f : s_.giDark;
             ka.sCurve = s_.sCurve < 0.0f ? 0.0f : s_.sCurve > 1.0f ? 1.0f : s_.sCurve;
-            ka.pivot = fr.hdr || float_format(cd.Format) ? 0.18f : 0.4f;  // (mid-grey: linear HDR, or [0, 1] colour - gamma)
+            ka.pivot = fr.hdr || float_format(cd.Format) ? 0.071f : 0.3f;  // (30 % of the brightness: linear HDR 0.3 ^ 2.2, or [0, 1] colour)
             ka.radiusWorld = s_.aoRadius, ka.radiusScreen = s_.aoScreen > 0.01f ? s_.aoScreen : 0.15f;
             ka.rays = s_.aoRays < 4.0f ? 4.0f : s_.aoRays > 32.0f ? 32.0f : floorf(s_.aoRays + 0.5f);
             ka.contact = s_.aoContact < 0.0f ? 0.0f : s_.aoContact > 2.0f ? 2.0f : s_.aoContact;
@@ -546,10 +549,19 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 runA(psoAoMain_, s, f, u, uf);
             }
             transition(cl, aoRes_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            transition(cl, aoBlur_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            {
+                ID3D12Resource *s[kSrvs] = {aoNd_.res, aoRes_.res};
+                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, aoRes_.fmt};
+                ID3D12Resource *u[kUavs] = {aoBlur_.res};
+                DXGI_FORMAT uf[kUavs] = {aoBlur_.fmt};
+                runA(psoAoBlur_, s, f, u, uf);
+            }
+            transition(cl, aoBlur_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             transition(cl, aoCol_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             {
-                ID3D12Resource *s[kSrvs] = {aoNd_.res, color, aoRes_.res};
-                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, cd.Format, aoRes_.fmt};
+                ID3D12Resource *s[kSrvs] = {aoNd_.res, color, aoBlur_.res};
+                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, cd.Format, aoBlur_.fmt};
                 ID3D12Resource *u[kUavs] = {aoCol_.res};
                 DXGI_FORMAT uf[kUavs] = {aoCol_.fmt};
                 runA(psoAoComp_, s, f, u, uf);

@@ -19,8 +19,8 @@ cbuffer A : register(b0) {
     float rays;           // the rays a pixel (4 - 32: one bit each)
     float contact;        // how much more the rays the nearest occluders block darken (0 - 2)
     float giDark;         // the bounce light x this where the pixel is dark (0 - 4; 1: the same everywhere)
-    float sCurve;         // the curve on the lights - the luma above mid-grey (0 - 1; 0 off)
-    float pivot;          // ... mid-grey: 0.18 linear HDR, 0.4 [0, 1] colour
+    float sCurve;         // the curve on the lights - the luma above the pivot (0 - 1; 0 off)
+    float pivot;          // ... 30 % of the brightness: 0.071 linear HDR (0.3 ^ 2.2), 0.3 [0, 1] colour
     float aoPad0, aoPad1, aoPad2;
 };
 
@@ -42,6 +42,25 @@ void basisOf(float3 n, out float3 t, out float3 b) {
     float3 h = abs(n.z) < 0.999 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
     t = normalize(cross(h, n));
     b = cross(n, t);
+}
+
+// The blur's one axis (aoblur along x, aocompose along y): 9 taps step apart (2 pixels), Gaussian (sigma 4 pixels),
+// each x its depth's closeness to the centre's (relative, steep) and its normal's (cos^8)
+float4 aoBlur(Texture2D<float4> R, Texture2D<float4> N, int2 p, int2 step, float4 nd) {
+    int2 m = int2(rs) - 1;
+    float4 acc = 0.0;
+    float ws = 0.0;
+    [unroll] for (int k = -4; k <= 4; k++) {
+        int2 q = clamp(p + step * k, int2(0, 0), m);
+        float4 qn = N.Load(int3(q, 0));
+        if (qn.w <= 0.0) continue;
+        float wn = saturate(dot(qn.xyz, nd.xyz));
+        wn *= wn, wn *= wn, wn *= wn;
+        float w = exp2(-0.5 * 1.442695 * float(k * k) / 4.0) * exp2(-abs(qn.w - nd.w) / nd.w * 48.0) * wn;
+        acc += R.Load(int3(q, 0)) * w;
+        ws += w;
+    }
+    return ws > 0.0 ? acc / ws : R.Load(int3(p, 0));
 }
 
 // interleaved gradient noise (Jimenez 2014)
