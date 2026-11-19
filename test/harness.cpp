@@ -6,6 +6,9 @@
 //     scene=tiles     a detailed background panning, a nearer square moving the other way (disocclusion, ghosting)
 //     scene=glints    a dark ground with small, very bright HDR sparks panning (flashes: flick=1's sparkle)
 //     scene=grass     thin grass blades over a cracked ground, the camera panning (one motion for every depth: a turn)
+//     scene=corner    a wall receding to the right under a ceiling, a thin bright HDR strip of light along their joint,
+//                     the camera still - Ditto Relight's GI from a light nearly in a surface's plane (it should fade
+//                     smoothly down the wall); the scene's own lighting flat, so what Relight adds shows alone
 //     frames=64, ratio=1.5 (output / render; output 1440x810), vel=3 (grass: output pixels a frame), sharpen=0,
 //                     dense=1 (grass: blades x dense, thinner by its square root), wobble=0 (grass: the speed vel - wobble, vel,
 //                     vel + wobble in turn), blur=0 (grass: motion blur over
@@ -66,7 +69,7 @@ struct ffxCreateBackendDX12Desc {
 
 static uint32_t OW = 1440, OH = 810;  // (out=)
 static uint32_t RW = 960, RH = 540;
-static bool g_grass, g_glints;
+static bool g_grass, g_glints, g_corner;
 static bool g_out11;  // (outfmt=r11g11b10: the output R11G11B10_FLOAT, as many D3D12 games hand FSR theirs)
 static float g_vel = 3.0f, g_dense = 1.0f, g_blur = 0.0f, g_mvs = 1.0f, g_radiance = 1.0f;
 static int g_wobble = 0, g_light = 0, g_sky = 0, g_spec = 0;
@@ -116,6 +119,31 @@ static Sample tiles(float x, float y, int t) {
     s.rgb[0] = v, s.rgb[1] = v * 0.9f + 0.05f, s.rgb[2] = v * 0.8f + 0.1f * bg(sx * 0.5f, sy * 0.5f);
     s.depth = 0.1f;
     s.mv[0] = BG_VEL[0], s.mv[1] = BG_VEL[1];
+    return s;
+}
+
+// corner (scene=corner): the view's ray through output pixel (x, y) (the camera's vertical fov 1 radian, as the dispatch
+// says), against a wall through (0, 0, 4) turned 0.6 radians (receding to the right) and a ceiling at y = 1 in front of
+// it; the ceiling within 0.06 of the wall a strip of light (HDR 12, 8, 3), the rest dim, the wall a flat grey
+static Sample corner(float x, float y, int t) {
+    (void)t;
+    Sample s;
+    s.mv[0] = s.mv[1] = 0;
+    float ty = tanf(0.5f), tx = ty * OW / OH;
+    float dx = (2.0f * x / OW - 1.0f) * tx, dy = (1.0f - 2.0f * y / OH) * ty;
+    const float a = 0.6f, nx = -sinf(a), nz = -cosf(a), d0 = nz * 4.0f;  // (the wall: n . p = d0, n toward the camera)
+    float tw = d0 / (nx * dx + nz);
+    float tc = dy > 1e-4f ? 1.0f / dy : 1e30f;
+    float tt = fminf(tw, tc);
+    if (tc < tw) {
+        float px = tt * dx, pz = tt;
+        float dist = (nx * px + nz * pz) - d0;  // (from the wall, in front of it)
+        if (dist < 0.06f) s.rgb[0] = 12.0f, s.rgb[1] = 8.0f, s.rgb[2] = 3.0f;
+        else s.rgb[0] = s.rgb[1] = s.rgb[2] = 0.04f;
+    } else {
+        s.rgb[0] = s.rgb[1] = s.rgb[2] = 0.12f;
+    }
+    s.depth = 0.1f / tt;  // (reversed-Z, the dispatch's near 0.1, far 1e6)
     return s;
 }
 
@@ -236,6 +264,7 @@ static Sample glints(float x, float y, int t) {
 }
 static Sample sceneLit(float x, float y, int t) {
     if (g_glints) return glints(x, y, t);
+    if (g_corner) return corner(x, y, t);
     if (!g_grass) return tiles(x, y, t);
     if (g_blur <= 0.0f) return grass(x, y, t);
     // (the game's motion blur, before the upscale: the pan averaged over blur x vel output pixels)
@@ -768,6 +797,7 @@ int main(int argc, char **argv) {
     bool sharpen = atoi(opt(argc, argv, "sharpen", "0")) != 0;
     g_grass = !strcmp(opt(argc, argv, "scene", "tiles"), "grass");
     g_glints = !strcmp(opt(argc, argv, "scene", "tiles"), "glints");
+    g_corner = !strcmp(opt(argc, argv, "scene", "tiles"), "corner");
     g_vel = (float)atof(opt(argc, argv, "vel", "3"));
     g_wobble = atoi(opt(argc, argv, "wobble", "0"));
     g_stop = atoi(opt(argc, argv, "stop", "0"));
@@ -799,7 +829,7 @@ int main(int argc, char **argv) {
 
     Api *api = vk ? (Api *)new Vk() : (Api *)new Dx12();
     if (!api->init(atoi(opt(argc, argv, "gpu", "-1")))) return printf("no GPU\n"), 1;
-    printf("adapter: %s; %s, %s scene, %ux%u -> %ux%u%s\n", api->adapter(), dll, g_glints ? "glints" : g_grass ? "grass" : "tiles", RW, RH,
+    printf("adapter: %s; %s, %s scene, %ux%u -> %ux%u%s\n", api->adapter(), dll, g_glints ? "glints" : g_corner ? "corner" : g_grass ? "grass" : "tiles", RW, RH,
            OW, OH, out8 ? ", RGBA8 output" : "");
 
     char p[MAX_PATH];

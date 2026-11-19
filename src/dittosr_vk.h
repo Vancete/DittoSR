@@ -30,6 +30,7 @@ struct DittoFrameVk {
     float exposureMul = 1.0f;
     float preExposure = 1.0f;
     float reactiveMul = 1.0f;
+    float fovY = 0, zNear = 0, zFar = 0;  // the camera (FSR 3.1's dispatch; 0: unknown) - Ditto Relight
     bool reset = false;
 };
 
@@ -81,6 +82,10 @@ private:
     VkPipeline psoConvert_ = VK_NULL_HANDLE, psoMotion_ = VK_NULL_HANDLE;
     // (per output format: rgba16f, rgba8, rgb10a2, r11g11b10f, rgba32f; the upscale per history format too: RGB10A2, RGBA16F)
     VkPipeline psoUpscale_[2][5] = {}, psoSharpen_[5] = {};
+    // (EXPERIMENTAL, Ditto Relight: prepass, main, filter, temporal, compose)
+    VkPipeline psoAoPrep_ = VK_NULL_HANDLE, psoAoMain_ = VK_NULL_HANDLE, psoAoFilter_ = VK_NULL_HANDLE, psoAoTemporal_ = VK_NULL_HANDLE,
+               psoAoComp_ = VK_NULL_HANDLE, psoAoMip_ = VK_NULL_HANDLE, psoAoMain16_ = VK_NULL_HANDLE, psoAoLut_ = VK_NULL_HANDLE,
+               psoAoUp_ = VK_NULL_HANDLE, psoAoHist_ = VK_NULL_HANDLE, psoAoHalfNd_ = VK_NULL_HANDLE, psoAoCacao_ = VK_NULL_HANDLE;
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> sets_;
     VkBuffer ubo_ = VK_NULL_HANDLE;
@@ -89,6 +94,24 @@ private:
     uint32_t uboStride_ = 256;
     Img mda_[2], hist_[2], aux_[2], stab_[2], env_[2], change1_, dummy_;
     Img expo_[2];  // (the auto exposure, 1 x 1: the game asked for it and gave none)
+    // (EXPERIMENTAL, Ditto Relight, as on D3D12: normal and depth, occlusion and bounce, the filter's x, the colour;
+    // the temporal smoothing's history and its depth, ping-ponged - aoCur_ this frame's; aoOk_ valid, aoLast_ written)
+    Img aoNd_, aoRes_, aoF_, aoCol_, aoH_[2], aoHD_[2], aoMip_[4];  // (aoMip_: the depth mips 1 - 4, mips on)
+    Img aoLut_, aoHalf_;  // (the occluder lookup table - aoLutMade_: built -, the half-size main pass' target)
+    // (... half resolution, FastGI's: the filter's scratch, the normal and depth, the temporal smoothing's history and its
+    // depth, all at half size; aoLastHalf_: the last frame's mode - the history is either size's)
+    Img aoHalfF_, aoNdHalf_, aoHh_[2], aoHDh_[2];
+    bool aoLastHalf_ = false;
+    // (Relight's luma histogram (64 x 1), copied each frame into histBuf_'s slot - read kTimeRing frames later)
+    Img aoHist_;
+    VkBuffer histBuf_ = VK_NULL_HANDLE;
+    VkDeviceMemory histMem_ = VK_NULL_HANDLE;
+    const uint32_t *histMap_ = nullptr;
+    bool histHas_[8] = {};
+    bool aoLutMade_ = false;
+    int aoCur_ = 0;
+    bool aoOk_ = false;
+    uint64_t aoLast_ = ~0ull;
     bool hist10_ = false;  // (RGB10A2 is a storage format on this device: the history can be 10 bits)
     bool split_ = false;
     std::vector<Garbage> garbage_;

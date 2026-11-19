@@ -312,10 +312,14 @@ struct Ui {
     float alpha = 1.0f;  // (the panel's fade)
     float dx = 0.0f, dy = 0.0f;  // (the slide, the scroll)
     float s = 1.0f;  // (pixels per unit: the screen's height / 1080)
+    float clip0 = -1e9f, clip1 = 1e9f;  // (the rows kept within the panel's top and bottom: a box cut there, a glyph dropped)
 
     void box(float x0, float y0, float x1, float y1, C4 c0, C4 c1, float radius, int mode = 0, float width = 0.0f) {
         if (q.size() >= kMaxQuads) return;
-        Quad o = {{x0 + dx, y0 + dy, x1 + dx, y1 + dy}, {0, 0, 0, 0}, {c0.r, c0.g, c0.b, c0.a * alpha}, {c1.r, c1.g, c1.b, c1.a * alpha},
+        float Y0 = y0 + dy, Y1 = y1 + dy;
+        if (Y1 <= clip0 || Y0 >= clip1) return;
+        Y0 = fmaxf(Y0, clip0), Y1 = fminf(Y1, clip1);
+        Quad o = {{x0 + dx, Y0, x1 + dx, Y1}, {0, 0, 0, 0}, {c0.r, c0.g, c0.b, c0.a * alpha}, {c1.r, c1.g, c1.b, c1.a * alpha},
                   {radius, (float)mode, width, 0}};
         q.push_back(o);
     }
@@ -331,7 +335,7 @@ struct Ui {
         x = floorf(x + dx + 0.5f) - dx, y = floorf(y + dy + 0.5f) - dy;
         while (*t) {
             const Glyph &g = fd.g[glyph_index(next_cp(t))];
-            if (q.size() < kMaxQuads && g.adv > 0.0f) {
+            if (q.size() < kMaxQuads && g.adv > 0.0f && y - 1 + dy >= clip0 && y - 1 + g.h + dy <= clip1) {
                 Quad o = {{x - 2 + dx, y - 1 + dy, x - 2 + g.w + dx, y - 1 + g.h + dy}, {g.u0, g.v0, g.u1, g.v1}, {c.r, c.g, c.b, c.a * alpha},
                           {c.r, c.g, c.b, c.a * alpha}, {0, 1, 0, 0}};
                 q.push_back(o);
@@ -345,7 +349,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -375,6 +379,15 @@ struct Menu : Perf {  // (its Perf: a copy of g_perf, taken before each draw)
     Key kMenu{0}, kUp{VK_UP}, kDown{VK_DOWN}, kLeft{VK_LEFT}, kRight{VK_RIGHT}, kEnter{VK_RETURN}, kBack{VK_BACK};
     bool lmb = false;
     int drag = -1;  // (the slider the mouse holds)
+    bool relight = false;  // (Ditto Relight on: its sliders shown)
+    bool sharpOff = false;  // (the sharpening off: its slider hidden)
+    // the curves editor: its graph (gx0, gy0, gx1, gy1, in the rows' coordinates), the point selected, the point the
+    // mouse holds (-1 none), the keyboard's editing, the last click (a double click resets), the UI's scale
+    float cg[4] = {};
+    int curveSel = 0, curveDrag = -1;
+    bool curveEdit = false;
+    double lastClick = 0.0;
+    float lastClickX = 0, lastClickY = 0, uiS = 1.0f;
     float rowY[I_COUNT] = {}, rowH[I_COUNT] = {};
     float btnX[3][2] = {};
     float trackX0 = 0, trackX1 = 0;
@@ -443,7 +456,17 @@ bool key_pressed(Key &k, double t, bool repeat) {
 // the frame weight FSR 3.1's settings set (OptiScaler's presets, or the game) while not overridden; -1 none
 float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f : (float)g_stats.fsrFrameWeight; }
 
-bool visible(int i) { return (i != I_UPSCALER && i != I_COMPARE) || g_stats.hasReal; }
+bool visible(int i) {
+    if (i == I_SHARP) return !g_m.sharpOff;
+    // (the sliders hidden while CORTAO's toggles are tried; the temporal smoothing's toggle shown)
+    // (CORTAO's ideas on and hidden; the temporal smoothing, screen reach 0.25, the samples and the half size shown)
+    // (Relight's: its curves; the rest on by default and hidden - ini keys)
+    if (i == I_RCURVE) return g_m.relight;
+    if (i == I_TREACH || i == I_RSAMPLES || (i >= I_THALF && i <= I_TCACAO)) return false;
+    if (i >= I_TPLANE && i <= I_TCMIP) return false;
+    if (i >= I_RAO && i <= I_RTEMPW) return false;
+    return (i != I_UPSCALER && i != I_COMPARE) || g_stats.hasReal;
+}
 
 // the sliders' and choices' ranges
 struct Range { float lo, hi, step; };
@@ -451,6 +474,18 @@ Range range_of(int i) {
     switch (i) {
     case I_SHARP: return {0.0f, 1.0f, 0.05f};
     case I_WEIGHT: return {0.25f, 4.0f, 0.25f};
+    case I_RAO: return {0.0f, 1.0f, 0.05f};
+    case I_RGI: return {0.0f, 4.0f, 0.1f};
+    case I_RGIDARK: return {0.0f, 4.0f, 0.1f};
+    case I_RGICEIL: return {0.0f, 4.0f, 0.25f};
+    case I_RSCURVE: return {0.0f, 1.0f, 0.05f};
+    case I_RRAYS: return {4.0f, 32.0f, 4.0f};
+    case I_RRADIUS: return {0.0f, 16.0f, 0.5f};
+    case I_RSCREEN: return {0.05f, 0.5f, 0.05f};
+    case I_RCONTACT: return {0.0f, 4.0f, 0.25f};
+    case I_RSPATIAL: return {1.0f, 2.0f, 0.25f};
+    case I_RTEMPW: return {0.0f, 0.95f, 0.05f};
+    case I_RSAMPLES: return {4.0f, 32.0f, 4.0f};
     default: return {0, 1, 1};
     }
 }
@@ -458,12 +493,51 @@ float *slider_of(DittoSettings &s, int i) {
     switch (i) {
     case I_SHARP: return &s.sharpness;
     case I_WEIGHT: return &s.frameWeight;
+    case I_RAO: return &s.aoStrength;
+    case I_RGI: return &s.giStrength;
+    case I_RGIDARK: return &s.giDark;
+    case I_RGICEIL: return &s.giCeiling;
+    case I_RSCURVE: return &s.sCurve;
+    case I_RRAYS: return &s.aoRays;
+    case I_RRADIUS: return &s.aoRadius;
+    case I_RSCREEN: return &s.aoScreen;
+    case I_RCONTACT: return &s.aoContact;
+    case I_RSPATIAL: return &s.aoSpatial;
+    case I_RTEMPW: return &s.aoTemporalWeight;
+    case I_RSAMPLES: return &s.aoSamples;
     default: return nullptr;
     }
 }
 const float kShimmer[] = {-1.0f, 0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f};
 const int kShimmerCount = sizeof kShimmer / sizeof kShimmer[0];
 const char *kDebugNames[] = {"Off", "Motion", "New frame's share", "Stability", "Clip / cut / confidence"};
+
+// the curve's points: k kept between its neighbours (0.01 apart) and in [0, 1]; a point added at (x, y) - its index,
+// -1: none (8 already, or too near one); an inner point removed
+void curve_clamp(DittoSettings &s, int k) {
+    int n = s.curveN;
+    float lo = k > 0 ? s.curveX[k - 1] + 0.01f : 0.0f, hi = k < n - 1 ? s.curveX[k + 1] - 0.01f : 1.0f;
+    s.curveX[k] = fminf(fmaxf(s.curveX[k], lo), hi), s.curveY[k] = fminf(fmaxf(s.curveY[k], 0.0f), 1.0f);
+}
+int curve_add(DittoSettings &s, float x, float y) {
+    int n = s.curveN;
+    if (n >= 8 || x <= s.curveX[0] + 0.01f || x >= s.curveX[n - 1] - 0.01f) return -1;
+    int k = 1;
+    while (k < n && s.curveX[k] < x) k++;
+    if (x - s.curveX[k - 1] < 0.01f || s.curveX[k] - x < 0.01f) return -1;
+    for (int i = n; i > k; i--) s.curveX[i] = s.curveX[i - 1], s.curveY[i] = s.curveY[i - 1];
+    s.curveX[k] = x, s.curveY[k] = fminf(fmaxf(y, 0.0f), 1.0f), s.curveN = n + 1;
+    return k;
+}
+void curve_remove(DittoSettings &s, int k) {
+    if (k <= 0 || k >= s.curveN - 1) return;
+    for (int i = k; i < s.curveN - 1; i++) s.curveX[i] = s.curveX[i + 1], s.curveY[i] = s.curveY[i + 1];
+    s.curveN--;
+}
+void curve_reset(DittoSettings &s) {  // (to the line, as Photoshop's; Defaults: the default curve)
+    s.curveN = 2;
+    for (int i = 0; i < 8; i++) s.curveX[i] = s.curveY[i] = i == 1 ? 1.0f : 0.0f;
+}
 
 int shimmer_index(float v) {
     int best = 0;
@@ -478,7 +552,8 @@ bool adjust(DittoSettings &s, int i, int dir) {
     switch (i) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
-    case I_SHARP: case I_WEIGHT: {
+    case I_SHARP: case I_WEIGHT: case I_RAO: case I_RGI: case I_RGIDARK: case I_RGICEIL: case I_RSCURVE: case I_RRAYS: case I_RRADIUS:
+    case I_RSCREEN: case I_RCONTACT: case I_RSPATIAL: case I_RTEMPW: case I_RSAMPLES: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
         // (the frame weight: moved, it overrides FSR 3.1's settings' - OptiScaler's presets - from the weight in use;
@@ -499,8 +574,21 @@ bool adjust(DittoSettings &s, int i, int dir) {
         return true;
     }
     case I_INDICATOR: s.indicator = !s.indicator; return true;
-    case I_SHMODE: s.sharpenMode = !s.sharpenMode; return true;
+    case I_SHMODE: s.sharpenMode = (s.sharpenMode + (dir < 0 ? 2 : 1)) % 3; return true;
     case I_RELIGHT: s.relight = !s.relight; return true;
+    case I_RTEMP: s.aoTemporal = !s.aoTemporal; return true;
+    case I_TPLANE: s.aoPlaneFilter = !s.aoPlaneFilter; return true;
+    case I_TSPARSE: s.aoSparseFilter = !s.aoSparseFilter; return true;
+    case I_TMIPS: s.aoMips = !s.aoMips; return true;
+    case I_TREACH: s.aoScreen = s.aoScreen <= 0.3f ? d.aoScreen : 0.25f; return true;
+    case I_TPOW: s.aoPower = !s.aoPower; return true;
+    case I_TBACK: s.aoBackBoost = !s.aoBackBoost; return true;
+    case I_TLUT: s.aoLut = !s.aoLut; return true;
+    case I_TWG: s.aoWg16 = !s.aoWg16; return true;
+    case I_TCMIP: s.aoColorMips = !s.aoColorMips; return true;
+    case I_THALF: s.aoHalf = !s.aoHalf; return true;
+    case I_TDECOR: s.aoDecorrelate = !s.aoDecorrelate; return true;
+    case I_TCACAO: s.aoCacao = !s.aoCacao; return true;
     }
     return false;
 }
@@ -560,6 +648,8 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     u.box(px0, py0, px1, py1, kPanelTop, kPanelBottom, 18 * S);
     u.box(px0, py0, px1, py1, rgba(0xFFFFFF, 0.08f), rgba(0xFFFFFF, 0.03f), 18 * S, 2, 1.0f);
     u.dy = sdy;
+    // (the rows within the panel, above its footer: the curves editor makes them taller than it)
+    u.clip0 = py0 + 2 * S, u.clip1 = py1 - pad - u.h(F_SMALL) - 10 * S;
     float x0 = px0 + pad, x1 = px1 - pad, y = py0 + pad;
 
     // the header: the name, the version, the state
@@ -704,8 +794,8 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         y += 10 * S;
     }
     section("IMAGE");
-    choice_row(I_SHMODE, "Sharpening filter", s.sharpenMode ? "RCAS" : "CAS");
-    slider_row(I_SHARP, "Sharpness", nullptr);
+    choice_row(I_SHMODE, "Sharpening filter", s.sharpenMode == 1 ? "RCAS" : s.sharpenMode == 2 ? "Off" : "CAS");
+    if (s.sharpenMode != 2) slider_row(I_SHARP, "Sharpness", nullptr);
     {
         // (the weight in use: FSR 3.1's settings' until the slider is moved)
         DittoSettings sw = s;
@@ -723,6 +813,61 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     y += 10 * S;
     section("EXPERIMENTAL");
     toggle_row(I_RELIGHT, "Ditto Relight", s.relight);
+    if (s.relight) {
+        // the curves editor (Photoshop's): the image's luma histogram behind, the line, the curve, its points; the
+        // black-to-white ramps at its left and bottom
+        {
+            g_m.uiS = S;
+            float side = x1 - x0 - 14 * S, rh = 30 * S + side + 18 * S;
+            row_bg(I_RCURVE, rh);
+            u.text(F_BODY, x0, y + 7 * S, "Curves", kText);
+            u.text(F_SMALL, x0 + u.measure(F_BODY, "Curves") + 8 * S, y + 7 * S + (lh - u.h(F_SMALL)) / 2 + 1 * S,
+                   ditto_curve_line(s) ? "the line: none" : "applied to the image", kText3);
+            float gx0 = x0 + 14 * S, gy0 = y + 30 * S, gx1 = gx0 + side, gy1 = gy0 + side;
+            g_m.cg[0] = gx0, g_m.cg[1] = gy0, g_m.cg[2] = gx1, g_m.cg[3] = gy1;
+            u.box(gx0, gy0, gx1, gy1, rgba(0x000000, 0.28f), 3 * S);
+            for (int k = 1; k < 4; k++) {
+                float gx = gx0 + side * k / 4, gy = gy0 + side * k / 4;
+                u.box(gx, gy0, gx + 1, gy1, kLine, 0);
+                u.box(gx0, gy, gx1, gy + 1, kLine, 0);
+            }
+            if (g_stats.histSeq) {  // (the histogram: 64 bars, scaled to its tallest but the two ends - clipped black, white)
+                uint32_t mx = 1;
+                for (int k = 1; k < 63; k++) mx = g_stats.hist[k] > mx ? g_stats.hist[k] : mx;
+                float bw = side / 64;
+                for (int k = 0; k < 64; k++) {
+                    float hh = fminf((float)g_stats.hist[k] / mx, 1.0f) * side * 0.92f;
+                    if (hh > 0.5f) u.box(gx0 + k * bw, gy1 - hh, gx0 + (k + 1) * bw, gy1, rgba(0xFFFFFF, 0.13f), rgba(0xFFFFFF, 0.07f), 0);
+                }
+            }
+            for (float t = 0.0f; t < 1.0f; t += 0.02f)  // (the line, faint)
+                u.box(gx0 + t * side, gy1 - t * side - 0.5f * S, gx0 + t * side + 1.5f * S, gy1 - t * side + 1.0f * S, rgba(0xFFFFFF, 0.18f), 0);
+            u.box(x0, gy0, x0 + 8 * S, gy1, rgba(0xFFFFFF), rgba(0x000000), 2 * S);
+            for (int k = 0; k < 32; k++) {
+                float v = (k + 0.5f) / 32;
+                u.box(gx0 + side * k / 32, gy1 + 6 * S, gx0 + side * (k + 1) / 32 + 0.5f, gy1 + 14 * S, C4{v, v, v, 1.0f}, 0);
+            }
+            float y2[8];
+            int n = s.curveN < 2 ? 2 : s.curveN > 8 ? 8 : s.curveN;
+            ditto_curve_y2(n, s.curveX, s.curveY, y2);
+            int steps = (int)(side / (1.5f * S));
+            float py = gy1 - ditto_curve_at(n, s.curveX, s.curveY, y2, 0.0f) * side;
+            for (int k = 1; k <= steps; k++) {
+                float t = (float)k / steps, ny = gy1 - ditto_curve_at(n, s.curveX, s.curveY, y2, t) * side;
+                float px1 = gx0 + t * side, px0 = px1 - side / steps;
+                u.box(px0, fminf(py, ny) - 0.9f * S, px1 + 0.5f, fmaxf(py, ny) + 0.9f * S, kText, 0);
+                py = ny;
+            }
+            for (int k = 0; k < n; k++) {
+                float cx = gx0 + s.curveX[k] * side, cy = gy1 - s.curveY[k] * side, r = 4.5f * S;
+                bool on = g_m.sel == I_RCURVE && g_m.curveSel == k && (g_m.curveEdit || g_m.curveDrag == k);
+                u.box(cx - r, cy - r, cx + r, cy + r, rgba(0x15171C), 1 * S);
+                if (on) u.box(cx - r, cy - r, cx + r, cy + r, kAccent, 1 * S);
+                else u.box(cx - r, cy - r, cx + r, cy + r, kText, kText, 1 * S, 2, 1.2f * S);
+            }
+            y += rh + 2 * S;
+        }
+    }
     y += 10 * S;
     section("ADVANCED");
     choice_row(I_DEBUG, "Debug view", kDebugNames[s.debugView < 0 || s.debugView > 4 ? 0 : s.debugView]);
@@ -749,6 +894,7 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     float content = y - (py0 + pad);
     // the footer: the keys, or the last action's note (it stays at the panel's bottom)
     u.dy = 0.0f;
+    u.clip0 = -1e9f, u.clip1 = 1e9f;  // (the footer: unclipped)
     float fy = py1 - pad - u.h(F_SMALL);
     u.box(px0 + 1, fy - 14 * S, px1 - 1, py1 - 1, rgba(0x0E1013, 0.0f), rgba(0x0E1013, 0.96f), 17 * S);
     u.box(x0, fy - 10 * S, x1, fy - 10 * S + 1, kLine, 0);
@@ -756,9 +902,14 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         u.box(x0, fy + u.h(F_SMALL) / 2 - 3 * S, x0 + 6 * S, fy + u.h(F_SMALL) / 2 + 3 * S, g_m.toastOk ? kAccent : kWarn, 3 * S);
         u.text(F_SMALL, x0 + 12 * S, fy, g_m.toast, kText);
     } else {
-        u.text(F_SMALL, x0, fy, "\xE2\x86\x91\xE2\x86\x93 Select   \xE2\x86\x90\xE2\x86\x92 Adjust   Enter Reset/Toggle   F7 Close", kText3);
+        const char *keys = g_m.sel == I_RCURVE && g_m.curveEdit
+                               ? "\xE2\x86\x91\xE2\x86\x93\xE2\x86\x90\xE2\x86\x92 Move   Enter Next   Backspace Remove"
+                           : g_m.sel == I_RCURVE ? "Enter Edit   Click adds · drag out removes · 2 clicks reset"
+                                                 : "\xE2\x86\x91\xE2\x86\x93 Select   \xE2\x86\x90\xE2\x86\x92 Adjust   Enter Reset/Toggle   F7 Close";
+        u.text(F_SMALL, x0, fy, keys, kText3);
     }
     u.dy = sdy;
+    u.clip0 = -1e9f, u.clip1 = 1e9f;
     return content + 2 * pad + u.h(F_SMALL) + 24 * S;
 }
 
@@ -786,10 +937,23 @@ bool cursor_on_panel(POINT *bb) {
 }
 
 void input(DittoSettings &s, bool &changed, double t) {
+    if (g_m.sel != I_RCURVE) g_m.curveEdit = false;
+    if (g_m.curveEdit) {  // (the curves editor by keyboard: the arrows move the point, Enter the next, Backspace removes it)
+        int k = g_m.curveSel < s.curveN ? g_m.curveSel : 0;
+        float dx = (key_pressed(g_m.kRight, t, true) ? 1.0f : 0.0f) - (key_pressed(g_m.kLeft, t, true) ? 1.0f : 0.0f);
+        float dy = (key_pressed(g_m.kUp, t, true) ? 1.0f : 0.0f) - (key_pressed(g_m.kDown, t, true) ? 1.0f : 0.0f);
+        if (dx != 0.0f || dy != 0.0f) s.curveX[k] += dx * 0.01f, s.curveY[k] += dy * 0.01f, curve_clamp(s, k), changed = true;
+        if (key_pressed(g_m.kEnter, t, false)) {
+            if (++g_m.curveSel >= s.curveN) g_m.curveSel = 0, g_m.curveEdit = false;
+        }
+        if (key_pressed(g_m.kBack, t, false) && k > 0 && k < s.curveN - 1) curve_remove(s, k), g_m.curveSel = k - 1, changed = true;
+    } else {
     if (key_pressed(g_m.kUp, t, true)) g_m.sel = step_sel(g_m.sel, -1);
     if (key_pressed(g_m.kDown, t, true)) g_m.sel = step_sel(g_m.sel, 1);
     bool l = key_pressed(g_m.kLeft, t, true), r = key_pressed(g_m.kRight, t, true), e = key_pressed(g_m.kEnter, t, false);
-    if (g_m.sel == I_BUTTONS) {
+    if (g_m.sel == I_RCURVE) {
+        if (e) g_m.curveEdit = true, g_m.curveSel = 0;
+    } else if (g_m.sel == I_BUTTONS) {
         if (l) g_m.btn = (g_m.btn + 2) % 3;
         if (r) g_m.btn = (g_m.btn + 1) % 3;
         if (e) press_button(s, g_m.btn, changed);
@@ -799,6 +963,7 @@ void input(DittoSettings &s, bool &changed, double t) {
         if (e) changed |= adjust(s, g_m.sel, 0);
     }
     if (key_pressed(g_m.kBack, t, false)) g_m.open = false;
+    }
     // the mouse, where its cursor shows over the panel (rows hit in the panel's coordinates, the scroll included)
     POINT p;
     bool on = cursor_on_panel(&p);
@@ -814,6 +979,40 @@ void input(DittoSettings &s, bool &changed, double t) {
     if (g_m.drag >= 0) hit = g_m.drag;
     if (hit < 0) return;
     if (g_m.drag < 0) g_m.sel = hit;
+    if (hit == I_RCURVE) {  // (the curves editor: a point taken or added, dragged, dragged out - removed; a double click resets)
+        float S = g_m.uiS, gx0 = g_m.cg[0], gy0 = g_m.cg[1], gx1 = g_m.cg[2], gy1 = g_m.cg[3], side = gx1 - gx0;
+        float cx = (mx - gx0) / side, cy = (gy1 - my) / side;
+        if (!down) g_m.curveDrag = -1;
+        if (click) {
+            int best = -1;
+            float bd = 10.0f * S;
+            for (int k = 0; k < s.curveN; k++) {
+                float d = hypotf(gx0 + s.curveX[k] * side - mx, gy1 - s.curveY[k] * side - my);
+                if (d < bd) bd = d, best = k;
+            }
+            bool inside = cx >= 0.0f && cx <= 1.0f && cy >= 0.0f && cy <= 1.0f;
+            bool dbl = t - g_m.lastClick < 350.0 && fabsf(mx - g_m.lastClickX) < 6 * S && fabsf(my - g_m.lastClickY) < 6 * S;
+            g_m.lastClick = t, g_m.lastClickX = mx, g_m.lastClickY = my;
+            if (dbl && inside && (best < 0 || (best > 0 && best < s.curveN - 1))) {
+                curve_reset(s), g_m.curveSel = 0, g_m.curveDrag = -1, changed = true;
+                return;
+            }
+            if (best < 0 && inside) best = curve_add(s, cx, cy), changed |= best >= 0;
+            if (best >= 0) g_m.curveDrag = best, g_m.curveSel = best, g_m.drag = I_RCURVE;
+        }
+        int k = g_m.curveDrag;
+        if (down && k >= 0 && k < s.curveN && !click) {
+            float m = 24 * S;
+            bool out = mx < gx0 - m || mx > gx1 + m || my < gy0 - m || my > gy1 + m;
+            if (out && k > 0 && k < s.curveN - 1) {
+                curve_remove(s, k), g_m.curveDrag = -1, g_m.curveSel = k - 1, changed = true;
+            } else {
+                float nx = fminf(fmaxf(cx, 0.0f), 1.0f), ny = fminf(fmaxf(cy, 0.0f), 1.0f);
+                if (nx != s.curveX[k] || ny != s.curveY[k]) s.curveX[k] = nx, s.curveY[k] = ny, curve_clamp(s, k), changed = true;
+            }
+        }
+        return;
+    }
     if (hit == I_BUTTONS) {
         for (int b = 0; b < 3; b++)
             if (mx >= g_m.btnX[b][0] && mx < g_m.btnX[b][1]) {
@@ -834,7 +1033,7 @@ void input(DittoSettings &s, bool &changed, double t) {
             }
         }
     } else if (click) {
-        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR && hit != I_RELIGHT ? -1 : 1);
+        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR && hit != I_RELIGHT && hit != I_RTEMP && !(hit >= I_TPLANE && hit <= I_TCMIP) && hit != I_THALF && hit != I_TDECOR && hit != I_TCACAO ? -1 : 1);
     }
 }
 
@@ -843,8 +1042,11 @@ void make_panel(Ui &u, float W, float H, float scale, double t, bool focus) {
     take_perf();
     DittoSettings s = ditto_settings();
     bool changed = false;
+    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2;
     if (g_m.open && focus) input(s, changed, t);
     if (changed) ditto_set_settings(s);
+    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2;
+    if (!visible(g_m.sel)) g_m.sel = I_RELIGHT;  // (its sliders hidden under the selection: Relight off, or Defaults)
     u.s = scale, u.alpha = ease(g_m.anim), u.dx = -(1.0f - ease(g_m.anim)) * 420.0f * scale;
     u.q.reserve(2048);
     // (the scroll: the selected row kept in view)

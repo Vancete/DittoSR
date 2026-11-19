@@ -4,7 +4,7 @@
 #include "ao_common.hlsli"
 
 Texture2D<float> Depth : register(t0);
-RWTexture2D<float4> Nd : register(u0);
+AOFMT("rgba32f") RWTexture2D<float4> Nd : register(u0);
 
 [numthreads(8, 8, 1)]
 void main(uint2 id : SV_DispatchThreadID) {

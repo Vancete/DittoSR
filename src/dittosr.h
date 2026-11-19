@@ -4,10 +4,12 @@
 #include <d3d12.h>
 #include <stdint.h>
 
+#include <vector>
+
 #include "ffx_api/ffx_upscale.h"
 
 // the version both front ends report (the FidelityFX API provider, the libxess.dll proxy)
-#define DITTOSR_VERSION "0.5.1"
+#define DITTOSR_VERSION "0.5.2"
 #define DITTOSR_VERSION_NAME "DittoSR " DITTOSR_VERSION
 
 struct DittoSettings {
@@ -28,9 +30,10 @@ struct DittoSettings {
     float motionMinMax = 1.0f; // how far the box is held within the samples' min / max while moving
     float sharpness = 0.6f;    // at rest 0 soft, 0.6 as reconstructed, 1 sharpened; moving, sharpened by it (sharpen.hlsl)
     // the sharpening's filter: 0 CAS; 1 RCAS (FSR 1's robust CAS: one weight for the 3 channels, less on noise) - the
-    // sharpening pass then runs at every ratio (no fused sharpening)
+    // sharpening pass then runs at every ratio (no fused sharpening); 2 off (no sharpening, no pass: the upscale writes
+    // the output)
     int sharpenMode = 0;
-    // EXPERIMENTAL (D3D12), Ditto Relight: ambient occlusion and a one-bounce global illumination after CORTAO
+    // EXPERIMENTAL (D3D12 and Vulkan), Ditto Relight: ambient occlusion and a one-bounce global illumination after CORTAO
     // (aomain.hlsl), applied to the colour before the upscale - the occlusion x 0.75, the bounce light x 2; their reach:
     // aoRadius view units (0: no limit in the world), at most aoScreen of the screen's height; aoRays rays a pixel
     // (4 - 32); aoContact: how much more the rays blocked by the nearest occluders darken (0 - 4: contact shadows)
@@ -38,14 +41,40 @@ struct DittoSettings {
     float aoRadius = 0.0f, aoScreen = 0.5f, aoRays = 4.0f, aoContact = 2.0f;
     // ... the occlusion's strength (0 - 1), the bounce light's (0 - 4), and the bounce light x giDark where the pixel is
     // dark (0 - 4: 1 the same everywhere; above, the shadows lifted more by what surrounds them; below, kept darker)
-    float aoStrength = 0.75f, giStrength = 2.0f, giDark = 0.3f;
+    float aoStrength = 0.75f, giStrength = 2.0f, giDark = 1.0f;
+    // ... the bounce light's ceiling (0 - 4; 0 none): added at most giCeiling x the pixel's own colour, saturating
+    // smoothly - a dark material no longer veiled by what a bright surface bounces onto it (aocompose.hlsl)
+    float giCeiling = 2.0f;
+    // ... CORTAO's ideas (tests; off: as before): its filter weights (each tap's depth against the centre's plane, its
+    // normal, pairs symmetric), its sparse filter (one pass, 6 pairs) in place of FastGI's, depth mips (the far samples
+    // from a sub-sampled chain), the AO as a power (pow(occlusion, aoStrength) in place of a lerp), backface boost
+    bool aoPlaneFilter = true, aoSparseFilter = true, aoMips = true, aoPower = true, aoBackBoost = true;
+    // ... more of CORTAO's (tests): its occluder lookup table (32 rays a pixel, the table built on the GPU for
+    // DittoSR's rays), the main pass in 16 x 16 groups (CORTAO's cache advice), colour mips for the GI's far occluders
+    bool aoLut = true, aoWg16 = true, aoColorMips = true;
+    // ... the main pass' samples a pixel (4 - 32: fewer, noisier; more, slower), and the main pass at half size (one
+    // pixel of each 2 x 2 a frame, brought back by depth and normal - about a quarter of its cost)
+    float aoSamples = 32.0f;
+    bool aoHalf = true;  // (FastGI's: the filter and the temporal smoothing at half size too, the result brought back at the end)
+    // ... decorrelated noise (each random dimension of the main pass its own IGN moved along its own direction a frame:
+    // no fixed pattern - the bands of light a thin light left down a wall) - a test
+    bool aoDecorrelate = true;
+    // ... FidelityFX CACAO's edge-sensitive blur after the temporal smoothing (aocacao.hlsl; D3D12): on the accumulated AO
+    // and GI at the main pass' size, the history left as it is - aoCacaoPasses of it (1 - 8; CACAO's default 2) - a test
+    bool aoCacao = true;
+    int aoCacaoPasses = 2;
+    // ... the curve (the menu's curves editor; ini curve = "x,y x,y ..."): curveN points (2 - 8) by x in [0, 1], each
+    // channel through their natural cubic spline in a perceptual [0, 1] (aocompose.hlsl) - the line: none. By default
+    // a slight crush of the blacks and a darker low end (the curve tuned in Assetto Corsa EVO)
+    int curveN = 3;
+    float curveX[8] = {0.03774f, 0.228f, 1.0f}, curveY[8] = {0.0f, 0.2453f, 1.0f};
     // ... a curve on the lights (0 - 1; 0 off): the luma from 30 % of the brightness up brighter - starting flat, at most
     // sCurve stops; below, as it is
     float sCurve = 0.3f;
     // ... their noise evened out after FastGI's: a spatial filter (aofilter.hlsl: 5 taps x then y, by depth and normal)
     // its taps aoSpatial x 2 pixels apart (1 - 2), then a temporal smoothing (aotemporal.hlsl: their history, reprojected
     // by the game's motion vectors, x aoTemporalWeight (0 - 0.95), less in motion)
-    float aoSpatial = 2.0f;
+    float aoSpatial = 1.0f;
     bool aoTemporal = true;
     float aoTemporalWeight = 0.85f;
     float frameWeight = 2.0f;  // x the new frame's share, 0.25 - 4: lower, more persistence (smoother, blurrier in motion)
@@ -109,6 +138,34 @@ struct DittoSettings {
     int debugView = 0;  // 1: the motion; 2: the new frame's share; 3: the stability level; 4: clip / cut / confidence
 };
 
+// The curve's spline (the menu draws it, the composition applies it): the natural cubic spline's second derivatives
+// y2 at the n points (x increasing); the curve at t, flat before and after its ends, in [0, 1]; the line: none
+inline bool ditto_curve_line(const DittoSettings &s) {
+    return s.curveN < 2 || (s.curveN == 2 && s.curveX[0] == 0.0f && s.curveY[0] == 0.0f && s.curveX[1] == 1.0f && s.curveY[1] == 1.0f);
+}
+inline void ditto_curve_y2(int n, const float *x, const float *y, float *y2) {
+    float u[8] = {};
+    y2[0] = 0.0f, u[0] = 0.0f;
+    for (int i = 1; i < n - 1; i++) {
+        float sig = (x[i] - x[i - 1]) / (x[i + 1] - x[i - 1]), p = sig * y2[i - 1] + 2.0f;
+        y2[i] = (sig - 1.0f) / p;
+        float d = (y[i + 1] - y[i]) / (x[i + 1] - x[i]) - (y[i] - y[i - 1]) / (x[i] - x[i - 1]);
+        u[i] = (6.0f * d / (x[i + 1] - x[i - 1]) - sig * u[i - 1]) / p;
+    }
+    y2[n - 1] = 0.0f;
+    for (int k = n - 2; k >= 0; k--) y2[k] = y2[k] * y2[k + 1] + u[k];
+}
+inline float ditto_curve_at(int n, const float *x, const float *y, const float *y2, float t) {
+    if (t <= x[0]) return y[0];
+    if (t >= x[n - 1]) return y[n - 1];
+    int k = 0;
+    for (int i = 1; i + 1 < n; i++)
+        if (t >= x[i]) k = i;
+    float h = x[k + 1] - x[k] > 1e-5f ? x[k + 1] - x[k] : 1e-5f, a = (x[k + 1] - t) / h, b = (t - x[k]) / h;
+    float v = a * y[k] + b * y[k + 1] + ((a * a * a - a) * y2[k] + (b * b * b - b) * y2[k + 1]) * h * h / 6.0f;
+    return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v;
+}
+
 // What the context was created with (ffxCreateContextDescUpscale)
 struct DittoCreateInfo {
     uint32_t flags;  // FfxApiCreateContextUpscaleFlags
@@ -156,7 +213,14 @@ private:
     bool createPipelines();
     // (false: they could not be made; *made: a new set - the history starts again)
     bool ensureTextures(uint32_t rw, uint32_t rh, uint32_t ow, uint32_t oh, DXGI_FORMAT historyFormat, DXGI_FORMAT stabFormat, bool *made);
-    void releaseTextures();
+    // (now: released at once - the GPU idle; else retired: released kRetire frames later, when the frames in flight
+    // that use them are surely done - a new format or size from the menu otherwise freed them under the GPU)
+    void releaseTextures(bool now = false);
+    void retire(Tex &t, bool now);
+    void collectRetired(bool all);
+    struct Retired { ID3D12Resource *res; uint64_t frame; };
+    std::vector<Retired> retired_;
+    static constexpr uint64_t kRetire = 8;
     bool makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f);
     void transition(ID3D12GraphicsCommandList *cl, Tex &t, D3D12_RESOURCE_STATES to);
     D3D12_GPU_DESCRIPTOR_HANDLE table(ID3D12Resource *const *srv, const DXGI_FORMAT *srvFmt, ID3D12Resource *const *uav,
@@ -172,7 +236,8 @@ private:
     ID3D12PipelineState *psoUpscaleAs_ = nullptr, *psoUpscaleAs16_ = nullptr;  // (the anti-shimmer variants)
     // (the 1x variants, the motion pass fused in: [fp16][anti-shimmer]; null: the motion pass as at other ratios)
     ID3D12PipelineState *psoUpscaleFm_[2][2] = {};
-    ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr;  // (EXPERIMENTAL: Ditto Relight)
+    ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr, *psoAoMip_ = nullptr;
+    ID3D12PipelineState *psoAoMain16_ = nullptr, *psoAoLut_ = nullptr, *psoAoUp_ = nullptr, *psoAoHist_ = nullptr, *psoAoHalfNd_ = nullptr, *psoAoCacao_ = nullptr;  // (... the 16 x 16 main pass, the table, the half size's upsample)  // (EXPERIMENTAL: Ditto Relight)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     // the game's output last checked (outputWritable): its format, whether it allows unordered access, and the verdict
@@ -188,6 +253,33 @@ private:
     // (... their temporal smoothing's history and its depth, ping-ponged (aoCur_ this frame's); aoOk_: valid, aoLast_:
     // the frame it was written)
     Tex aoH_[2], aoHD_[2];
+    Tex aoMip_[4];  // (... the depth mips 1 - 4: mips on)
+    Tex aoLut_, aoHalf_;  // (... the occluder lookup table - aoLutMade_: built -, the half-size main pass' target)
+    // (... half resolution, FastGI's: the filter's scratch, the normal and depth, the temporal smoothing's history and its
+    // depth, all at half size; aoLastHalf_: the last frame's mode - the history is either size's)
+    Tex aoHalfF_, aoNdHalf_, aoHh_[2], aoHDh_[2];
+    bool aoLastHalf_ = false;
+    // (... the luma histogram (64 x 1), copied each frame into histRb_'s slot - read kTimeRing frames later; histHas_:
+    // a slot written)
+    Tex aoHist_;
+    ID3D12Resource *histRb_ = nullptr;
+    // (the F8 capture: per frame, the output's and Relight's colour's readback copies; capN_ the frames copied (-1: no
+    // capture), capLast_ the frame of the last - written out kCapWait frames later, the GPU done with them)
+    struct Cap {
+        ID3D12Resource *rb = nullptr;
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp = {};
+        uint32_t w = 0, h = 0;
+    };
+    static constexpr int kCapFrames = 8, kCapWait = 6;
+    Cap capOut_[kCapFrames], capRel_[kCapFrames];
+    int capN_ = -1;
+    uint64_t capLast_ = 0;
+    bool capKeyDown_ = false;
+    bool capCopy(ID3D12GraphicsCommandList *cl, ID3D12Resource *src, Cap &c);
+    void capWrite();
+    const uint32_t *histMap_ = nullptr;
+    bool histHas_[8] = {};
+    bool aoLutMade_ = false;
     int aoCur_ = 0;
     bool aoOk_ = false;
     uint64_t aoLast_ = ~0ull;
@@ -228,6 +320,10 @@ struct DittoConfig {
     // the output's right half, DittoSR on the left; it needs the game's DLL alongside (<name>.orig.dll, libxess_orig.dll)
     int compareKey = 0;
     int menuKey = 0x76;  // (F7: the in-game menu - overlay.cpp)
+    // F8: the next 8 frames captured (D3D12) - the output and Ditto Relight's colour, raw files in dittosr-capture\
+    // next to the DLL (test/capture.py turns them into PNGs and measures the flicker); 0: none
+    int captureKey = 0;  // (capture_key=0x77: F8 - off by default, F8 is many games' quick load)
+    int captureFrame = 0;  // (capture_frame=N: the capture started at the Nth upscale - the harness has no keys)
     bool compare = false;  // ([dittosr] compare=1: from the start)
     // the ratios the FidelityFX API answers the quality modes with: quality, balanced, performance, ultra performance
     // (0: FSR 3.1's 1.5, 1.7, 2, 3) - games that ask, not those that work them out themselves
@@ -264,6 +360,10 @@ struct DittoStats {
     // the frame weight FSR 3.1's velocity factor and reactiveness scale set in place of the settings' (OptiScaler's
     // presets and sliders; -1: none, the settings' own)
     volatile float fsrFrameWeight = -1.0f;
+    // Ditto Relight's luma histogram (64 bins, a pixel of each 4 x 4, a few frames late) - the curves editor's; histSeq
+    // counts its updates (0: none yet)
+    volatile uint32_t hist[64] = {};
+    volatile uint32_t histSeq = 0;
 };
 extern DittoStats g_stats;
 // The menu's requests, taken by the next upscale: the other upscaler (the toggle), the comparison

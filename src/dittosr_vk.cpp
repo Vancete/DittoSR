@@ -1,6 +1,8 @@
 // DittoSR on Vulkan (dittosr_vk.h), as dittosr.cpp on D3D12: convert (render size; with the change against the history
 // and the auto exposure in an extra row of groups) -> motion (render size) -> upscale (output size) -> sharpen (output
-// size; skipped when the upscale writes the output itself: fused, or a debug view). One descriptor set per pass, from a
+// size; skipped when the upscale writes the output itself: fused, or a debug view), and before them, with Ditto Relight on
+// (EXPERIMENTAL), its passes at render size (aoprep, aomain, aofilter x and y, aotemporal, aocompose: the colour the
+// later passes read). One descriptor set per pass, from a
 // ring rewritten kRing frames later (as the D3D12 descriptor ring), the constants in a uniform buffer ring alongside.
 // The internal images stay in GENERAL (cleared on their first use); the game's are moved to what the passes need and
 // back to the layouts they came in.
@@ -14,6 +16,18 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include "spv_aocompose.h"
+#include "spv_aofilter.h"
+#include "spv_aomain.h"
+#include "spv_aomip.h"
+#include "spv_aomain16.h"
+#include "spv_aolut.h"
+#include "spv_aoup.h"
+#include "spv_aohist.h"
+#include "spv_aohalfnd.h"
+#include "spv_aocacao.h"
+#include "spv_aoprep.h"
+#include "spv_aotemporal.h"
 #include "spv_convert.h"
 #include "spv_motion.h"
 #include "spv_sharpen_r11g11b10f.h"
@@ -37,8 +51,10 @@
 namespace {
 
 constexpr uint32_t kRing = 64;          // (frames before a descriptor set, a constants slot or a view is reused)
-constexpr uint32_t kSetsPerFrame = 4;   // convert, motion, upscale, sharpen
-constexpr uint32_t kUbosPerFrame = 1;   // the constants
+// (sets: convert, motion, upscale, sharpen; Relight's prepass, table, mips x 4, main, half normal and depth, filter x 2,
+// temporal, CACAO x up to 8, upsample, histogram, compose)
+constexpr uint32_t kSetsPerFrame = 28;
+constexpr uint32_t kUbosPerFrame = 11;  // the constants; Relight's (its filter's x, y, sparse; its mips 1 - 4; x, y, sparse at half size)
 constexpr uint32_t kSampled = 8, kStorage = 3;
 constexpr uint32_t kBindUbo = 0, kBindSampled = 10, kBindStorage = 20, kBindSampler = 30;  // (build.bat's -fvk-*-shift)
 
@@ -146,7 +162,7 @@ struct DittoSRVk::Fns {
     F(vkDestroyDescriptorPool) F(vkAllocateDescriptorSets) F(vkUpdateDescriptorSets) F(vkCreateSampler)
     F(vkDestroySampler) F(vkCmdBindPipeline) F(vkCmdBindDescriptorSets) F(vkCmdDispatch) F(vkCmdPipelineBarrier)
     F(vkDeviceWaitIdle) F(vkCmdClearColorImage) F(vkCreateQueryPool) F(vkDestroyQueryPool) F(vkCmdResetQueryPool)
-    F(vkCmdWriteTimestamp) F(vkGetQueryPoolResults)
+    F(vkCmdWriteTimestamp) F(vkGetQueryPoolResults) F(vkCmdCopyImageToBuffer)
     // (instance-level, through the loader's exports: the same physical device handle)
     F(vkGetPhysicalDeviceMemoryProperties) F(vkGetPhysicalDeviceProperties) F(vkGetPhysicalDeviceFormatProperties)
 #undef F
@@ -167,7 +183,7 @@ DittoSRVk::DittoSRVk(VkDevice device, VkPhysicalDevice phys, PFN_vkGetDeviceProc
     F(vkDestroyDescriptorPool) F(vkAllocateDescriptorSets) F(vkUpdateDescriptorSets) F(vkCreateSampler)
     F(vkDestroySampler) F(vkCmdBindPipeline) F(vkCmdBindDescriptorSets) F(vkCmdDispatch) F(vkCmdPipelineBarrier)
     F(vkDeviceWaitIdle) F(vkCmdClearColorImage) F(vkCreateQueryPool) F(vkDestroyQueryPool) F(vkCmdResetQueryPool)
-    F(vkCmdWriteTimestamp) F(vkGetQueryPoolResults)
+    F(vkCmdWriteTimestamp) F(vkGetQueryPoolResults) F(vkCmdCopyImageToBuffer)
 #undef F
     HMODULE vk = GetModuleHandleA("vulkan-1.dll");
     if (!vk) vk = LoadLibraryA("vulkan-1.dll");
@@ -186,10 +202,10 @@ DittoSRVk::~DittoSRVk() {
     if (ok_ || fn_->vkDestroyImage) {
         collect(true);
         for (Img *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &expo_[0], &expo_[1],
-                       &env_[0], &env_[1], &change1_, &dummy_})
+                       &env_[0], &env_[1], &change1_, &dummy_, &aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoLut_, &aoHalf_, &aoHist_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1]})
             dropImage(*t);
         collect(true);
-        std::vector<VkPipeline> ps = {psoConvert_, psoMotion_};
+        std::vector<VkPipeline> ps = {psoConvert_, psoMotion_, psoAoPrep_, psoAoMain_, psoAoFilter_, psoAoTemporal_, psoAoComp_, psoAoMip_, psoAoMain16_, psoAoLut_, psoAoUp_, psoAoHist_, psoAoHalfNd_, psoAoCacao_};
         for (auto &h : psoUpscale_) ps.insert(ps.end(), h, h + 5);
         ps.insert(ps.end(), psoSharpen_, psoSharpen_ + 5);
         for (VkPipeline p : ps) if (p) fn_->vkDestroyPipeline(dev_, p, nullptr);
@@ -200,6 +216,9 @@ DittoSRVk::~DittoSRVk() {
         if (sampler_) fn_->vkDestroySampler(dev_, sampler_, nullptr);
         if (uboMap_) fn_->vkUnmapMemory(dev_, uboMem_);
         if (ubo_) fn_->vkDestroyBuffer(dev_, ubo_, nullptr);
+        if (histMap_) fn_->vkUnmapMemory(dev_, histMem_);
+        if (histBuf_) fn_->vkDestroyBuffer(dev_, histBuf_, nullptr);
+        if (histMem_) fn_->vkFreeMemory(dev_, histMem_, nullptr);
         if (uboMem_) fn_->vkFreeMemory(dev_, uboMem_, nullptr);
     }
     delete fn_;
@@ -269,6 +288,18 @@ bool DittoSRVk::init() {
         {g_spv_sharpen_rgb10a2, sizeof g_spv_sharpen_rgb10a2, &psoSharpen_[2], "sharpen rgb10a2"},
         {g_spv_sharpen_r11g11b10f, sizeof g_spv_sharpen_r11g11b10f, &psoSharpen_[3], "sharpen r11g11b10f"},
         {g_spv_sharpen_rgba32f, sizeof g_spv_sharpen_rgba32f, &psoSharpen_[4], "sharpen rgba32f"},
+        {g_spv_aoprep, sizeof g_spv_aoprep, &psoAoPrep_, "ao prepass"},
+        {g_spv_aomain, sizeof g_spv_aomain, &psoAoMain_, "ao"},
+        {g_spv_aofilter, sizeof g_spv_aofilter, &psoAoFilter_, "ao filter"},
+        {g_spv_aomip, sizeof g_spv_aomip, &psoAoMip_, "ao mips"},
+        {g_spv_aomain16, sizeof g_spv_aomain16, &psoAoMain16_, "ao (16 x 16)"},
+        {g_spv_aolut, sizeof g_spv_aolut, &psoAoLut_, "ao lookup table"},
+        {g_spv_aoup, sizeof g_spv_aoup, &psoAoUp_, "ao upsample"},
+        {g_spv_aohist, sizeof g_spv_aohist, &psoAoHist_, "ao histogram"},
+        {g_spv_aohalfnd, sizeof g_spv_aohalfnd, &psoAoHalfNd_, "ao half normal and depth"},
+        {g_spv_aocacao, sizeof g_spv_aocacao, &psoAoCacao_, "ao CACAO blur"},
+        {g_spv_aotemporal, sizeof g_spv_aotemporal, &psoAoTemporal_, "ao temporal"},
+        {g_spv_aocompose, sizeof g_spv_aocompose, &psoAoComp_, "ao compose"},
     };
     for (auto &c : cs) {
         if (c.pso >= &psoUpscale_[0][0] && c.pso < &psoUpscale_[1][0] && !hist10_) continue;  // (no RGB10A2 history here)
@@ -308,6 +339,19 @@ bool DittoSRVk::init() {
         return ditto_log("vulkan: buffer memory failed\n"), false;
     fn_->vkBindBufferMemory(dev_, ubo_, uboMem_, 0);
     if (fn_->vkMapMemory(dev_, uboMem_, 0, VK_WHOLE_SIZE, 0, (void **)&uboMap_) != VK_SUCCESS) return ditto_log("vulkan: map failed\n"), false;
+    {  // (Relight's luma histogram: 256 bytes a frame of the ring, host-visible; none: no histogram)
+        VkBufferCreateInfo hc = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        hc.size = 256 * kTimeRing, hc.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VkMemoryRequirements hr;
+        if (fn_->vkCreateBuffer(dev_, &hc, nullptr, &histBuf_) == VK_SUCCESS) {
+            fn_->vkGetBufferMemoryRequirements(dev_, histBuf_, &hr);
+            VkMemoryAllocateInfo ha = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            ha.allocationSize = hr.size, ha.memoryTypeIndex = memoryType(hr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            if (ha.memoryTypeIndex != UINT32_MAX && fn_->vkAllocateMemory(dev_, &ha, nullptr, &histMem_) == VK_SUCCESS &&
+                fn_->vkBindBufferMemory(dev_, histBuf_, histMem_, 0) == VK_SUCCESS)
+                fn_->vkMapMemory(dev_, histMem_, 0, VK_WHOLE_SIZE, 0, (void **)&histMap_);
+        }
+    }
     // (a 1 x 1 image for the sampled bindings a pass leaves empty)
     if (!makeImage(dummy_, 1, 1, VK_FORMAT_R16G16B16A16_SFLOAT)) return false;
     if (tickMs_ > 0.0) {
@@ -322,7 +366,7 @@ bool DittoSRVk::makeImage(Img &t, uint32_t w, uint32_t h, VkFormat f) {
     VkImageCreateInfo ic = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ic.imageType = VK_IMAGE_TYPE_2D, ic.format = f, ic.extent = {w, h, 1}, ic.mipLevels = 1, ic.arrayLayers = 1;
     ic.samples = VK_SAMPLE_COUNT_1_BIT, ic.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ic.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    ic.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     ic.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     if (fn_->vkCreateImage(dev_, &ic, nullptr, &t.image) != VK_SUCCESS) return ditto_log("vulkan: image %ux%u failed\n", w, h), false;
     VkMemoryRequirements mr;
@@ -413,6 +457,7 @@ bool ditto_frame_from_ffx_vk(const ffxDispatchDescUpscale *d, const DittoCreateI
     f->depthInverted = (ci.flags & FFX_UPSCALE_ENABLE_DEPTH_INVERTED) != 0;
     f->hdr = (ci.flags & FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE) != 0;
     f->preExposure = d->preExposure > 0.0f ? d->preExposure : 1.0f;
+    f->fovY = d->cameraFovAngleVertical, f->zNear = d->cameraNear, f->zFar = d->cameraFar;
     f->reset = d->reset;
     return true;
 }
@@ -450,8 +495,37 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
         uses[nu++] = {&i, to};
     };
     use(fr.color, false), use(fr.depth, false), use(fr.mv, false), use(fr.exposure, false), use(fr.reactive, false), use(fr.output, true);
+    // (EXPERIMENTAL, Ditto Relight: its images at render size - made here, before the barrier that clears new images)
+    bool relight = s_.relight && vDepth && !s_.debugView;
+    if (relight && !(aoNd_.image && aoNd_.w == rw && aoNd_.h == rh)) {
+        for (Img *t : {&aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoHalf_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1]})
+            dropImage(*t);
+        const VkFormat F16 = VK_FORMAT_R16G16B16A16_SFLOAT;
+        relight = makeImage(aoNd_, rw, rh, VK_FORMAT_R32G32B32A32_SFLOAT) && makeImage(aoRes_, rw, rh, F16) && makeImage(aoF_, rw, rh, F16) &&
+                  makeImage(aoCol_, rw, rh, F16);
+        aoOk_ = false;
+    }
+    bool aoT = relight && s_.aoTemporal;
+    if (aoT && !aoH_[0].image)
+        aoT = makeImage(aoH_[0], rw, rh, VK_FORMAT_R16G16B16A16_SFLOAT) && makeImage(aoH_[1], rw, rh, VK_FORMAT_R16G16B16A16_SFLOAT) &&
+              makeImage(aoHD_[0], rw, rh, VK_FORMAT_R32_SFLOAT) && makeImage(aoHD_[1], rw, rh, VK_FORMAT_R32_SFLOAT);
+    bool mips = relight && s_.aoMips;
+    for (uint32_t L = 1; L <= 4 && mips; L++)
+        if (!aoMip_[L - 1].image) mips = makeImage(aoMip_[L - 1], (rw + (1u << L) - 1) >> L, (rh + (1u << L) - 1) >> L, VK_FORMAT_R32G32B32A32_UINT);
+    bool lut = relight && s_.aoLut && (aoLut_.image || makeImage(aoLut_, 32 * 32, 32, VK_FORMAT_R32_UINT));
+    // (half resolution, FastGI's: the main pass, the filter and the temporal smoothing at half size, their images made
+    // when first on; the history kept for one mode at a time)
+    uint32_t hw2 = (rw + 1) / 2, hh2 = (rh + 1) / 2;
+    bool half = relight && s_.aoHalf && (aoHalf_.image || makeImage(aoHalf_, hw2, hh2, VK_FORMAT_R16G16B16A16_SFLOAT)) &&
+                (aoHalfF_.image || makeImage(aoHalfF_, hw2, hh2, VK_FORMAT_R16G16B16A16_SFLOAT)) &&
+                (aoNdHalf_.image || makeImage(aoNdHalf_, hw2, hh2, VK_FORMAT_R32G32B32A32_SFLOAT));
+    if (half && aoT && !aoHh_[0].image)
+        aoT = makeImage(aoHh_[0], hw2, hh2, VK_FORMAT_R16G16B16A16_SFLOAT) && makeImage(aoHh_[1], hw2, hh2, VK_FORMAT_R16G16B16A16_SFLOAT) &&
+              makeImage(aoHDh_[0], hw2, hh2, VK_FORMAT_R32_SFLOAT) && makeImage(aoHDh_[1], hw2, hh2, VK_FORMAT_R32_SFLOAT);
+    bool hist = relight && fn_->vkCmdCopyImageToBuffer && histMap_ && (aoHist_.image || makeImage(aoHist_, 64, 1, VK_FORMAT_R32_UINT));
     Img *internal[] = {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &expo_[0], &expo_[1],
-                       &env_[0], &env_[1], &change1_, &dummy_};
+                       &env_[0], &env_[1], &change1_, &dummy_, &aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1],
+                       &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoLut_, &aoHalf_, &aoHist_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1]};
     auto barrier = [&](bool in) {
         VkImageMemoryBarrier ib[6 + sizeof internal / sizeof internal[0]] = {};
         uint32_t n = 0;
@@ -471,7 +545,7 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
         bool fresh = false;
         if (in)  // (the internal images' first use: UNDEFINED -> GENERAL, then cleared)
             for (Img *t : internal) {
-                if (!t->fresh) continue;
+                if (!t->fresh || !t->image) continue;  // (Relight's, not made while it is off)
                 VkImageMemoryBarrier &b = ib[n++];
                 b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
                 b.srcAccessMask = 0, b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -490,7 +564,7 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
         VkClearColorValue zero = {};
         VkImageSubresourceRange all = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         for (Img *t : internal)
-            if (t->fresh) fn_->vkCmdClearColorImage(cb, t->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &all), t->fresh = false;
+            if (t->fresh && t->image) fn_->vkCmdClearColorImage(cb, t->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &all), t->fresh = false;
         VkMemoryBarrier cm = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
         cm.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, cm.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
         fn_->vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &cm, 0, nullptr, 0, nullptr);
@@ -498,6 +572,16 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
     barrier(true);
     // (the passes' GPU time: the slot written kTimeRing frames ago read - not ready yet: skipped -, this frame's started)
     uint32_t ts = (uint32_t)(frames_ % kTimeRing);
+    if (histMap_ && histHas_[ts]) {  // (Relight's histogram, kTimeRing frames late)
+        for (int i = 0; i < 64; i++) g_stats.hist[i] = histMap_[64 * ts + i];
+        g_stats.histSeq = g_stats.histSeq + 1;
+        if (g_stats.histSeq == 1) {  // (once: the histogram's pixels counted)
+            uint32_t sum = 0;
+            for (int i = 0; i < 64; i++) sum += g_stats.hist[i];
+            ditto_log("relight: luma histogram read back (%u pixels)\n", sum);
+        }
+    }
+    histHas_[ts] = false;
     if (timeQ_) {
         uint64_t t2[2] = {};
         if (frames_ >= kTimeRing &&
@@ -537,10 +621,10 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
     uint32_t setIndex = slot * kSetsPerFrame;
     // one pass: its set written (sampled images - the dummy where none -, storage images, constants), then dispatched
     auto run = [&](VkPipeline pso, const VkImageView sampled[kSampled], VkImageLayout const sampledLayout[kSampled],
-                   const VkImageView storage[kStorage], VkDeviceSize ubo, uint32_t gx, uint32_t gy) {
+                   const VkImageView storage[kStorage], VkDeviceSize ubo, uint32_t gx, uint32_t gy, VkDeviceSize uboSize = sizeof(DittoConstants)) {
         VkDescriptorSet set = sets_[setIndex++];
         VkDescriptorImageInfo si[kSampled], ui[kStorage];
-        VkDescriptorBufferInfo bi = {ubo_, ubo, sizeof(DittoConstants)};
+        VkDescriptorBufferInfo bi = {ubo_, ubo, uboSize};
         VkWriteDescriptorSet w[1 + kSampled + kStorage] = {};
         uint32_t n = 0;
         w[n] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, kBindUbo, 0, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &bi, nullptr};
@@ -576,19 +660,171 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
     VkImageView eIn = vExpo ? vExpo : autoExpo ? expoP.view : VK_NULL_HANDLE, e = vExpo ? vExpo : autoExpo ? expoC.view : VK_NULL_HANDLE;
     VkImageLayout lE = vExpo ? layout_of(fr.exposure) : G;
 
+    // (EXPERIMENTAL, Ditto Relight, as on D3D12: prepass t0 depth -> u0 normal and depth; main t0 it, t1 colour -> u0
+    // occlusion and bounce; the filter along x into aoF_, y back; the temporal smoothing t0 normal and depth, t1 the
+    // filtered, t2 the history, t3 its depth, t4 motion -> u0 this frame's, u1 its depth; compose t0, t1 colour, t2 the
+    // smoothed -> u0 aoCol_, the colour every later pass reads in the game's place)
+    VkImageView vC = vColor;
+    VkImageLayout lC = lColor;
+    if (relight) {
+        AoConstants ka;
+        ditto_fill_ao(ka, s_, fr, float_format(fr.color.format), frames_);
+        if (half != aoLastHalf_) aoOk_ = false;
+        aoLastHalf_ = half;
+        bool aoValid = aoT && aoOk_ && aoLast_ + 1 == frames_ && !reset;
+        float tw = s_.aoTemporalWeight < 0.0f ? 0.0f : s_.aoTemporalWeight > 0.95f ? 0.95f : s_.aoTemporalWeight;
+        ka.temporal = aoValid ? tw : 0.0f;
+        ka.mips = mips ? 1.0f : 0.0f, ka.lut = lut ? 1.0f : 0.0f, ka.halfRes = half ? 1.0f : 0.0f;
+        if (!mips) ka.cmips = 0.0f;
+        bool sparse = s_.aoSparseFilter;
+        // (Relight's constants: slot 1 the filter's x (and every other pass), 2 its y, 3 the sparse filter, 4 - 7 the mips)
+        auto slotA = [&](uint32_t k) { return u0 + k * (VkDeviceSize)uboStride_; };
+        VkDeviceSize a0 = slotA(1), a1 = slotA(2), a2 = slotA(3);
+        ka.axis = 0.0f, memcpy(uboMap_ + a0, &ka, sizeof ka);
+        ka.axis = 1.0f, memcpy(uboMap_ + a1, &ka, sizeof ka);
+        ka.axis = 2.0f, memcpy(uboMap_ + a2, &ka, sizeof ka);
+        for (uint32_t L = 1; L <= 4; L++) ka.axis = (float)L, memcpy(uboMap_ + slotA(3 + L), &ka, sizeof ka);
+        // (... 8 - 10: the filter's x, y and sparse at half size - also the temporal smoothing's and CACAO's there)
+        VkDeviceSize h0 = slotA(8), h1 = slotA(9), h2 = slotA(10);
+        {
+            AoConstants kh = ka;
+            kh.rs[0] = (float)hw2, kh.rs[1] = (float)hh2, kh.rsRcp[0] = 1.0f / hw2, kh.rsRcp[1] = 1.0f / hh2;
+            kh.axis = 0.0f, memcpy(uboMap_ + h0, &kh, sizeof kh);
+            kh.axis = 1.0f, memcpy(uboMap_ + h1, &kh, sizeof kh);
+            kh.axis = 2.0f, memcpy(uboMap_ + h2, &kh, sizeof kh);
+        }
+        uint32_t gx = (rw + 7) / 8, gy = (rh + 7) / 8;
+        const VkImageView N = VK_NULL_HANDLE;
+        {
+            VkImageView s[kSampled] = {vDepth, N, N, N, N, N, N, N};
+            VkImageLayout l[kSampled] = {lDepth, G, G, G, G, G, G, G};
+            VkImageView u[kStorage] = {aoNd_.view, N, N};
+            run(psoAoPrep_, s, l, u, a0, gx, gy, sizeof ka);
+        }
+        compute_barrier();
+        if (lut && !aoLutMade_) {  // (the occluder lookup table, built once)
+            VkImageView s[kSampled] = {N, N, N, N, N, N, N, N};
+            VkImageLayout l[kSampled] = {G, G, G, G, G, G, G, G};
+            VkImageView u[kStorage] = {aoLut_.view, N, N};
+            run(psoAoLut_, s, l, u, a0, 32 * 32 / 8, 32 / 8, sizeof ka);
+            aoLutMade_ = true;
+        }
+        for (uint32_t L = 1; L <= 4 && mips; L++) {  // (the depth mips, each from the one below; level 1 from the prepass and the colour)
+            Img &dst = aoMip_[L - 1];
+            VkImageView s[kSampled] = {aoNd_.view, vColor, L > 1 ? aoMip_[L - 2].view : N, N, N, N, N, N};
+            VkImageLayout l[kSampled] = {G, lColor, G, G, G, G, G, G};
+            VkImageView u[kStorage] = {dst.view, N, N};
+            run(psoAoMip_, s, l, u, slotA(3 + L), (dst.w + 7) / 8, (dst.h + 7) / 8, sizeof ka);
+            compute_barrier();
+        }
+        {
+            VkImageView s[kSampled] = {aoNd_.view, vColor, mips ? aoMip_[0].view : N, mips ? aoMip_[1].view : N, mips ? aoMip_[2].view : N,
+                                       mips ? aoMip_[3].view : N, lut ? aoLut_.view : N, N};
+            VkImageLayout l[kSampled] = {G, lColor, G, G, G, G, G, G};
+            Img &tgt = half ? aoHalf_ : aoRes_;
+            VkImageView u[kStorage] = {tgt.view, N, N};
+            compute_barrier();
+            uint32_t g = s_.aoWg16 ? 16 : 8;
+            run(s_.aoWg16 ? psoAoMain16_ : psoAoMain_, s, l, u, a0, (tgt.w + g - 1) / g, (tgt.h + g - 1) / g, sizeof ka);
+        }
+        // (the filter and the temporal smoothing at the main pass' size: half (FastGI's) or render size)
+        Img &nd = half ? aoNdHalf_ : aoNd_, &r0 = half ? aoHalf_ : aoRes_, &r1 = half ? aoHalfF_ : aoF_;
+        Img *Hh = half ? aoHh_ : aoH_, *HD = half ? aoHDh_ : aoHD_;
+        VkDeviceSize b0 = half ? h0 : a0, b1 = half ? h1 : a1, b2 = half ? h2 : a2;
+        uint32_t fx = (r0.w + 7) / 8, fy = (r0.h + 7) / 8;
+        if (half) {  // (the normal and depth of the pixels the half-size main pass computed)
+            VkImageView s[kSampled] = {aoNd_.view, N, N, N, N, N, N, N};
+            VkImageLayout l[kSampled] = {G, G, G, G, G, G, G, G};
+            VkImageView u[kStorage] = {aoNdHalf_.view, N, N};
+            run(psoAoHalfNd_, s, l, u, a0, fx, fy, sizeof ka);
+        }
+        // (the spatial filter: FastGI's x into r1, y back; or CORTAO's sparse one, one pass into r1)
+        for (int axis = 0; axis < (sparse ? 1 : 2); axis++) {
+            compute_barrier();
+            Img &src = axis ? r1 : r0, &dst = axis ? r0 : r1;
+            VkImageView s[kSampled] = {nd.view, src.view, N, N, N, N, N, N};
+            VkImageLayout l[kSampled] = {G, G, G, G, G, G, G, G};
+            VkImageView u[kStorage] = {dst.view, N, N};
+            run(psoAoFilter_, s, l, u, sparse ? b2 : axis ? b1 : b0, fx, fy, sizeof ka);
+        }
+        compute_barrier();
+        Img &filt = sparse ? r1 : r0;
+        Img *aoOut = &filt;
+        if (aoT) {  // (no valid history: never read - the filtered in its place, its weight 0)
+            Img &hc = Hh[aoCur_], &hp = Hh[aoCur_ ^ 1], &dc = HD[aoCur_], &dp = HD[aoCur_ ^ 1];
+            VkImageView s[kSampled] = {nd.view, filt.view, aoValid ? hp.view : filt.view, dp.view, vMv, N, N, N};
+            VkImageLayout l[kSampled] = {G, G, G, G, lMv, G, G, G};
+            VkImageView u[kStorage] = {hc.view, dc.view, N};
+            run(psoAoTemporal_, s, l, u, b0, fx, fy, sizeof ka);
+            compute_barrier();
+            aoOut = &hc;
+            aoCur_ ^= 1, aoOk_ = true, aoLast_ = frames_;
+        } else {
+            aoOk_ = false;
+        }
+        if (s_.aoCacao) {  // (CACAO's blur on the accumulated AO and GI - the history left as it is: r0 and r1 ping-ponged)
+            int cp = s_.aoCacaoPasses < 1 ? 1 : s_.aoCacaoPasses > 8 ? 8 : s_.aoCacaoPasses;
+            for (int k = 0; k < cp; k++) {
+                Img &dst = aoOut == &r1 ? r0 : r1;
+                VkImageView s[kSampled] = {nd.view, aoOut->view, N, N, N, N, N, N};
+                VkImageLayout l[kSampled] = {G, G, G, G, G, G, G, G};
+                VkImageView u[kStorage] = {dst.view, N, N};
+                run(psoAoCacao_, s, l, u, b0, fx, fy, sizeof ka);
+                compute_barrier();
+                aoOut = &dst;
+            }
+        }
+        if (half) {  // (back to render size by depth and normal - FastGI's composite's upsample)
+            VkImageView s[kSampled] = {aoNd_.view, aoOut->view, N, N, N, N, N, N};
+            VkImageLayout l[kSampled] = {G, G, G, G, G, G, G, G};
+            VkImageView u[kStorage] = {aoRes_.view, N, N};
+            run(psoAoUp_, s, l, u, a0, gx, gy, sizeof ka);
+            compute_barrier();
+            aoOut = &aoRes_;
+        }
+        if (hist) {  // (the luma histogram cleared; the composition counts into it)
+            VkImageView s[kSampled] = {N, N, N, N, N, N, N, N};
+            VkImageLayout l[kSampled] = {G, G, G, G, G, G, G, G};
+            VkImageView u[kStorage] = {N, aoHist_.view, N};
+            run(psoAoHist_, s, l, u, a0, 1, 1, sizeof ka);
+            compute_barrier();
+        }
+        {
+            VkImageView s[kSampled] = {aoNd_.view, vColor, aoOut->view, N, N, N, N, N};
+            VkImageLayout l[kSampled] = {G, lColor, G, G, G, G, G, G};
+            VkImageView u[kStorage] = {aoCol_.view, hist ? aoHist_.view : N, N};
+            run(psoAoComp_, s, l, u, a0, gx, gy, sizeof ka);
+        }
+        compute_barrier();
+        if (hist) {  // (... copied to this frame's slot, read kTimeRing frames later)
+            VkMemoryBarrier hb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            hb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT, hb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            fn_->vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &hb, 0, nullptr, 0, nullptr);
+            VkBufferImageCopy rg = {};
+            rg.bufferOffset = 256 * ts, rg.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, rg.imageExtent = {64, 1, 1};
+            fn_->vkCmdCopyImageToBuffer(cb, aoHist_.image, VK_IMAGE_LAYOUT_GENERAL, histBuf_, 1, &rg);
+            hb.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT, hb.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+            fn_->vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &hb, 0, nullptr, 0, nullptr);
+            histHas_[ts] = true;
+        }
+        vC = aoCol_.view, lC = G;
+    } else {
+        aoOk_ = false;
+    }
+
     // convert (render size), and in its extra row the change against the history (first group) and the auto exposure
     // (second): t0 depth, t1 motion, t2 colour, t3 previous history, t5 exposure -> u0 mda, u1 change, u2 exposure
     {
-        VkImageView s[kSampled] = {vDepth, vMv, vColor, histP.view, VK_NULL_HANDLE, eIn, VK_NULL_HANDLE, VK_NULL_HANDLE};
-        VkImageLayout l[kSampled] = {lDepth, lMv, lColor, G, G, lE, G, G};
+        VkImageView s[kSampled] = {vDepth, vMv, vC, histP.view, VK_NULL_HANDLE, eIn, VK_NULL_HANDLE, VK_NULL_HANDLE};
+        VkImageLayout l[kSampled] = {lDepth, lMv, lC, G, G, lE, G, G};
         VkImageView u[kStorage] = {mdaC.view, change1_.view, expoC.view};
         run(psoConvert_, s, l, u, u0, (rw + 7) / 8, (rh + 7) / 8 + 1);
     }
     compute_barrier();
     // motion (render size): t0 previous aux, t1 mda, t2 colour, t3 previous mda, t4 previous envelope -> u0 aux, u1 envelope
     {
-        VkImageView s[kSampled] = {auxP.view, mdaC.view, vColor, mdaP.view, env_[cur_ ^ 1].view, e, VK_NULL_HANDLE, VK_NULL_HANDLE};
-        VkImageLayout l[kSampled] = {G, G, lColor, G, G, lE, G, G};
+        VkImageView s[kSampled] = {auxP.view, mdaC.view, vC, mdaP.view, env_[cur_ ^ 1].view, e, VK_NULL_HANDLE, VK_NULL_HANDLE};
+        VkImageLayout l[kSampled] = {G, G, lC, G, G, lE, G, G};
         VkImageView u[kStorage] = {auxC.view, env_[cur_].view, VK_NULL_HANDLE};
         run(psoMotion_, s, l, u, u0, (rw + 7) / 8, (rh + 7) / 8);
     }
@@ -596,14 +832,14 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
     // upscale (output size): t0 previous history, t1 mda, t2 colour, t3 aux, t4 change, t6 reactive, t7 previous
     // stability -> u0 history, u1 the game's output (fused, or a debug view), u2 stability
     {
-        VkImageView s[kSampled] = {histP.view, mdaC.view, vColor, auxC.view, change1_.view, e, vReac, stabP.view};
-        VkImageLayout l[kSampled] = {G, G, lColor, G, G, lE, lReac, G};
+        VkImageView s[kSampled] = {histP.view, mdaC.view, vC, auxC.view, change1_.view, e, vReac, stabP.view};
+        VkImageLayout l[kSampled] = {G, G, lC, G, G, lE, lReac, G};
         VkImageView u[kStorage] = {histC.view, vOut, stabC.view};
         run(psoUpscale_[hfmt == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ? 0 : 1][variant], s, l, u, u0, (ow + 15) / 16, (oh + 7) / 8);  // (upscale.hlsl: 16 x 8 groups)
     }
     // sharpen (output size; the game's output): t0 history, t1 mda, t7 stability -> u1 output (a debug view or fused:
     // the upscale wrote it)
-    if (!s_.debugView && k.fusedSharpen <= 0.0f) {
+    if (!s_.debugView && k.fusedSharpen <= 0.0f && !(k.sharpenMode > 1.5f && !split_)) {  // (sharpening off: the upscale wrote it)
         compute_barrier();
         VkImageView s[kSampled] = {histC.view, mdaC.view, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, e, VK_NULL_HANDLE, stabC.view};
         VkImageLayout l[kSampled] = {G, G, G, G, G, lE, G, G};

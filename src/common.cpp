@@ -96,15 +96,43 @@ static void load_config() {
     s.antiShimmer = ini_float(ini, "anti_shimmer", s.antiShimmer);
     s.historySharpen = ini_float(ini, "history_sharpen", s.historySharpen);
     s.fusedSharpen = ini_float(ini, "fused_sharpen", s.fusedSharpen);
-    s.sharpenMode = GetPrivateProfileIntA("dittosr", "sharpen_mode", s.sharpenMode, ini) == 1 ? 1 : 0;
+    s.sharpenMode = GetPrivateProfileIntA("dittosr", "sharpen_mode", s.sharpenMode, ini);
+    if (s.sharpenMode < 0 || s.sharpenMode > 2) s.sharpenMode = 0;
     s.relight = GetPrivateProfileIntA("dittosr", "relight", s.relight, ini) != 0;
     s.aoRadius = ini_float(ini, "ao_radius", s.aoRadius), s.aoScreen = ini_float(ini, "ao_screen", s.aoScreen);
     s.aoRays = ini_float(ini, "ao_rays", s.aoRays), s.aoContact = ini_float(ini, "ao_contact", s.aoContact);
     s.aoStrength = ini_float(ini, "ao_strength", s.aoStrength), s.giStrength = ini_float(ini, "gi_strength", s.giStrength);
-    s.giDark = ini_float(ini, "gi_dark", s.giDark), s.sCurve = ini_float(ini, "s_curve", s.sCurve);
+    s.giDark = ini_float(ini, "gi_dark", s.giDark), s.giCeiling = ini_float(ini, "gi_ceiling", s.giCeiling), s.sCurve = ini_float(ini, "s_curve", s.sCurve);
     s.aoTemporal = GetPrivateProfileIntA("dittosr", "ao_temporal", s.aoTemporal, ini) != 0;
     s.aoTemporalWeight = ini_float(ini, "ao_temporal_weight", s.aoTemporalWeight);
     s.aoSpatial = ini_float(ini, "ao_spatial_radius", s.aoSpatial);
+    s.aoPlaneFilter = GetPrivateProfileIntA("dittosr", "ao_plane_filter", s.aoPlaneFilter, ini) != 0;
+    s.aoSparseFilter = GetPrivateProfileIntA("dittosr", "ao_sparse_filter", s.aoSparseFilter, ini) != 0;
+    s.aoMips = GetPrivateProfileIntA("dittosr", "ao_mips", s.aoMips, ini) != 0;
+    s.aoPower = GetPrivateProfileIntA("dittosr", "ao_power", s.aoPower, ini) != 0;
+    s.aoBackBoost = GetPrivateProfileIntA("dittosr", "ao_backface_boost", s.aoBackBoost, ini) != 0;
+    s.aoLut = GetPrivateProfileIntA("dittosr", "ao_lut", s.aoLut, ini) != 0;
+    s.aoWg16 = GetPrivateProfileIntA("dittosr", "ao_workgroup16", s.aoWg16, ini) != 0;
+    s.aoColorMips = GetPrivateProfileIntA("dittosr", "ao_color_mips", s.aoColorMips, ini) != 0;
+    s.aoSamples = ini_float(ini, "ao_samples", s.aoSamples);
+    s.aoHalf = GetPrivateProfileIntA("dittosr", "ao_half", s.aoHalf, ini) != 0;
+    s.aoDecorrelate = GetPrivateProfileIntA("dittosr", "ao_decorrelate", s.aoDecorrelate, ini) != 0;
+    s.aoCacao = GetPrivateProfileIntA("dittosr", "ao_cacao", s.aoCacao, ini) != 0;
+    s.aoCacaoPasses = GetPrivateProfileIntA("dittosr", "ao_cacao_passes", s.aoCacaoPasses, ini);
+    {  // (the curve: "x,y x,y ...", by x, 2 - 8 points in [0, 1]; else the line)
+        char cb[256];
+        GetPrivateProfileStringA("dittosr", "curve", "", cb, sizeof cb, ini);
+        float cx[8], cy[8];
+        int n = 0, used = 0;
+        const char *c = cb;
+        while (n < 8 && sscanf(c, " %f , %f%n", &cx[n], &cy[n], &used) == 2) c += used, n++;
+        bool ok = n >= 2;
+        for (int i = 0; i < n && ok; i++) ok = cx[i] >= 0.0f && cx[i] <= 1.0f && cy[i] >= 0.0f && cy[i] <= 1.0f && (i == 0 || cx[i] > cx[i - 1]);
+        if (ok) {
+            s.curveN = n;
+            for (int i = 0; i < n; i++) s.curveX[i] = cx[i], s.curveY[i] = cy[i];
+        }
+    }
     s.envTol = ini_float(ini, "env_tol", s.envTol), s.envDecay = ini_float(ini, "env_decay", s.envDecay);
     s.envGain = ini_float(ini, "env_gain", s.envGain), s.envRest = ini_float(ini, "env_rest", s.envRest);
     s.rampLo = ini_float(ini, "ramp_lo", s.rampLo), s.rampHi = ini_float(ini, "ramp_hi", s.rampHi);
@@ -119,6 +147,9 @@ static void load_config() {
     c.compareKey = (int)strtol(b, nullptr, 0);
     GetPrivateProfileStringA("dittosr", "menu_key", "0x76", b, sizeof b, ini);
     c.menuKey = (int)strtol(b, nullptr, 0);
+    GetPrivateProfileStringA("dittosr", "capture_key", "0", b, sizeof b, ini);
+    c.captureKey = (int)strtol(b, nullptr, 0);
+    c.captureFrame = GetPrivateProfileIntA("dittosr", "capture_frame", 0, ini);
     c.compare = GetPrivateProfileIntA("dittosr", "compare", 0, ini) != 0;
     c.gameSharpness = GetPrivateProfileIntA("dittosr", "game_sharpness", -1, ini);
     s.indicator = GetPrivateProfileIntA("debug", "indicator", GetPrivateProfileIntA("dittosr", "indicator", 0, ini), ini) != 0;
@@ -186,6 +217,40 @@ bool ditto_save_settings() {
     ok = put("frame_weight_override", s.frameWeightOverride ? 1.0f : 0.0f, d.frameWeightOverride ? 1.0f : 0.0f, false) && ok;
     ok = put("sharpen_mode", (float)s.sharpenMode, (float)d.sharpenMode, false) && ok;
     ok = put("relight", s.relight ? 1.0f : 0.0f, 0.0f, false) && ok;
+    ok = put("ao_strength", s.aoStrength, d.aoStrength, false) && ok;
+    ok = put("gi_strength", s.giStrength, d.giStrength, false) && ok;
+    ok = put("gi_dark", s.giDark, d.giDark, false) && ok;
+    ok = put("gi_ceiling", s.giCeiling, d.giCeiling, false) && ok;
+    ok = put("s_curve", s.sCurve, d.sCurve, false) && ok;
+    ok = put("ao_rays", s.aoRays, d.aoRays, false) && ok;
+    ok = put("ao_radius", s.aoRadius, d.aoRadius, false) && ok;
+    ok = put("ao_screen", s.aoScreen, d.aoScreen, false) && ok;
+    ok = put("ao_contact", s.aoContact, d.aoContact, false) && ok;
+    ok = put("ao_spatial_radius", s.aoSpatial, d.aoSpatial, false) && ok;
+    auto b = [](bool v) { return v ? 1.0f : 0.0f; };
+    ok = put("ao_plane_filter", b(s.aoPlaneFilter), b(d.aoPlaneFilter), false) && ok;
+    ok = put("ao_sparse_filter", b(s.aoSparseFilter), b(d.aoSparseFilter), false) && ok;
+    ok = put("ao_mips", b(s.aoMips), b(d.aoMips), false) && ok;
+    ok = put("ao_power", b(s.aoPower), b(d.aoPower), false) && ok;
+    ok = put("ao_backface_boost", b(s.aoBackBoost), b(d.aoBackBoost), false) && ok;
+    ok = put("ao_lut", b(s.aoLut), b(d.aoLut), false) && ok;
+    ok = put("ao_workgroup16", b(s.aoWg16), b(d.aoWg16), false) && ok;
+    ok = put("ao_color_mips", b(s.aoColorMips), b(d.aoColorMips), false) && ok;
+    ok = put("ao_samples", s.aoSamples, d.aoSamples, false) && ok;
+    ok = put("ao_half", b(s.aoHalf), b(d.aoHalf), false) && ok;
+    ok = put("ao_decorrelate", b(s.aoDecorrelate), b(d.aoDecorrelate), false) && ok;
+    ok = put("ao_cacao", b(s.aoCacao), b(d.aoCacao), false) && ok;
+    {
+        char cb[256] = "";
+        size_t m = 0;
+        for (int i = 0; i < s.curveN && i < 8; i++) m += snprintf(cb + m, sizeof cb - m, "%s%.4g,%.4g", i ? " " : "", s.curveX[i], s.curveY[i]);
+        // (written when it differs from the default curve - the line too, then)
+        bool same = s.curveN == d.curveN;
+        for (int i = 0; i < s.curveN && same; i++) same = s.curveX[i] == d.curveX[i] && s.curveY[i] == d.curveY[i];
+        if (!held("curve")) ok = WritePrivateProfileStringA("dittosr", "curve", same ? nullptr : cb, ini) != 0 || same;
+    }
+    ok = put("ao_temporal", s.aoTemporal ? 1.0f : 0.0f, d.aoTemporal ? 1.0f : 0.0f, false) && ok;
+    ok = put("ao_temporal_weight", s.aoTemporalWeight, d.aoTemporalWeight, false) && ok;
     ok = put("auto_reactive", s.autoReactive, d.autoReactive, false) && ok;
     ok = put("debug_view", (float)s.debugView, (float)d.debugView, false) && ok;
     if (!held("indicator")) ok = WritePrivateProfileStringA("debug", "indicator", s.indicator ? "1" : "0", ini) != 0 && ok;

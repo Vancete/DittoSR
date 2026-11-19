@@ -26,10 +26,32 @@ cbuffer A : register(b0) {
     float axis;           // ... its axis this pass (0 x, 1 y)
     float2 mvScale;       // the game's motion vectors -> uv (the previous uv = uv + mv x this; temporal smoothing)
     float2 mvSize;        // ... their resolution
-    float aoPad1, aoPad2;
+    float giCeiling;      // the bounce light added at most this x the pixel's colour, saturating (0 - 4; 0: no ceiling)
+    float planeW;         // 1: CORTAO's filter weights (the depth against the centre's plane, pairs symmetric)
+    float mips;           // 1: the main pass' far samples from the depth mips (aomip.hlsl)
+    float aoPow;          // 1: the occlusion applied as pow(occlusion, aoStrength), not lerp(1, occlusion, aoStrength)
+    float flags;          // bits: 1 CORTAO's backface boost (a backface occluder x its slope compensation), 2 decorrelated noise
+    float lut;            // 1: the occluder lookup table (aolut.hlsl) - 32 rays
+    float cmips;          // 1: the GI's far occluders' colour from the colour mips (aocmip.hlsl)
+    float samples;        // the main pass' samples a pixel (4 - 32)
+    float halfRes;        // 1: the main pass at half size (one pixel of each 2 x 2, halfOff) - aoup.hlsl back
+    float halfOff;        // ... this frame's pixel of the 2 x 2 (0 - 3: x = bit 0, y = bit 1)
+    // the curve (aocompose.hlsl): its points (x, y, up to 8, by x) and the natural cubic spline's second derivatives;
+    // curveN its points (0: none - the line)
+    float4 curveX4[2];
+    float4 curveY4[2];
+    float4 curveD4[2];
+    float curveN;
 };
 
 SamplerState linearClamp : register(s0);
+
+// Vulkan (DITTO_VK, SPIR-V): the storage images' formats spelled out (as common.hlsli's VKFMT)
+#if DITTO_VK
+#define AOFMT(f) [[vk::image_format(f)]]
+#else
+#define AOFMT(f)
+#endif
 
 // the linear depth (view z) of a depth buffer value; 0: the sky (the far plane)
 float linDepth(float d) {
@@ -49,6 +71,16 @@ void basisOf(float3 n, out float3 t, out float3 b) {
     b = cross(n, t);
 }
 
+// CORTAO's filter weight: the tap's depth dq against the centre's plane (c its view position, nc its normal) at the
+// tap's uv - its error relative to the centre's depth x 512 (CORTAO's depth sensitivity) - and its normal's (|dn|^2 x 4:
+// ~ CORTAO's 16 / 32 on its spheremap), exp2(-error)
+float planeWeight(float3 c, float3 nc, float2 uvq, float dq, float3 nq) {
+    float3 r = viewPos(uvq, 1.0);
+    float dn = dot(nc, r), ze = abs(dn) > 1e-3 ? dot(nc, c) / dn : dq;
+    float3 d = nc - nq;
+    return exp2(-(512.0 * abs(dq - ze) / c.z + 4.0 * dot(d, d)));
+}
+
 // the filter's taps' weight (FastGI's GeometryWeight): a tap's depth within max(0.02, 1.5 %) of the centre's, its normal's closeness (cos^4); 0 the sky
 float geoWeight(float dc, float dt, float3 nc, float3 nt) {
     float wd = saturate(1.0 - abs(dc - dt) / max(0.02, dc * 0.015));
@@ -56,6 +88,44 @@ float geoWeight(float dc, float dt, float3 nc, float3 nt) {
     wn *= wn;
     return dt > 0.00001 ? wd * wn * wn : 0.0;
 }
+
+// the rays: a golden spiral on the unit disc, lifted onto the hemisphere (cosine-distributed), ray j of nr
+static const float GOLDEN = 2.39996323;
+float3 rayDir(uint j, uint nr) {
+    float a = float(j) * GOLDEN, r = sqrt((float(j) + 0.5) / float(nr));
+    return float3(cos(a) * r, sin(a) * r, sqrt(1.0 - r * r));
+}
+
+// the depth mips' texels (aomip.hlsl; RGBA32_UINT): x the normal's x, y (halves), y the depth, z / w the colour's mean
+// (halves) and, w's bit 16, the normal's z positive
+uint4 mipEncode(float4 nd, float3 c) {
+    return uint4(f32tof16(nd.x) | (f32tof16(nd.y) << 16), asuint(nd.w), f32tof16(c.r) | (f32tof16(c.g) << 16), f32tof16(c.b) | (nd.z > 0.0 ? 0x10000u : 0u));
+}
+float4 mipDecode(uint4 m, out float3 c) {
+    float2 n = float2(f16tof32(m.x & 0xffffu), f16tof32(m.x >> 16));
+    c = float3(f16tof32(m.z & 0xffffu), f16tof32(m.z >> 16), f16tof32(m.w & 0xffffu));
+    return float4(n, ((m.w & 0x10000u) ? 1.0 : -1.0) * sqrt(saturate(1.0 - dot(n, n))), asfloat(m.y));
+}
+
+// the curve at t (the spline over [x0, xn-1]; flat before and after its ends, as an editor's) and past 1 (linear HDR
+// above the editor's range) the curve's end + (t - 1)
+#define CRV_X(i) curveX4[(i) >> 2][(i) & 3]
+#define CRV_Y(i) curveY4[(i) >> 2][(i) & 3]
+#define CRV_D(i) curveD4[(i) >> 2][(i) & 3]
+float curveIn(float t) {
+    uint n = (uint)curveN;
+    if (t <= CRV_X(0)) return CRV_Y(0);
+    if (t >= CRV_X(n - 1u)) return CRV_Y(n - 1u);
+    uint k = 0u;
+    [loop] for (uint i = 1u; i + 1u < n; i++) if (t >= CRV_X(i)) k = i;
+    float x0 = CRV_X(k), x1 = CRV_X(k + 1u), h = max(x1 - x0, 1e-5);
+    float a = (x1 - t) / h, b = (t - x0) / h;
+    float y = a * CRV_Y(k) + b * CRV_Y(k + 1u) + ((a * a * a - a) * CRV_D(k) + (b * b * b - b) * CRV_D(k + 1u)) * h * h / 6.0;
+    return saturate(y);
+}
+float curveAt(float t) { return t > 1.0 ? curveIn(1.0) + (t - 1.0) : curveIn(t); }
+
+bool flagOn(uint b) { return ((uint)flags & b) != 0u; }
 
 // interleaved gradient noise (Jimenez 2014)
 float ign(float2 p) { return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715)))); }

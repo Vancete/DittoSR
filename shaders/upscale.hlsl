@@ -75,7 +75,8 @@ void put(uint2 id, float3 g, float2 stab, float e, float3 shown) {
 #else
     StabOut[id] = stab.x;
 #endif
-    if (debugView < 0.5 && fusedSharpen <= 0.0) return;  // (sharpen.hlsl writes the output; a debug view or fused: here)
+    // (sharpen.hlsl writes the output; a debug view, fused or the sharpening off - but in the comparison: here)
+    if (debugView < 0.5 && fusedSharpen <= 0.0 && !(sharpenMode > 1.5 && splitX <= 0.0)) return;
     float3 o = dec(saturate(shown), e);
     float3 ic;
     if (indicator > 0.5 && indicatorAt(id, e, ic)) o = ic;
@@ -375,6 +376,10 @@ void main(uint2 id : SV_DispatchThreadID, uint2 gid : SV_GroupID, uint li : SV_G
         float km = 0.1 * sh * (1.0 + 1.25 * hr);
         float mv = saturate(mlen * 0.5);
         float kk = min(lerp(kr > 0.0 ? kr * (0.5 + 0.5 * stab) : kr, km, mv), 0.2);
+        // (as CAS: by the room the samples' luma range leaves before black or white over its peak, square-rooted - a
+        // dark pixel by a bright light hardly lifted: at sharpness 1 such pixels were pushed up to the light's luma, its
+        // decoding a flash - the harness' glints at 1.5x, sparkle 14.7)
+        if (kk > 0.0) kk *= sqrt(saturate(min((float)ymn.x, 1.0 - (float)ymx.x) / max((float)ymx.x, 1e-4)));
         float g = fusedSharpen * (0.8 - 0.5 * hr) * 4.0 * kk / (1.0 - 4.0 * kk);  // (0.8 up to 2x, 0.3 at 3x: the pass's sharpness)
         float yb = 0.25 * res.r + 0.5 * res.g + 0.25 * res.b;
         float mrg = 0.25 * (1.0 - hr) * (ymx.x - ymn.x) * mv;

@@ -12,8 +12,8 @@ Texture2D<float4> Res : register(t1);
 Texture2D<float4> Hist : register(t2);
 Texture2D<float> HistDepth : register(t3);
 Texture2D<float2> Mv : register(t4);
-RWTexture2D<float4> Out : register(u0);
-RWTexture2D<float> OutDepth : register(u1);
+AOFMT("rgba16f") RWTexture2D<float4> Out : register(u0);
+AOFMT("r32f") RWTexture2D<float> OutDepth : register(u1);
 
 [numthreads(8, 8, 1)]
 void main(uint2 id : SV_DispatchThreadID) {

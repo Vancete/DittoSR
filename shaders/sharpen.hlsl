@@ -49,6 +49,7 @@ void main(uint2 id : SV_DispatchThreadID) {
     float km = 0.1 * sh * (1.0 + 1.25 * saturate(ratio - 2.0));
     float mv = saturate(mlen * 0.5);
     float k = min(lerp(kr > 0.0 ? kr * (0.5 + 0.5 * c4.a) : kr, km, mv), 0.2);  // (0.2: CAS's strongest)
+    if (sharpenMode > 1.5) k = 0.0;  // (off: the comparison's left half as reconstructed)
     // (the filter at hf precision - half in the FP16 variant)
     hf3 ch = (hf3)c;
     hf3 n = (hf3)History.Load(int3(clamp(p + int2(0, -1), int2(0, 0), m), 0)).rgb;

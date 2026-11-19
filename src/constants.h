@@ -85,5 +85,52 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
     // shimmer 3.79 -> 3.06, the still image 33.14 -> 33.40 dB and its shimmer 1.89 -> 1.56; the tiles 29.50 -> 29.37)
     k.shareFar *= 1.0f - 0.5f * hr;
     k.envTol = s.envTol, k.envDecay = s.envDecay, k.envGain = s.envGain, k.envRest = s.envRest;
-    k.sharpenMode = s.sharpenMode == 1 ? 1.0f : 0.0f;
+    k.sharpenMode = s.sharpenMode == 1 || s.sharpenMode == 2 ? (float)s.sharpenMode : 0.0f;
+}
+
+// Ditto Relight's constants (shaders/ao_common.hlsli's cbuffer A, in order) - root constants on D3D12, a uniform
+// buffer on Vulkan - and their fill from the settings and the frame (DittoFrame or DittoFrameVk); floatColour: the
+// game's colour a float format (HDR read). temporal (the history valid) and axis (the filter's pass) set by the driver.
+struct AoConstants {
+    float rs[2], rsRcp[2], tanX, tanY, zNear, zFar, inverted, frame, aoStrength, giStrength, radiusWorld, radiusScreen, rays,
+        contact, giDark, sCurve, pivot, temporal, spatial, axis, mvScale[2], mvSize[2], giCeiling, planeW, mips, aoPow, flags, lut, cmips, samples, halfRes, halfOff;
+    float curveX[8], curveY[8], curveY2[8], curveN;  // (the curve: its points, the spline's second derivatives; 0: none)
+};
+static_assert(sizeof(AoConstants) == 61 * 4, "Relight's constants (D3D12: within the 61 root constants)");
+static_assert(sizeof(AoConstants) <= sizeof(DittoConstants), "Relight's constants");
+
+template <class Frame>
+void ditto_fill_ao(AoConstants &ka, const DittoSettings &s, const Frame &fr, bool floatColour, uint64_t frames) {
+    ka = AoConstants();
+    uint32_t rw = fr.rw, rh = fr.rh;
+    ka.rs[0] = (float)rw, ka.rs[1] = (float)rh, ka.rsRcp[0] = 1.0f / rw, ka.rsRcp[1] = 1.0f / rh;
+    float fov = fr.fovY > 0.01f && fr.fovY < 3.1f ? fr.fovY : 1.0472f;  // (none given - XeSS: 60 degrees)
+    ka.tanY = tanf(0.5f * fov), ka.tanX = ka.tanY * (float)rw / (float)rh;
+    ka.zNear = fr.zNear > 0.0f ? fr.zNear : 0.1f, ka.zFar = fr.zFar > 0.0f ? fr.zFar : 100000.0f;
+    ka.inverted = fr.depthInverted ? 1.0f : 0.0f, ka.frame = (float)(frames % 1024);
+    ka.aoStrength = s.aoStrength < 0.0f ? 0.0f : s.aoStrength > 1.0f ? 1.0f : s.aoStrength;
+    ka.giStrength = s.giStrength < 0.0f ? 0.0f : s.giStrength > 4.0f ? 4.0f : s.giStrength;
+    ka.giDark = s.giDark < 0.0f ? 0.0f : s.giDark > 4.0f ? 4.0f : s.giDark;
+    ka.sCurve = s.sCurve < 0.0f ? 0.0f : s.sCurve > 1.0f ? 1.0f : s.sCurve;
+    ka.giCeiling = s.giCeiling < 0.0f ? 0.0f : s.giCeiling > 4.0f ? 4.0f : s.giCeiling;
+    ka.planeW = s.aoPlaneFilter ? 1.0f : 0.0f, ka.mips = s.aoMips ? 1.0f : 0.0f;
+    ka.aoPow = s.aoPower ? 1.0f : 0.0f;
+    // (flags: 1 backface boost, 2 decorrelated noise)
+    ka.flags = (float)((s.aoBackBoost ? 1 : 0) | (s.aoDecorrelate ? 2 : 0));
+    ka.lut = s.aoLut ? 1.0f : 0.0f, ka.cmips = s.aoColorMips && s.aoMips ? 1.0f : 0.0f;
+    ka.samples = s.aoSamples < 4.0f ? 4.0f : s.aoSamples > 32.0f ? 32.0f : floorf(s.aoSamples + 0.5f);
+    ka.halfOff = 0.0f;  // (the half size's pixel of each 2 x 2: the same every frame - FastGI's fixed grid; one a frame flickered)
+    if (!ditto_curve_line(s)) {
+        int n = s.curveN > 8 ? 8 : s.curveN;
+        for (int i = 0; i < n; i++) ka.curveX[i] = s.curveX[i], ka.curveY[i] = s.curveY[i];
+        ditto_curve_y2(n, ka.curveX, ka.curveY, ka.curveY2);
+        ka.curveN = (float)n;
+    }
+    ka.pivot = fr.hdr || floatColour ? 0.071f : 0.3f;  // (30 % of the brightness: linear HDR 0.3 ^ 2.2, or [0, 1] colour)
+    ka.radiusWorld = s.aoRadius, ka.radiusScreen = s.aoScreen > 0.01f ? s.aoScreen : 0.5f;
+    ka.rays = s.aoRays < 4.0f ? 4.0f : s.aoRays > 32.0f ? 32.0f : floorf(s.aoRays + 0.5f);
+    ka.contact = s.aoContact < 0.0f ? 0.0f : s.aoContact > 4.0f ? 4.0f : s.aoContact;
+    ka.spatial = s.aoSpatial < 1.0f ? 1.0f : s.aoSpatial > 2.0f ? 2.0f : s.aoSpatial;
+    ka.mvScale[0] = s.mvSign * fr.mvToUv[0], ka.mvScale[1] = s.mvSign * fr.mvToUv[1];
+    ka.mvSize[0] = fr.mvRes[0], ka.mvSize[1] = fr.mvRes[1];
 }
