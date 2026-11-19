@@ -456,12 +456,15 @@ bool key_pressed(Key &k, double t, bool repeat) {
 // the frame weight FSR 3.1's settings set (OptiScaler's presets, or the game) while not overridden; -1 none
 float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f : (float)g_stats.fsrFrameWeight; }
 
+// the curves editor under Ditto Relight: hidden (the curve still applied - ini curve)
+constexpr bool kCurvesEditor = false;
+
 bool visible(int i) {
     if (i == I_SHARP) return !g_m.sharpOff;
     // (the sliders hidden while CORTAO's toggles are tried; the temporal smoothing's toggle shown)
     // (CORTAO's ideas on and hidden; the temporal smoothing, screen reach 0.25, the samples and the half size shown)
-    // (Relight's: its curves; the rest on by default and hidden - ini keys)
-    if (i == I_RCURVE) return g_m.relight;
+    // (Relight's: its settings on by default and hidden, its curves editor too - ini keys)
+    if (i == I_RCURVE) return kCurvesEditor && g_m.relight;
     if (i == I_TREACH || i == I_RSAMPLES || (i >= I_THALF && i <= I_TCACAO)) return false;
     if (i >= I_TPLANE && i <= I_TCMIP) return false;
     if (i >= I_RAO && i <= I_RTEMPW) return false;
@@ -813,7 +816,7 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     y += 10 * S;
     section("EXPERIMENTAL");
     toggle_row(I_RELIGHT, "Ditto Relight", s.relight);
-    if (s.relight) {
+    if (s.relight && kCurvesEditor) {
         // the curves editor (Photoshop's): the image's luma histogram behind, the line, the curve, its points; the
         // black-to-white ramps at its left and bottom
         {
