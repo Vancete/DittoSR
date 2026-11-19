@@ -26,7 +26,7 @@ void main(uint2 id : SV_DispatchThreadID) {
         int2 q = min(int2(id * 2u + uint2(j & 1u, j >> 1u)), int2(sdims) - 1);
         float4 v;
         if (L == 1u) {
-            v = Nd.Load(int3(q, 0));
+            v = flagOn(131072u) ? LOAD_ND(Nd, id) : LOAD_ND(Nd, q);  // (131072: Nd the half size's - level 1 itself)
         } else {
             float3 c;
             v = mipDecode(Below.Load(int3(q, 0)), c);

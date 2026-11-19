@@ -8,7 +8,8 @@
 //     scene=grass     thin grass blades over a cracked ground, the camera panning (one motion for every depth: a turn)
 //     scene=corner    a wall receding to the right under a ceiling, a thin bright HDR strip of light along their joint,
 //                     the camera still - Ditto Relight's GI from a light nearly in a surface's plane (it should fade
-//                     smoothly down the wall); the scene's own lighting flat, so what Relight adds shows alone
+//                     smoothly down the wall); the scene's own lighting flat, so what Relight adds shows alone;
+//                     dolly=0.01: the camera moving toward it that much a frame (driving: every depth changing)
 //     frames=64, ratio=1.5 (output / render; output 1440x810), vel=3 (grass: output pixels a frame), sharpen=0,
 //                     dense=1 (grass: blades x dense, thinner by its square root), wobble=0 (grass: the speed vel - wobble, vel,
 //                     vel + wobble in turn), blur=0 (grass: motion blur over
@@ -74,6 +75,7 @@ static bool g_out11;  // (outfmt=r11g11b10: the output R11G11B10_FLOAT, as many 
 static float g_vel = 3.0f, g_dense = 1.0f, g_blur = 0.0f, g_mvs = 1.0f, g_radiance = 1.0f;
 static int g_wobble = 0, g_light = 0, g_sky = 0, g_spec = 0;
 static int g_stop = 0;  // (stop=: the pan stops after this frame - how fast the image gets sharp again)
+static float g_dolly = 0.0f;  // (dolly=: the corner's camera moving forward this much a frame)
 static float g_wind = 0.0f;  // (wind=: the blades' tips sway this many output pixels, with no motion vectors of their own)
 // the pan's speed at frame t (output pixels): vel, or vel - wobble, vel, vel + wobble in turn - a hand on the mouse
 static float pan_vel(int t) {
@@ -126,17 +128,19 @@ static Sample tiles(float x, float y, int t) {
 // says), against a wall through (0, 0, 4) turned 0.6 radians (receding to the right) and a ceiling at y = 1 in front of
 // it; the ceiling within 0.06 of the wall a strip of light (HDR 12, 8, 3), the rest dim, the wall a flat grey
 static Sample corner(float x, float y, int t) {
-    (void)t;
     Sample s;
-    s.mv[0] = s.mv[1] = 0;
     float ty = tanf(0.5f), tx = ty * OW / OH;
     float dx = (2.0f * x / OW - 1.0f) * tx, dy = (1.0f - 2.0f * y / OH) * ty;
+    float cz = g_dolly * t;  // (the camera at (0, 0, cz), looking down z)
     const float a = 0.6f, nx = -sinf(a), nz = -cosf(a), d0 = nz * 4.0f;  // (the wall: n . p = d0, n toward the camera)
-    float tw = d0 / (nx * dx + nz);
+    float tw = (d0 - nz * cz) / (nx * dx + nz);
     float tc = dy > 1e-4f ? 1.0f / dy : 1e30f;
     float tt = fminf(tw, tc);
+    // (the motion: the point seen from the last frame's camera, g_dolly behind)
+    float zp = tt + g_dolly, dxp = tt * dx / zp, dyp = tt * dy / zp;
+    s.mv[0] = (dxp / tx + 1.0f) * 0.5f * OW - x, s.mv[1] = (1.0f - dyp / ty) * 0.5f * OH - y;
     if (tc < tw) {
-        float px = tt * dx, pz = tt;
+        float px = tt * dx, pz = cz + tt;
         float dist = (nx * px + nz * pz) - d0;  // (from the wall, in front of it)
         if (dist < 0.06f) s.rgb[0] = 12.0f, s.rgb[1] = 8.0f, s.rgb[2] = 3.0f;
         else s.rgb[0] = s.rgb[1] = s.rgb[2] = 0.04f;
@@ -809,6 +813,7 @@ int main(int argc, char **argv) {
     g_sky = atoi(opt(argc, argv, "sky", "0"));
     g_spec = atoi(opt(argc, argv, "spec", "0"));
     g_wind = (float)atof(opt(argc, argv, "wind", "0"));
+    g_dolly = (float)atof(opt(argc, argv, "dolly", "0"));
     float ratio = (float)atof(opt(argc, argv, "ratio", "1.5"));
     RW = (uint32_t)(OW / ratio), RH = (uint32_t)(OH / ratio);
     float r = (float)OW / RW;

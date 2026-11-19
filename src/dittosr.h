@@ -9,7 +9,7 @@
 #include "ffx_api/ffx_upscale.h"
 
 // the version both front ends report (the FidelityFX API provider, the libxess.dll proxy)
-#define DITTOSR_VERSION "0.5.2"
+#define DITTOSR_VERSION "0.5.4"
 #define DITTOSR_VERSION_NAME "DittoSR " DITTOSR_VERSION
 
 struct DittoSettings {
@@ -63,6 +63,32 @@ struct DittoSettings {
     // and GI at the main pass' size, the history left as it is - aoCacaoPasses of it (1 - 8; CACAO's default 2) - a test
     bool aoCacao = true;
     int aoCacaoPasses = 2;
+    // ... (D3D12, on by default - ini keys) aoPackNd the normal and depth packed (8 bytes a texel in place of 16: the
+    // octahedral normal, the depth); aoUpCompose the half size's upsample in the composition (FastGI's: no render-size
+    // pass between); aoFuse passes fused (the 4 depth mips in one, the half size's normal and depth by the main pass,
+    // CACAO's 2 passes in one); aoHistLen the temporal smoothing's weight by its history's length (n / (n + 1) up to
+    // 0.94: fast where it starts over, long where it has held - the harness' corner flicker 0.26 -> 0.18). Tried and
+    // removed: the sparse filter from groupshared memory (slower), adaptive samples (fewer where the history is long:
+    // the thin light's bands back, no time saved)
+    bool aoPackNd = true, aoUpCompose = true, aoFuse = true, aoHistLen = true;
+    // ... on by default (also the menu's toggles under Relight): aoAmbientOnly the AO on the ambient light alone (GTAO's
+    // multi-bounce, faded on bright pixels); aoEmitterCos each occluder's light x (1 + the cosine of its surface toward
+    // the pixel) / 2; aoBetterNormals the prepass' normals by Turanszki's 2-pixel extrapolation. (Tried and removed:
+    // occluder thickness, a variance clip, a motion-tolerant history, a history-guided blur)
+    bool aoAmbientOnly = true, aoEmitterCos = true, aoBetterNormals = true;
+    // ... the GI steadier (on by default - the menu's toggles under Relight): aoGiWide a wider spatial filter for the GI
+    // (3 pairs 10 pixels out; the AO's kept: the harness' GI flicker -24 %); aoGiLong a longer history for the GI (up to 31 frames: -18 %).
+    // (Tried and removed: the GI's colour from the colour mips, its anti-firefly)
+    bool aoGiWide = true, aoGiLong = true;
+    // ... (D3D12) aoHalfPrep the prepass at half size (with half resolution and the mips: no render-size normal and depth);
+    // aoCurveLut the curve from a baked table (4096 entries over [0, 16]) in place of its spline a pixel and channel
+    bool aoHalfPrep = true, aoCurveLut = true;
+    // ... on by default: aoNoise8 FastGI's noise cycle, the main pass' noise the same every 8
+    // frames (the frames' mean a fixed one); aoGiFalloff FastGI's falloff, each occluder's light x (1 - (d / reach)^2);
+    // aoFadeMeters (100, the menu's) the AO faded out from that many metres to twice that (0: none; the camera's metres a unit from FSR
+    // 3.1's dispatch, 1 where it gives none)
+    bool aoNoise8 = true, aoGiFalloff = true;
+    float aoFadeMeters = 100.0f;
     // ... the curve (the menu's curves editor; ini curve = "x,y x,y ..."): curveN points (2 - 8) by x in [0, 1], each
     // channel through their natural cubic spline in a perceptual [0, 1] (aocompose.hlsl) - the line: none. By default
     // a slight crush of the blacks and a darker low end (the curve tuned in Assetto Corsa EVO)
@@ -188,6 +214,7 @@ struct DittoFrame {
     float preExposure = 1.0f;
     float reactiveMul = 1.0f;  // x the reactive mask
     bool reset = false;
+    float metersPerUnit = 0;  // (FSR 3.1's viewSpaceToMetersFactor; 0: unknown - 1 assumed)
     float fovY = 0, zNear = 0, zFar = 0;  // the camera (FSR 3.1's dispatch; 0: unknown) - the experimental AO / GI
 };
 
@@ -237,7 +264,8 @@ private:
     // (the 1x variants, the motion pass fused in: [fp16][anti-shimmer]; null: the motion pass as at other ratios)
     ID3D12PipelineState *psoUpscaleFm_[2][2] = {};
     ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr, *psoAoMip_ = nullptr;
-    ID3D12PipelineState *psoAoMain16_ = nullptr, *psoAoLut_ = nullptr, *psoAoUp_ = nullptr, *psoAoHist_ = nullptr, *psoAoHalfNd_ = nullptr, *psoAoCacao_ = nullptr;  // (... the 16 x 16 main pass, the table, the half size's upsample)  // (EXPERIMENTAL: Ditto Relight)
+    ID3D12PipelineState *psoAoMain16_ = nullptr, *psoAoLut_ = nullptr, *psoAoUp_ = nullptr, *psoAoHalfNd_ = nullptr, *psoAoCacao_ = nullptr,
+                         *psoAoMipAll_ = nullptr, *psoAoCacao2_ = nullptr, *psoAoCurve_ = nullptr;  // (ao_fuse; the curve's table)  // (... the 16 x 16 main pass, the table, the half size's upsample)  // (EXPERIMENTAL: Ditto Relight)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     // the game's output last checked (outputWritable): its format, whether it allows unordered access, and the verdict
@@ -258,11 +286,10 @@ private:
     // (... half resolution, FastGI's: the filter's scratch, the normal and depth, the temporal smoothing's history and its
     // depth, all at half size; aoLastHalf_: the last frame's mode - the history is either size's)
     Tex aoHalfF_, aoNdHalf_, aoHh_[2], aoHDh_[2];
+    Tex aoCurveLut_;  // (ao_curve_lut: the curve's table, 4096 x 1 - curveKey_: the curve it was built for)
+    float curveKey_[26] = {};
+    Tex aoNdP_, aoNdHalfP_;  // (ao_pack_nd: the normal and depth packed, render and half size)
     bool aoLastHalf_ = false;
-    // (... the luma histogram (64 x 1), copied each frame into histRb_'s slot - read kTimeRing frames later; histHas_:
-    // a slot written)
-    Tex aoHist_;
-    ID3D12Resource *histRb_ = nullptr;
     // (the F8 capture: per frame, the output's and Relight's colour's readback copies; capN_ the frames copied (-1: no
     // capture), capLast_ the frame of the last - written out kCapWait frames later, the GPU done with them)
     struct Cap {
@@ -277,8 +304,6 @@ private:
     bool capKeyDown_ = false;
     bool capCopy(ID3D12GraphicsCommandList *cl, ID3D12Resource *src, Cap &c);
     void capWrite();
-    const uint32_t *histMap_ = nullptr;
-    bool histHas_[8] = {};
     bool aoLutMade_ = false;
     int aoCur_ = 0;
     bool aoOk_ = false;
@@ -290,8 +315,10 @@ private:
     float prevJit_[2] = {0, 0};
     // the passes' GPU time (the menu's graph): five timestamps a frame (the start, after the convert, the motion and
     // the upscale passes, the end) into a ring, read back kTimeRing frames later; log_passes=1: each pass's mean logged
-    static constexpr uint32_t kTimeRing = 8, kStamps = 5;
-    double passMs_[4] = {0, 0, 0, 0};
+    // (stamps: 0 the start, 1 - 4 after convert, motion, upscale, sharpen; 5 - 13 after Relight's prepass, mips, main
+    // pass, half normal and depth, filter, temporal smoothing, CACAO, upsample, composition - all written every frame)
+    static constexpr uint32_t kTimeRing = 8, kStamps = 14;
+    double passMs_[4] = {0, 0, 0, 0}, aoMs_[10] = {};
     uint32_t passN_ = 0;
     ID3D12QueryHeap *timeQ_ = nullptr;
     ID3D12Resource *timeRb_ = nullptr;
@@ -360,10 +387,6 @@ struct DittoStats {
     // the frame weight FSR 3.1's velocity factor and reactiveness scale set in place of the settings' (OptiScaler's
     // presets and sliders; -1: none, the settings' own)
     volatile float fsrFrameWeight = -1.0f;
-    // Ditto Relight's luma histogram (64 bins, a pixel of each 4 x 4, a few frames late) - the curves editor's; histSeq
-    // counts its updates (0: none yet)
-    volatile uint32_t hist[64] = {};
-    volatile uint32_t histSeq = 0;
 };
 extern DittoStats g_stats;
 // The menu's requests, taken by the next upscale: the other upscaler (the toggle), the comparison

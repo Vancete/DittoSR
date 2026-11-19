@@ -119,6 +119,20 @@ static void load_config() {
     s.aoDecorrelate = GetPrivateProfileIntA("dittosr", "ao_decorrelate", s.aoDecorrelate, ini) != 0;
     s.aoCacao = GetPrivateProfileIntA("dittosr", "ao_cacao", s.aoCacao, ini) != 0;
     s.aoCacaoPasses = GetPrivateProfileIntA("dittosr", "ao_cacao_passes", s.aoCacaoPasses, ini);
+    s.aoPackNd = GetPrivateProfileIntA("dittosr", "ao_pack_nd", s.aoPackNd, ini) != 0;
+    s.aoUpCompose = GetPrivateProfileIntA("dittosr", "ao_up_compose", s.aoUpCompose, ini) != 0;
+    s.aoFuse = GetPrivateProfileIntA("dittosr", "ao_fuse", s.aoFuse, ini) != 0;
+    s.aoHistLen = GetPrivateProfileIntA("dittosr", "ao_history_length", s.aoHistLen, ini) != 0;
+    s.aoAmbientOnly = GetPrivateProfileIntA("dittosr", "ao_ambient_only", s.aoAmbientOnly, ini) != 0;
+    s.aoEmitterCos = GetPrivateProfileIntA("dittosr", "ao_emitter_cosine", s.aoEmitterCos, ini) != 0;
+    s.aoBetterNormals = GetPrivateProfileIntA("dittosr", "ao_better_normals", s.aoBetterNormals, ini) != 0;
+    s.aoGiWide = GetPrivateProfileIntA("dittosr", "ao_gi_wide", s.aoGiWide, ini) != 0;
+    s.aoGiLong = GetPrivateProfileIntA("dittosr", "ao_gi_long_history", s.aoGiLong, ini) != 0;
+    s.aoHalfPrep = GetPrivateProfileIntA("dittosr", "ao_half_prepass", s.aoHalfPrep, ini) != 0;
+    s.aoCurveLut = GetPrivateProfileIntA("dittosr", "ao_curve_lut", s.aoCurveLut, ini) != 0;
+    s.aoNoise8 = GetPrivateProfileIntA("dittosr", "ao_noise_cycle8", s.aoNoise8, ini) != 0;
+    s.aoGiFalloff = GetPrivateProfileIntA("dittosr", "ao_gi_falloff", s.aoGiFalloff, ini) != 0;
+    s.aoFadeMeters = ini_float(ini, "ao_fade_distance", s.aoFadeMeters);
     {  // (the curve: "x,y x,y ...", by x, 2 - 8 points in [0, 1]; else the line)
         char cb[256];
         GetPrivateProfileStringA("dittosr", "curve", "", cb, sizeof cb, ini);
@@ -240,6 +254,20 @@ bool ditto_save_settings() {
     ok = put("ao_half", b(s.aoHalf), b(d.aoHalf), false) && ok;
     ok = put("ao_decorrelate", b(s.aoDecorrelate), b(d.aoDecorrelate), false) && ok;
     ok = put("ao_cacao", b(s.aoCacao), b(d.aoCacao), false) && ok;
+    ok = put("ao_pack_nd", b(s.aoPackNd), b(d.aoPackNd), false) && ok;
+    ok = put("ao_up_compose", b(s.aoUpCompose), b(d.aoUpCompose), false) && ok;
+    ok = put("ao_fuse", b(s.aoFuse), b(d.aoFuse), false) && ok;
+    ok = put("ao_history_length", b(s.aoHistLen), b(d.aoHistLen), false) && ok;
+    ok = put("ao_ambient_only", b(s.aoAmbientOnly), b(d.aoAmbientOnly), false) && ok;
+    ok = put("ao_emitter_cosine", b(s.aoEmitterCos), b(d.aoEmitterCos), false) && ok;
+    ok = put("ao_better_normals", b(s.aoBetterNormals), b(d.aoBetterNormals), false) && ok;
+    ok = put("ao_gi_wide", b(s.aoGiWide), b(d.aoGiWide), false) && ok;
+    ok = put("ao_gi_long_history", b(s.aoGiLong), b(d.aoGiLong), false) && ok;
+    ok = put("ao_half_prepass", b(s.aoHalfPrep), b(d.aoHalfPrep), false) && ok;
+    ok = put("ao_curve_lut", b(s.aoCurveLut), b(d.aoCurveLut), false) && ok;
+    ok = put("ao_noise_cycle8", b(s.aoNoise8), b(d.aoNoise8), false) && ok;
+    ok = put("ao_gi_falloff", b(s.aoGiFalloff), b(d.aoGiFalloff), false) && ok;
+    ok = put("ao_fade_distance", s.aoFadeMeters, d.aoFadeMeters, false) && ok;
     {
         char cb[256] = "";
         size_t m = 0;

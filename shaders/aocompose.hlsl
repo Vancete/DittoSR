@@ -13,26 +13,29 @@
 //     the pivot as it is. The colour scaled, its hue kept.
 //   - the curve (curveN > 0, the menu's curves editor): each channel through a natural cubic spline over its points,
 //     in a perceptual [0, 1] (linear HDR: ^ 1 / 2.2; above 1, a slope of 1 past the curve's end) - the whole image,
-//     the sky too. And the image's luma histogram before it (64 bins, a pixel of each 4 x 4), for the editor.
+//     the sky too.
 // t0 = the prepass' normal and depth, t1 = the game's colour, t2 = the occlusion and bounce light;
-// u0 = the colour (RGBA16F), u1 = the histogram (64 x 1, cleared by aohist.hlsl).
+// u0 = the colour (RGBA16F).
 #include "ao_common.hlsli"
 
 Texture2D<float4> Nd : register(t0);
 Texture2D<float4> Color : register(t1);
 Texture2D<float4> Res : register(t2);
+Texture2D<float> GDepth : register(t3);    // (the game's depth: flags 131072)
+Texture2D<float> CurveLut : register(t4);  // (the curve's table: flags 262144)
 AOFMT("rgba16f") RWTexture2D<float4> Out : register(u0);
-AOFMT("r32ui") RWTexture2D<uint> Hist : register(u1);
+
+#include "ao_up.hlsli"
 
 [numthreads(8, 8, 1)]
 void main(uint2 id : SV_DispatchThreadID) {
     if (any(id >= (uint2)rs)) return;
     int2 p = int2(id);
     float4 c = Color.Load(int3(p, 0));
-    float4 nd = Nd.Load(int3(p, 0));
+    float4 nd = ndAt(GDepth, p);
     float3 o = c.rgb;
     if (nd.w > 0.0) {
-        float4 r = Res.Load(int3(p, 0));
+        float4 r = flagOn(8u) ? upHalf(Res, p, nd) : Res.Load(int3(p, 0));  // (flags 8: t2 the half size's - upsampled here)
         float3 col = max(c.rgb, 0.0);
         float mx = max(col.r, max(col.g, col.b));
         float3 albedo = lerp((float3)0.5, 0.6 * col / max(mx, 1e-4), saturate(mx * 8.0));
@@ -43,7 +46,21 @@ void main(uint2 id : SV_DispatchThreadID) {
             b = cap * (1.0 - exp(-b / cap));
         }
         float occ = aoPow > 0.5 ? pow(saturate(r.a), aoStrength) : lerp(1.0, r.a, aoStrength);  // (CORTAO: pow for its intensity)
-        o = col * occ + b;
+        float3 occ3 = occ;
+        if (flagOn(256u)) {
+            // (AO on the ambient light alone: GTAO's multi-bounce fit (Jimenez 2016) by the albedo's guess - a light
+            // material's shade lifted by its own bounces -, and faded out on bright pixels (from 55 % of the perceived
+            // brightness up: direct light, emissive surfaces - not the ambient light the occlusion takes away))
+            float a = saturate(r.a);
+            float3 A = 2.0404 * albedo - 0.3324, B = -4.7951 * albedo + 0.6417, C = 2.7552 * albedo + 0.6903;
+            float3 mb = max(a, ((a * A + B) * a + C) * a);
+            occ3 = aoPow > 0.5 ? pow(saturate(mb), aoStrength) : lerp(1.0, mb, aoStrength);
+            float ly = dot(col, float3(0.2126, 0.7152, 0.0722));
+            float lp = pivot < 0.2 ? pow(max(ly, 0.0), 1.0 / 2.2) : ly;
+            occ3 = lerp(occ3, 1.0, smoothstep(0.55, 0.9, lp));
+        }
+        if (fadeZ > 0.0) occ3 = lerp(occ3, 1.0, saturate((nd.w - fadeZ) / fadeZ));  // (the AO faded from fadeZ to twice it)
+        o = col * occ3 + b;
         if (sCurve > 0.0) {
             float l = dot(o, float3(0.2126, 0.7152, 0.0722));
             if (l > pivot) {
@@ -54,15 +71,16 @@ void main(uint2 id : SV_DispatchThreadID) {
     }
     // (the curve's domain: perceptual - linear HDR's pivot 0.071 against [0, 1] colour's 0.3)
     bool lin = pivot < 0.2;
-    if ((id.x & 3u) == 0u && (id.y & 3u) == 0u) {
-        float l = max(dot(o, float3(0.2126, 0.7152, 0.0722)), 0.0);
-        float t = lin ? pow(l, 1.0 / 2.2) : l;
-        InterlockedAdd(Hist[uint2(min((uint)(saturate(t) * 64.0), 63u), 0u)], 1u);
-    }
     if (curveN > 1.5) {
-        float3 t = lin ? pow(max(o, 0.0), 1.0 / 2.2) : max(o, 0.0);
-        t = float3(curveAt(t.r), curveAt(t.g), curveAt(t.b));
-        o = lin ? pow(t, 2.2) : t;
+        if (flagOn(262144u) && all(o <= 16.0)) {  // (262144: the baked table, by the square root - aocurve.hlsl)
+            float3 u = (sqrt(max(o, 0.0) / 16.0) * 4095.0 + 0.5) / 4096.0;
+            o = float3(CurveLut.SampleLevel(linearClamp, float2(u.r, 0.5), 0.0), CurveLut.SampleLevel(linearClamp, float2(u.g, 0.5), 0.0),
+                       CurveLut.SampleLevel(linearClamp, float2(u.b, 0.5), 0.0));
+        } else {
+            float3 t = lin ? pow(max(o, 0.0), 1.0 / 2.2) : max(o, 0.0);
+            t = float3(curveAt(t.r), curveAt(t.g), curveAt(t.b));
+            o = lin ? pow(t, 2.2) : t;
+        }
     }
     Out[id] = float4(o, c.a);
 }

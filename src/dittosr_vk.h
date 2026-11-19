@@ -30,6 +30,7 @@ struct DittoFrameVk {
     float exposureMul = 1.0f;
     float preExposure = 1.0f;
     float reactiveMul = 1.0f;
+    float metersPerUnit = 0;  // (FSR 3.1's viewSpaceToMetersFactor; 0: unknown - 1 assumed)
     float fovY = 0, zNear = 0, zFar = 0;  // the camera (FSR 3.1's dispatch; 0: unknown) - Ditto Relight
     bool reset = false;
 };
@@ -85,7 +86,8 @@ private:
     // (EXPERIMENTAL, Ditto Relight: prepass, main, filter, temporal, compose)
     VkPipeline psoAoPrep_ = VK_NULL_HANDLE, psoAoMain_ = VK_NULL_HANDLE, psoAoFilter_ = VK_NULL_HANDLE, psoAoTemporal_ = VK_NULL_HANDLE,
                psoAoComp_ = VK_NULL_HANDLE, psoAoMip_ = VK_NULL_HANDLE, psoAoMain16_ = VK_NULL_HANDLE, psoAoLut_ = VK_NULL_HANDLE,
-               psoAoUp_ = VK_NULL_HANDLE, psoAoHist_ = VK_NULL_HANDLE, psoAoHalfNd_ = VK_NULL_HANDLE, psoAoCacao_ = VK_NULL_HANDLE;
+               psoAoUp_ = VK_NULL_HANDLE, psoAoHalfNd_ = VK_NULL_HANDLE, psoAoCacao_ = VK_NULL_HANDLE,
+               psoAoMipAll_ = VK_NULL_HANDLE, psoAoCacao2_ = VK_NULL_HANDLE, psoAoCurve_ = VK_NULL_HANDLE;  // (ao_fuse; the curve's table)
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> sets_;
     VkBuffer ubo_ = VK_NULL_HANDLE;
@@ -101,13 +103,11 @@ private:
     // (... half resolution, FastGI's: the filter's scratch, the normal and depth, the temporal smoothing's history and its
     // depth, all at half size; aoLastHalf_: the last frame's mode - the history is either size's)
     Img aoHalfF_, aoNdHalf_, aoHh_[2], aoHDh_[2];
+    // (... the normal and depth packed (render and half size: ao_pack_nd), the curve's table (ao_curve_lut - curveKey_: the
+    // curve it was built for))
+    Img aoNdP_, aoNdHalfP_, aoCurveLut_;
+    float curveKey_[26] = {};
     bool aoLastHalf_ = false;
-    // (Relight's luma histogram (64 x 1), copied each frame into histBuf_'s slot - read kTimeRing frames later)
-    Img aoHist_;
-    VkBuffer histBuf_ = VK_NULL_HANDLE;
-    VkDeviceMemory histMem_ = VK_NULL_HANDLE;
-    const uint32_t *histMap_ = nullptr;
-    bool histHas_[8] = {};
     bool aoLutMade_ = false;
     int aoCur_ = 0;
     bool aoOk_ = false;

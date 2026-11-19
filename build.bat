@@ -22,11 +22,14 @@ if not exist "%SPV%" set "SPV=%VULKAN_SDK%\Bin\dxc.exe"
 if not exist "%SPV%" (echo no dxc with SPIR-V: put the DirectXShaderCompiler release in tools\dxc\ or install the Vulkan SDK & exit /b 1)
 
 rem D3D12 (DXIL)
-for %%s in (convert motion upscale sharpen aoprep aomain aomip aofilter aotemporal aocompose aolut aoup aohist aohalfnd aocacao) do (
+for %%s in (convert motion upscale sharpen aoprep aomain aomip aofilter aotemporal aocompose aolut aoup aohalfnd aocacao aocurve) do (
   %DXC% -nologo -T cs_6_0 -E main -O3 -Fh "%OUT%\gen\cs_%%s.h" -Vn g_cs_%%s "%ROOT%shaders\%%s.hlsl" || exit /b 1
 )
 rem Ditto Relight: its main pass in 16 x 16 groups (ao_workgroup16)
 %DXC% -nologo -T cs_6_0 -D AO_WG=16 -E main -O3 -Fh "%OUT%\gen\cs_aomain16.h" -Vn g_cs_aomain16 "%ROOT%shaders\aomain.hlsl" || exit /b 1
+rem Ditto Relight's fused passes (D3D12, ao_fuse): its mips in one pass, CACAO's 2 passes in one
+%DXC% -nologo -T cs_6_0 -E main -O3 -Fh "%OUT%\gen\cs_aomipall.h" -Vn g_cs_aomipall "%ROOT%shaders\aomipall.hlsl" || exit /b 1
+%DXC% -nologo -T cs_6_0 -D CACAO_FUSED=1 -E main -O3 -Fh "%OUT%\gen\cs_aocacao2.h" -Vn g_cs_aocacao2 "%ROOT%shaders\aocacao.hlsl" || exit /b 1
 rem the FP16 variants: native 16-bit types (SM 6.2), picked at run time where the GPU supports them
 for %%s in (upscale sharpen) do (
   %DXC% -nologo -T cs_6_2 -enable-16bit-types -D DITTO_FP16=1 -E main -O3 -Fh "%OUT%\gen\cs_%%s16.h" -Vn g_cs_%%s16 "%ROOT%shaders\%%s.hlsl" || exit /b 1
@@ -44,10 +47,11 @@ rem the in-game menu (overlay.cpp): a vertex and a pixel shader
 %DXC% -nologo -T ps_6_0 -E ps -O3 -Fh "%OUT%\gen\ov_ps.h" -Vn g_ov_ps "%ROOT%shaders\overlay.hlsl" || exit /b 1
 rem Vulkan (SPIR-V): one descriptor set - b0 the constants at 0, t0-t7 at 10, u0-u2 at 20, s0 at 30 (dittosr_vk.cpp)
 set SPVF=-nologo -spirv -fspv-target-env=vulkan1.1 -fvk-b-shift 0 0 -fvk-t-shift 10 0 -fvk-u-shift 20 0 -fvk-s-shift 30 0 -D DITTO_VK=1 -T cs_6_0 -E main -O3
-for %%s in (convert motion aoprep aomain aomip aofilter aotemporal aocompose aolut aoup aohist aohalfnd aocacao) do (
+for %%s in (convert motion aoprep aomain aomip aofilter aotemporal aocompose aolut aoup aohalfnd aocacao aomipall aocurve) do (
   "%SPV%" %SPVF% -Fh "%OUT%\gen\spv_%%s.h" -Vn g_spv_%%s "%ROOT%shaders\%%s.hlsl" || exit /b 1
 )
 "%SPV%" %SPVF% -DAO_WG=16 -Fh "%OUT%\gen\spv_aomain16.h" -Vn g_spv_aomain16 "%ROOT%shaders\aomain.hlsl" || exit /b 1
+"%SPV%" %SPVF% -DCACAO_FUSED=1 -Fh "%OUT%\gen\spv_aocacao2.h" -Vn g_spv_aocacao2 "%ROOT%shaders\aocacao.hlsl" || exit /b 1
 rem the upscale (fused, or a debug view) and the sharpening write the game's output: once per output format, the upscale
 rem once more per history format (RGB10A2, RGBA16F) - always with the anti-shimmer (its strength 0 turns it off)
 for %%f in (rgba16f rgba8 rgb10a2 r11g11b10f rgba32f) do (

@@ -32,8 +32,8 @@ using Microsoft.Win32;
 
 [assembly: AssemblyTitle("DittoSR Loader")]
 [assembly: AssemblyProduct("DittoSR")]
-[assembly: AssemblyVersion("0.5.2.0")]
-[assembly: AssemblyFileVersion("0.5.2.0")]
+[assembly: AssemblyVersion("0.5.4.0")]
+[assembly: AssemblyFileVersion("0.5.4.0")]
 
 namespace DittoSR {
 

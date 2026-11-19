@@ -25,7 +25,7 @@ float tapWeight(float3 c, float4 nd, int2 q, float4 qn, bool cortao) {
 void main(uint2 id : SV_DispatchThreadID) {
     if (any(id >= (uint2)rs)) return;
     float4 center = Res.Load(int3(id, 0));
-    float4 nd = Nd.Load(int3(id, 0));
+    float4 nd = LOAD_ND(Nd, id);
     if (nd.w <= 0.0) { Out[id] = center; return; }
     int2 m = int2(rs) - 1, p = int2(id);
     float3 c = viewPos((float2(id) + 0.5) * rsRcp, nd.w);
@@ -37,13 +37,29 @@ void main(uint2 id : SV_DispatchThreadID) {
         [unroll] for (int k = 0; k < 6; k++) {
             int2 o = int2(round(float2(offs[k]) * spatial));
             int2 qa = clamp(p + o, int2(0, 0), m), qb = clamp(p - o, int2(0, 0), m);
-            float4 na = Nd.Load(int3(qa, 0)), nb = Nd.Load(int3(qb, 0));
+            float4 na = LOAD_ND(Nd, qa), nb = LOAD_ND(Nd, qb);
             float wa = tapWeight(c, nd, qa, na, true), wb = tapWeight(c, nd, qb, nb, true);
             if (cw) wa = wb = min(wa, wb);
             sum += Res.Load(int3(qa, 0)) * wa + Res.Load(int3(qb, 0)) * wb;
             ws += wa + wb;
         }
-        Out[id] = sum / ws;
+        float3 gs = sum.rgb;
+        float gw = ws;
+        if (flagOn(16384u)) {  // (flags 16384: the GI also from 3 pairs 10 pixels out, 60 degrees apart - the AO kept to
+            // the near ones. 6 pairs at twice the near ones' distance: the same steadiness for twice the time; the set turned
+            // every other frame, or FastGI's cheaper weights: less steady)
+            const int2 wide[3] = {int2(10, 0), int2(5, 9), int2(-5, 9)};
+            [unroll] for (int k = 0; k < 3; k++) {
+                int2 o = int2(round(float2(wide[k]) * spatial));
+                int2 qa = clamp(p + o, int2(0, 0), m), qb = clamp(p - o, int2(0, 0), m);
+                float4 na = LOAD_ND(Nd, qa), nb = LOAD_ND(Nd, qb);
+                float wa = tapWeight(c, nd, qa, na, true), wb = tapWeight(c, nd, qb, nb, true);
+                if (cw) wa = wb = min(wa, wb);
+                gs += Res.Load(int3(qa, 0)).rgb * wa + Res.Load(int3(qb, 0)).rgb * wb;
+                gw += wa + wb;
+            }
+        }
+        Out[id] = float4(gs / gw, sum.a / ws);
         return;
     }
     int2 ax = axis > 0.5 ? int2(0, 1) : int2(1, 0);
@@ -51,7 +67,7 @@ void main(uint2 id : SV_DispatchThreadID) {
         // (the distance rounded: fractional radii symmetric)
         int off = int(floor(float(k) * spatial * 2.0 + 0.5));
         int2 qa = clamp(p + ax * off, int2(0, 0), m), qb = clamp(p - ax * off, int2(0, 0), m);
-        float4 na = Nd.Load(int3(qa, 0)), nb = Nd.Load(int3(qb, 0));
+        float4 na = LOAD_ND(Nd, qa), nb = LOAD_ND(Nd, qb);
         float wa = tapWeight(c, nd, qa, na, cw), wb = tapWeight(c, nd, qb, nb, cw);
         if (cw) wa = wb = min(wa, wb);
         float g = k == 1 ? 0.75 : 0.375;

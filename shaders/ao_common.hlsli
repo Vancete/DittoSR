@@ -30,12 +30,17 @@ cbuffer A : register(b0) {
     float planeW;         // 1: CORTAO's filter weights (the depth against the centre's plane, pairs symmetric)
     float mips;           // 1: the main pass' far samples from the depth mips (aomip.hlsl)
     float aoPow;          // 1: the occlusion applied as pow(occlusion, aoStrength), not lerp(1, occlusion, aoStrength)
-    float flags;          // bits: 1 CORTAO's backface boost (a backface occluder x its slope compensation), 2 decorrelated noise
+    float flags;          // bits: 1 CORTAO's backface boost (a backface occluder x its slope compensation), 2 decorrelated noise,
+                          // 4 packed normal and depth, 8 the upsample in the composition, 16 the main pass writes the half
+                          // size's normal and depth, 32 the history's weight by its length (D3D12); 256 AO on the ambient light
+                          // alone, 512 the emitter's cosine, 2048 better normals; 16384 a wider spatial filter for the GI,
+                          // 32768 a longer history for it; 131072 the prepass at half size; 262144 the curve from its table;
+                          // 524288 FastGI's 8-frame noise cycle, 1048576 its GI falloff
     float lut;            // 1: the occluder lookup table (aolut.hlsl) - 32 rays
     float cmips;          // 1: the GI's far occluders' colour from the colour mips (aocmip.hlsl)
     float samples;        // the main pass' samples a pixel (4 - 32)
-    float halfRes;        // 1: the main pass at half size (one pixel of each 2 x 2, halfOff) - aoup.hlsl back
-    float halfOff;        // ... this frame's pixel of the 2 x 2 (0 - 3: x = bit 0, y = bit 1)
+    float halfRes;        // 1: the main pass at half size (the pixel at 2x, 2y of each 2 x 2) - aoup.hlsl back
+    float fadeZ;          // the AO faded out from this depth to twice it (view units; 0: none)
     // the curve (aocompose.hlsl): its points (x, y, up to 8, by x) and the natural cubic spline's second derivatives;
     // curveN its points (0: none - the line)
     float4 curveX4[2];
@@ -126,6 +131,31 @@ float curveIn(float t) {
 float curveAt(float t) { return t > 1.0 ? curveIn(1.0) + (t - 1.0) : curveIn(t); }
 
 bool flagOn(uint b) { return ((uint)flags & b) != 0u; }
+
+// the packed normal and depth (flags 4, ao_pack_nd): RG32_UINT - x the normal, octahedral, 2 x 16-bit snorm; y the linear
+// depth's bits - 8 bytes a texel in place of RGBA32F's 16, read at t7 by every pass that reads the normal and depth
+Texture2D<uint2> NdP : register(t7);
+uint2 ndPack(float4 nd) {
+    float s = abs(nd.x) + abs(nd.y) + abs(nd.z);
+    float3 n = s > 0.0 ? nd.xyz / s : float3(0.0, 0.0, 1.0);
+    float2 e = n.xy;
+    if (n.z < 0.0) e = (1.0 - abs(n.yx)) * float2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    int2 q = int2(round(clamp(e, -1.0, 1.0) * 32767.0));
+    return uint2(((uint)q.x & 0xffffu) | ((uint)q.y << 16), asuint(nd.w));
+}
+float4 ndUnpack(uint2 v) {
+    float2 e = max(float2(int2((int)(v.x << 16), (int)v.x) >> 16) / 32767.0, -1.0);
+    float3 n = float3(e, 1.0 - abs(e.x) - abs(e.y));
+    float t = saturate(-n.z);
+    n.xy += float2(n.x >= 0.0 ? -t : t, n.y >= 0.0 ? -t : t);
+    return float4(normalize(n), asfloat(v.y));
+}
+// (a pass' normal and depth at p: tex - its RGBA32F one -, or the packed one at t7)
+#define LOAD_ND(tex, p) (flagOn(4u) ? ndUnpack(NdP.Load(int3((p), 0))) : tex.Load(int3((p), 0)))
+
+// the temporal smoothing's depth with its history's length in the 5 low bits (aotemporal.hlsl; 0 - 31)
+float hdPack(float d, uint c) { return asfloat((asuint(d) & ~31u) | min(c, 31u)); }
+uint hdCount(float v) { return asuint(v) & 31u; }
 
 // interleaved gradient noise (Jimenez 2014)
 float ign(float2 p) { return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715)))); }
