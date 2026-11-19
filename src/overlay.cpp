@@ -457,13 +457,12 @@ bool key_pressed(Key &k, double t, bool repeat) {
 float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f : (float)g_stats.fsrFrameWeight; }
 
 // the curves editor under Ditto Relight (the curve also ini curve)
-constexpr bool kCurvesEditor = false;
+constexpr bool kCurvesEditor = true;
 
 bool visible(int i) {
     // (Relight's: the AO and GI strengths, the samples, FastGI's noise cycle and falloff, the AO's fade, the curves; its
     // features on by default and hidden - ini keys)
-    if (i == I_RSAMPLES) return g_m.relight;
-    if (i == I_RFADE) return false;  // (the AO's fade distance: ini ao_fade_distance)
+    if (i == I_RSAMPLES || i == I_RFADE) return g_m.relight;
     if (i == I_QCYC || i == I_QFALL) return false;  // (FastGI's noise cycle and falloff: on, hidden - ini keys)
     if (i == I_RTEMP || (i >= I_THALF && i <= I_FCLUT)) return false;
     if (i == I_SHARP) return !g_m.sharpOff;
@@ -843,6 +842,7 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         slider_row(I_RAO, "Ambient occlusion", "the darkening");
         slider_row(I_RGI, "Global illumination", "the bounce light");
         slider_row(I_RSAMPLES, "Samples", "more: less noise, slower");
+        slider_row(I_RFADE, "AO fade distance", "faded out to twice it");
     }
     if (s.relight && kCurvesEditor) {
         // the curves editor (Photoshop's): the line, the curve, its points; the
