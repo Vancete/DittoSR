@@ -377,11 +377,30 @@ FFX_API_ENTRY ffxReturnCode_t ffxDispatch(ffxContext *context, const ffxDispatch
     // (frame generation: its prepare and its dispatch - the latter from the swapchain's frame generation callback - on a
     // context DittoSR answers: its own field, its own in-between images; AMD's context then left idle)
     if (desc && (desc->type == FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE || desc->type == FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION)) {
-        std::lock_guard<std::mutex> fl(g_fgmu);
+        std::unique_lock<std::mutex> fl(g_fgmu);
         if (FgCtx *f = fg_of(context)) {
+            // (AMD's images instead - the menu's, with AMD's context behind the handle: its prepare every frame, so either
+            // can take over the next frame; DittoSR's prepared too)
+            bool amdImages = !f->own && ditto_settings().fgAmd;
+            g_stats.fgMode = f->own ? 1 : 2;
             if (desc->type == FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE) {
                 f->fg->prepare((const ffxDispatchDescFrameGenerationPrepare *)desc);
+                bool own = f->own;
+                fl.unlock();  // (g_mu after g_fgmu nowhere: ffxCreateContext takes them the other way round)
+                if (!own) {
+                    std::lock_guard<std::mutex> lk(g_mu);
+                    if (load_original()) o_dispatch(context, desc);
+                }
                 return FFX_API_RETURN_OK;
+            }
+            LARGE_INTEGER q;
+            QueryPerformanceCounter(&q);
+            g_stats.fgQpc = q.QuadPart, g_stats.fgAmdNow = amdImages;
+            if (amdImages) {
+                fl.unlock();
+                std::lock_guard<std::mutex> lk(g_mu);
+                if (load_original()) return o_dispatch(context, desc);
+                return FFX_API_RETURN_ERROR_RUNTIME_ERROR;
             }
             auto *d = (const ffxDispatchDescFrameGeneration *)desc;
             if (f->dispatches++ < 3)

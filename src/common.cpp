@@ -130,6 +130,7 @@ static void load_config() {
     s.aoGiLong = GetPrivateProfileIntA("dittosr", "ao_gi_long_history", s.aoGiLong, ini) != 0;
     s.aoHalfPrep = GetPrivateProfileIntA("dittosr", "ao_half_prepass", s.aoHalfPrep, ini) != 0;
     s.aoCurveLut = GetPrivateProfileIntA("dittosr", "ao_curve_lut", s.aoCurveLut, ini) != 0;
+    s.fgAmd = GetPrivateProfileIntA("dittosr", "frame_gen_amd", s.fgAmd, ini) != 0;
     s.aoNoise8 = GetPrivateProfileIntA("dittosr", "ao_noise_cycle8", s.aoNoise8, ini) != 0;
     s.aoGiFalloff = GetPrivateProfileIntA("dittosr", "ao_gi_falloff", s.aoGiFalloff, ini) != 0;
     s.aoFadeMeters = ini_float(ini, "ao_fade_distance", s.aoFadeMeters);
@@ -266,6 +267,7 @@ bool ditto_save_settings() {
     ok = put("ao_gi_long_history", b(s.aoGiLong), b(d.aoGiLong), false) && ok;
     ok = put("ao_half_prepass", b(s.aoHalfPrep), b(d.aoHalfPrep), false) && ok;
     ok = put("ao_curve_lut", b(s.aoCurveLut), b(d.aoCurveLut), false) && ok;
+    ok = put("frame_gen_amd", b(s.fgAmd), b(d.fgAmd), false) && ok;
     ok = put("ao_noise_cycle8", b(s.aoNoise8), b(d.aoNoise8), false) && ok;
     ok = put("ao_gi_falloff", b(s.aoGiFalloff), b(d.aoGiFalloff), false) && ok;
     ok = put("ao_fade_distance", s.aoFadeMeters, d.aoFadeMeters, false) && ok;

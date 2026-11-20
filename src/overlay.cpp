@@ -349,7 +349,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_QAMB, I_QCOS, I_QNRM, I_GWIDE, I_GLONG, I_FPACK, I_FUPC, I_FFUSE, I_FHIST, I_FHPREP, I_FCLUT, I_QCYC, I_QFALL, I_RFADE, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_QAMB, I_QCOS, I_QNRM, I_GWIDE, I_GLONG, I_FPACK, I_FUPC, I_FFUSE, I_FHIST, I_FHPREP, I_FCLUT, I_QCYC, I_QFALL, I_RFADE, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -586,6 +586,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
     }
     case I_INDICATOR: s.indicator = !s.indicator; return true;
     case I_SHMODE: s.sharpenMode = (s.sharpenMode + (dir < 0 ? 2 : 1)) % 3; return true;
+    case I_FGEN: if (g_stats.fgMode == 2) s.fgAmd = !s.fgAmd; return true;  // (DittoSR's or AMD's images: AMD's DLL alongside)
     case I_RELIGHT: s.relight = !s.relight; return true;
     case I_RTEMP: s.aoTemporal = !s.aoTemporal; return true;
     case I_TPLANE: s.aoPlaneFilter = !s.aoPlaneFilter; return true;
@@ -837,6 +838,13 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     }
     y += 10 * S;
     section("EXPERIMENTAL");
+    {  // (frame generation: on through the game or OptiScaler - FSR 3.1's; whose in-between images, AMD's DLL alongside)
+        LARGE_INTEGER q, f;
+        QueryPerformanceCounter(&q), QueryPerformanceFrequency(&f);
+        bool on = g_stats.fgMode && (q.QuadPart - g_stats.fgQpc) < f.QuadPart / 2;
+        const char *v = !on ? "Off (the game / OptiScaler)" : g_stats.fgMode == 1 ? "DittoSR" : s.fgAmd ? "AMD's" : "DittoSR";
+        choice_row(I_FGEN, "Frame generation", v);
+    }
     toggle_row(I_RELIGHT, "Ditto Relight", s.relight);
     if (s.relight) {  // (its strengths, its quality toggles)
         slider_row(I_RAO, "Ambient occlusion", "the darkening");

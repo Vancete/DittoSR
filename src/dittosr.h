@@ -38,6 +38,9 @@ struct DittoSettings {
     // aoRadius view units (0: no limit in the world), at most aoScreen of the screen's height; aoRays rays a pixel
     // (4 - 32); aoContact: how much more the rays blocked by the nearest occluders darken (0 - 4: contact shadows)
     bool relight = false;
+    // frame generation (the game's or OptiScaler's FSR 3.1 one, AMD's DLL alongside): AMD's in-between images in place of
+    // DittoSR's (the menu's Frame generation row; ini frame_gen_amd)
+    bool fgAmd = false;
     float aoRadius = 0.0f, aoScreen = 0.5f, aoRays = 4.0f, aoContact = 2.0f;
     // ... the occlusion's strength (0 - 1), the bounce light's (0 - 4), and the bounce light x giDark where the pixel is
     // dark (0 - 4: 1 the same everywhere; above, the shadows lifted more by what surrounds them; below, kept darker)
@@ -394,6 +397,11 @@ struct DittoStats {
     // the frame weight FSR 3.1's velocity factor and reactiveness scale set in place of the settings' (OptiScaler's
     // presets and sliders; -1: none, the settings' own)
     volatile float fsrFrameWeight = -1.0f;
+    // frame generation: 1 DittoSR's own context (no AMD's DLL), 2 DittoSR's alongside AMD's (either's images); 0 none;
+    // fgQpc its last dispatch (QueryPerformanceCounter), fgAmdNow whose images it gave (AMD's)
+    volatile int fgMode = 0;
+    volatile int64_t fgQpc = 0;
+    volatile bool fgAmdNow = false;
 };
 extern DittoStats g_stats;
 // The menu's requests, taken by the next upscale: the other upscaler (the toggle), the comparison
