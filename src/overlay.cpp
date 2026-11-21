@@ -462,7 +462,6 @@ constexpr bool kCurvesEditor = true;
 
 bool visible(int i) {
     if (i == I_RALB) return g_m.relight && g_m.albedo2;  // (the better albedo's strength: with it on)
-    if (i == I_XALB || i == I_XPROBE) return g_m.relight;  // (Relight's better albedo and screen probes)
     if (i >= I_XBOUNCE && i <= I_XFAR) return false;  // (the other GI tests: ini keys)
     if (i >= I_QGUIDE && i <= I_QBLUE) return false;  // (Relight's GI tests: ini keys)
     // (Relight's: the AO and GI strengths, the samples, FastGI's noise cycle and falloff, the AO's fade, the curves; its
@@ -872,9 +871,7 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         slider_row(I_RAO, "Ambient occlusion", "the darkening");
         slider_row(I_RGI, "Global illumination", "the bounce light");
         slider_row(I_RSAMPLES, "Samples", "more: less noise, slower");
-        toggle_row(I_XALB, "Better albedo", s.aoAlbedo2);
         if (s.aoAlbedo2) slider_row(I_RALB, "Albedo strength", "the old guess to the new");
-        toggle_row(I_XPROBE, "GI screen probes", s.aoGiProbes);
         slider_row(I_RFADE, "AO fade distance", "faded out to twice it");
     }
     if (s.relight && kCurvesEditor) {
