@@ -84,9 +84,8 @@ private:
     // (per output format: rgba16f, rgba8, rgb10a2, r11g11b10f, rgba32f; the upscale per history format too: RGB10A2, RGBA16F)
     VkPipeline psoUpscale_[2][5] = {}, psoSharpen_[5] = {};
     // (EXPERIMENTAL, Ditto Relight: prepass, main, filter, temporal, compose)
-    VkPipeline psoAoPrep_ = VK_NULL_HANDLE, psoAoMain_ = VK_NULL_HANDLE, psoAoFilter_ = VK_NULL_HANDLE, psoAoTemporal_ = VK_NULL_HANDLE,
-               psoAoComp_ = VK_NULL_HANDLE, psoAoMip_ = VK_NULL_HANDLE, psoAoMain16_ = VK_NULL_HANDLE, psoAoLut_ = VK_NULL_HANDLE,
-               psoAoUp_ = VK_NULL_HANDLE, psoAoHalfNd_ = VK_NULL_HANDLE, psoAoCacao_ = VK_NULL_HANDLE,
+    VkPipeline psoAoPrep_ = VK_NULL_HANDLE, psoAoFilter_ = VK_NULL_HANDLE, psoAoTemporal_ = VK_NULL_HANDLE,
+               psoAoComp_ = VK_NULL_HANDLE, psoAoMain16_ = VK_NULL_HANDLE, psoAoLut_ = VK_NULL_HANDLE, psoAoCacao_ = VK_NULL_HANDLE,
                psoAoMipAll_ = VK_NULL_HANDLE, psoAoCacao2_ = VK_NULL_HANDLE, psoAoCurve_ = VK_NULL_HANDLE;  // (ao_fuse; the curve's table)
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> sets_;

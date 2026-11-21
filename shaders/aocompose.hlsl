@@ -74,20 +74,8 @@ void main(uint2 id : SV_DispatchThreadID) {
             float3 cap = giCeiling * col + 1e-6;
             b = cap * (1.0 - exp(-b / cap));
         }
-        float occ = aoPow > 0.5 ? pow(saturate(r.a), aoStrength) : lerp(1.0, r.a, aoStrength);  // (CORTAO: pow for its intensity)
+        float occ = pow(saturate(r.a), aoStrength);  // (CORTAO: pow for its intensity)
         float3 occ3 = occ;
-        if (flagOn(256u)) {
-            // (AO on the ambient light alone: GTAO's multi-bounce fit (Jimenez 2016) by the albedo's guess - a light
-            // material's shade lifted by its own bounces -, and faded out on bright pixels (from 55 % of the perceived
-            // brightness up: direct light, emissive surfaces - not the ambient light the occlusion takes away))
-            float a = saturate(r.a);
-            float3 A = 2.0404 * albedo - 0.3324, B = -4.7951 * albedo + 0.6417, C = 2.7552 * albedo + 0.6903;
-            float3 mb = max(a, ((a * A + B) * a + C) * a);
-            occ3 = aoPow > 0.5 ? pow(saturate(mb), aoStrength) : lerp(1.0, mb, aoStrength);
-            float ly = dot(col, float3(0.2126, 0.7152, 0.0722));
-            float lp = pivot < 0.2 ? pow(max(ly, 0.0), 1.0 / 2.2) : ly;
-            occ3 = lerp(occ3, 1.0, smoothstep(0.55, 0.9, lp));
-        }
         if (fadeZ > 0.0) occ3 = lerp(occ3, 1.0, saturate((nd.w - fadeZ) / fadeZ));  // (the AO faded from fadeZ to twice it)
         o = col * occ3 + b;
         if (flag2On(16384u) && le > 0.0) {

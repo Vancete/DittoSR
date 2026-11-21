@@ -349,7 +349,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_QAMB, I_QCOS, I_QNRM, I_GWIDE, I_GLONG, I_FPACK, I_FUPC, I_FFUSE, I_FHIST, I_FHPREP, I_FCLUT, I_QCYC, I_QFALL, I_RFADE, I_QBLUE, I_XALB, I_XEDGE, I_XATROUS, I_XFP16, I_XINTER, I_XFAR, I_RALB, I_RLEXP, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_TMIPS, I_TREACH, I_TBACK, I_RSAMPLES, I_THALF, I_TCACAO, I_QCOS, I_QNRM, I_GWIDE, I_QFALL, I_RFADE, I_QBLUE, I_XALB, I_XEDGE, I_XATROUS, I_XINTER, I_XFAR, I_RALB, I_RLEXP, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -461,29 +461,16 @@ float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f 
 constexpr bool kCurvesEditor = true;
 
 bool visible(int i) {
-    // (every toggle that can change the AO - to find what changed it)
-    if (i == I_RTEMP || i == I_FHIST || i == I_QCYC || i == I_QBLUE || i == I_TDECOR || i == I_THALF || i == I_FHPREP || i == I_FUPC || i == I_FFUSE || i == I_FPACK || i == I_QNRM || i == I_TLUT || i == I_TMIPS || i == I_TREACH || i == I_TBACK || i == I_TPOW || i == I_QAMB || i == I_XALB || i == I_TPLANE || i == I_TSPARSE || i == I_XFP16 || i == I_XINTER || i == I_XFAR) return g_m.relight;
-    if (i == I_TCACAO) return g_m.relight;  // (CACAO - to compare with the a-trous filter)
-    if (i == I_RLEXP) return g_m.relight;  // (the local exposure)
-    if (i == I_RALB) return g_m.relight && g_m.albedo2;  // (the better albedo's strength: with it on)
-    if (i == I_XATROUS) return g_m.relight;  // (the a-trous filter - to compare with CACAO)
-    if (i >= I_XALB && i <= I_XFAR) return false;  // (the other GI tests: ini keys)
-    if (i == I_QBLUE) return false;  // (blue noise: an ini key)
-    // (Relight's: the AO and GI strengths, the samples, FastGI's noise cycle and falloff, the AO's fade, the curves; its
-    // features on by default and hidden - ini keys)
-    if (i == I_RSAMPLES || i == I_RFADE) return g_m.relight;
-    if (i == I_QCYC || i == I_QFALL) return false;  // (FastGI's noise cycle and falloff: on, hidden - ini keys)
-    if (i == I_RTEMP || (i >= I_THALF && i <= I_FCLUT)) return false;
     if (i == I_SHARP) return !g_m.sharpOff;
-    // (the sliders hidden while CORTAO's toggles are tried; the temporal smoothing's toggle shown)
-    // (CORTAO's ideas on and hidden; the temporal smoothing, screen reach 0.25, the samples and the half size shown)
-    // (Relight's: its settings on by default and hidden, its curves editor too - ini keys)
+    if (i == I_UPSCALER || i == I_COMPARE) return g_stats.hasReal;
+    // (Relight's: the AO and GI strengths, the samples, its filters, the albedo's and the local exposure's strengths,
+    // the AO's fade, the AO tests, the curves editor; the rest ini keys)
+    if (i == I_RAO || i == I_RGI || i == I_RSAMPLES || i == I_TCACAO || i == I_XATROUS || i == I_RLEXP || i == I_RFADE) return g_m.relight;
+    if (i == I_RALB) return g_m.relight && g_m.albedo2;  // (the better albedo's strength: with it on)
+    if (i == I_RTEMP || i == I_QBLUE || i == I_THALF || i == I_QNRM || i == I_TMIPS || i == I_TREACH || i == I_TBACK || i == I_XALB || i == I_XINTER || i == I_XFAR) return g_m.relight;  // (the AO tests)
     if (i == I_RCURVE) return kCurvesEditor && g_m.relight;
-    if (i == I_TREACH || i == I_RSAMPLES || (i >= I_THALF && i <= I_TDECOR)) return false;
-    if (i >= I_TPLANE && i <= I_TCMIP) return false;
-    if (i == I_RAO || i == I_RGI) return g_m.relight;  // (the AO and GI strengths)
-    if (i >= I_RAO && i <= I_RTEMPW) return false;
-    return (i != I_UPSCALER && i != I_COMPARE) || g_stats.hasReal;
+    if (i >= I_RAO && i <= I_RLEXP) return false;  // (Relight's other settings: ini keys)
+    return true;
 }
 
 // the sliders' and choices' ranges
@@ -496,12 +483,10 @@ Range range_of(int i) {
     case I_RGI: return {0.0f, 4.0f, 0.1f};
     case I_RGIDARK: return {0.0f, 4.0f, 0.1f};
     case I_RGICEIL: return {0.0f, 4.0f, 0.25f};
-    case I_RRAYS: return {4.0f, 32.0f, 4.0f};
     case I_RRADIUS: return {0.0f, 16.0f, 0.5f};
     case I_RSCREEN: return {0.05f, 0.5f, 0.05f};
     case I_RCONTACT: return {0.0f, 4.0f, 0.25f};
     case I_RSPATIAL: return {1.0f, 2.0f, 0.25f};
-    case I_RTEMPW: return {0.0f, 0.95f, 0.05f};
     case I_RSAMPLES: return {4.0f, 32.0f, 4.0f};
     case I_RFADE: return {0.0f, 300.0f, 10.0f};
     case I_RALB: return {0.0f, 1.0f, 0.05f};
@@ -517,12 +502,10 @@ float *slider_of(DittoSettings &s, int i) {
     case I_RGI: return &s.giStrength;
     case I_RGIDARK: return &s.giDark;
     case I_RGICEIL: return &s.giCeiling;
-    case I_RRAYS: return &s.aoRays;
     case I_RRADIUS: return &s.aoRadius;
     case I_RSCREEN: return &s.aoScreen;
     case I_RCONTACT: return &s.aoContact;
     case I_RSPATIAL: return &s.aoSpatial;
-    case I_RTEMPW: return &s.aoTemporalWeight;
     case I_RSAMPLES: return &s.aoSamples;
     case I_RFADE: return &s.aoFadeMeters;
     case I_RALB: return &s.aoAlbedoStrength;
@@ -568,14 +551,23 @@ int shimmer_index(float v) {
     return best;
 }
 
+// the on / off rows (a click anywhere on them flips them)
+bool is_toggle(int i) {
+    switch (i) {
+    case I_INDICATOR: case I_RELIGHT: case I_RTEMP: case I_TMIPS: case I_TREACH: case I_TBACK: case I_THALF: case I_TCACAO: case I_QCOS: case I_QNRM: case I_GWIDE: case I_QFALL: case I_QBLUE: case I_XALB: case I_XEDGE: case I_XATROUS: case I_XINTER: case I_XFAR:
+        return true;
+    default: return false;
+    }
+}
+
 // one step of item i (dir -1, +1; 0: Enter); true: the settings changed
 bool adjust(DittoSettings &s, int i, int dir) {
     DittoSettings d;
     switch (i) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
-    case I_SHARP: case I_WEIGHT: case I_RAO: case I_RGI: case I_RGIDARK: case I_RGICEIL: case I_RRAYS: case I_RRADIUS:
-    case I_RSCREEN: case I_RCONTACT: case I_RSPATIAL: case I_RTEMPW: case I_RSAMPLES: case I_RFADE: case I_RALB: case I_RLEXP: {
+    case I_SHARP: case I_WEIGHT: case I_RAO: case I_RGI: case I_RGIDARK: case I_RGICEIL: case I_RRADIUS:
+    case I_RSCREEN: case I_RCONTACT: case I_RSPATIAL: case I_RSAMPLES: case I_RFADE: case I_RALB: case I_RLEXP: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
         // (the frame weight: moved, it overrides FSR 3.1's settings' - OptiScaler's presets - from the weight in use;
@@ -600,38 +592,21 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_FGEN: if (g_stats.fgMode == 2) s.fgAmd = !s.fgAmd; return true;  // (DittoSR's or AMD's images: AMD's DLL alongside)
     case I_RELIGHT: s.relight = !s.relight; return true;
     case I_RTEMP: s.aoTemporal = !s.aoTemporal; return true;
-    case I_TPLANE: s.aoPlaneFilter = !s.aoPlaneFilter; return true;
-    case I_TSPARSE: s.aoSparseFilter = !s.aoSparseFilter; return true;
     case I_TMIPS: s.aoMips = !s.aoMips; return true;
     case I_TREACH: s.aoScreen = s.aoScreen <= 0.3f ? d.aoScreen : 0.25f; return true;
-    case I_TPOW: s.aoPower = !s.aoPower; return true;
     case I_TBACK: s.aoBackBoost = !s.aoBackBoost; return true;
-    case I_TLUT: s.aoLut = !s.aoLut; return true;
-    case I_TWG: s.aoWg16 = !s.aoWg16; return true;
-    case I_TCMIP: s.aoColorMips = !s.aoColorMips; return true;
     case I_THALF: s.aoHalf = !s.aoHalf; return true;
-    case I_TDECOR: s.aoDecorrelate = !s.aoDecorrelate; return true;
     case I_TCACAO: s.aoCacao = !s.aoCacao; return true;
-    case I_FPACK: s.aoPackNd = !s.aoPackNd; return true;
-    case I_FUPC: s.aoUpCompose = !s.aoUpCompose; return true;
-    case I_FFUSE: s.aoFuse = !s.aoFuse; return true;
-    case I_FHIST: s.aoHistLen = !s.aoHistLen; return true;
-    case I_FHPREP: s.aoHalfPrep = !s.aoHalfPrep; return true;
-    case I_FCLUT: s.aoCurveLut = !s.aoCurveLut; return true;
-    case I_QCYC: s.aoNoise8 = !s.aoNoise8; return true;
     case I_QFALL: s.aoGiFalloff = !s.aoGiFalloff; return true;
     case I_QBLUE: s.aoBlueNoise = !s.aoBlueNoise; return true;
     case I_XALB: s.aoAlbedo2 = !s.aoAlbedo2; return true;
     case I_XEDGE: s.aoEdgeFill = !s.aoEdgeFill; return true;
     case I_XATROUS: s.aoAtrous = !s.aoAtrous; return true;
-    case I_XFP16: s.aoFp16 = !s.aoFp16; return true;
     case I_XINTER: s.aoGiInterleave = !s.aoGiInterleave; return true;
     case I_XFAR: s.aoFarCheap = !s.aoFarCheap; return true;
-    case I_QAMB: s.aoAmbientOnly = !s.aoAmbientOnly; return true;
     case I_QCOS: s.aoEmitterCos = !s.aoEmitterCos; return true;
     case I_QNRM: s.aoBetterNormals = !s.aoBetterNormals; return true;
     case I_GWIDE: s.aoGiWide = !s.aoGiWide; return true;
-    case I_GLONG: s.aoGiLong = !s.aoGiLong; return true;
     }
     return false;
 }
@@ -876,26 +851,13 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         y += 8 * S;
         section("AO TESTS");
         toggle_row(I_RTEMP, "Temporal smoothing", s.aoTemporal);
-        toggle_row(I_FHIST, "History length", s.aoHistLen);
-        toggle_row(I_QCYC, "8-frame noise cycle", s.aoNoise8);
         toggle_row(I_QBLUE, "Blue noise", s.aoBlueNoise);
-        toggle_row(I_TDECOR, "Decorrelated noise", s.aoDecorrelate);
         toggle_row(I_THALF, "Half resolution", s.aoHalf);
-        toggle_row(I_FHPREP, "Half-size prepass", s.aoHalfPrep);
-        toggle_row(I_FUPC, "Upsample in compose", s.aoUpCompose);
-        toggle_row(I_FFUSE, "Fused passes", s.aoFuse);
-        toggle_row(I_FPACK, "Packed normals", s.aoPackNd);
         toggle_row(I_QNRM, "Better normals", s.aoBetterNormals);
-        toggle_row(I_TLUT, "Occluder table (32 rays)", s.aoLut);
         toggle_row(I_TMIPS, "Depth mips", s.aoMips);
         toggle_row(I_TREACH, "Screen reach 0.25", s.aoScreen <= 0.3f);
         toggle_row(I_TBACK, "Backface boost", s.aoBackBoost);
-        toggle_row(I_TPOW, "AO as a power", s.aoPower);
-        toggle_row(I_QAMB, "AO on ambient only", s.aoAmbientOnly);
         toggle_row(I_XALB, "Better albedo", s.aoAlbedo2);
-        toggle_row(I_TPLANE, "Plane filter weights", s.aoPlaneFilter);
-        toggle_row(I_TSPARSE, "Sparse filter", s.aoSparseFilter);
-        toggle_row(I_XFP16, "FP16 main pass", s.aoFp16);
         toggle_row(I_XINTER, "Interleaved GI", s.aoGiInterleave);
         toggle_row(I_XFAR, "Cheaper far pixels", s.aoFarCheap);
     }
@@ -1116,7 +1078,7 @@ void input(DittoSettings &s, bool &changed, double t) {
             }
         }
     } else if (click) {
-        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR && hit != I_RELIGHT && hit != I_RTEMP && !(hit >= I_TPLANE && hit <= I_TCMIP) && hit != I_THALF && hit != I_TDECOR && !(hit >= I_TCACAO && hit <= I_XFAR) ? -1 : 1);
+        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && !is_toggle(hit) ? -1 : 1);
     }
 }
 

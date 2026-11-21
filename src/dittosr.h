@@ -41,7 +41,7 @@ struct DittoSettings {
     // frame generation (the game's or OptiScaler's FSR 3.1 one, AMD's DLL alongside): AMD's in-between images in place of
     // DittoSR's (the menu's Frame generation row; ini frame_gen_amd)
     bool fgAmd = false;
-    float aoRadius = 0.0f, aoScreen = 0.5f, aoRays = 4.0f, aoContact = 2.0f;
+    float aoRadius = 0.0f, aoScreen = 0.5f, aoContact = 2.0f;
     // ... the occlusion's strength (0 - 1), the bounce light's (0 - 4), and the bounce light x giDark where the pixel is
     // dark (0 - 4: 1 the same everywhere; above, the shadows lifted more by what surrounds them; below, kept darker)
     float aoStrength = 0.75f, giStrength = 2.0f, giDark = 1.0f;
@@ -51,17 +51,15 @@ struct DittoSettings {
     // ... CORTAO's ideas (tests; off: as before): its filter weights (each tap's depth against the centre's plane, its
     // normal, pairs symmetric), its sparse filter (one pass, 6 pairs) in place of FastGI's, depth mips (the far samples
     // from a sub-sampled chain), the AO as a power (pow(occlusion, aoStrength) in place of a lerp), backface boost
-    bool aoPlaneFilter = true, aoSparseFilter = true, aoMips = true, aoPower = true, aoBackBoost = true;
+    bool aoMips = true, aoBackBoost = true;
     // ... more of CORTAO's (tests): its occluder lookup table (32 rays a pixel, the table built on the GPU for
     // DittoSR's rays), the main pass in 16 x 16 groups (CORTAO's cache advice), colour mips for the GI's far occluders
-    bool aoLut = true, aoWg16 = true, aoColorMips = true;
     // ... the main pass' samples a pixel (4 - 32: fewer, noisier; more, slower), and the main pass at half size (one
     // pixel of each 2 x 2 a frame, brought back by depth and normal - about a quarter of its cost)
     float aoSamples = 16.0f;
     bool aoHalf = true;  // (FastGI's: the filter and the temporal smoothing at half size too, the result brought back at the end)
     // ... decorrelated noise (each random dimension of the main pass its own IGN moved along its own direction a frame:
     // no fixed pattern - the bands of light a thin light left down a wall) - a test
-    bool aoDecorrelate = true;
     // ... FidelityFX CACAO's edge-sensitive blur after the temporal smoothing (aocacao.hlsl; D3D12): on the accumulated AO
     // and GI at the main pass' size, the history left as it is - aoCacaoPasses of it (1 - 8; CACAO's default 2) - a test
     bool aoCacao = true;
@@ -73,24 +71,22 @@ struct DittoSettings {
     // 0.94: fast where it starts over, long where it has held - the harness' corner flicker 0.26 -> 0.18). Tried and
     // removed: the sparse filter from groupshared memory (slower), adaptive samples (fewer where the history is long:
     // the thin light's bands back, no time saved)
-    bool aoPackNd = true, aoUpCompose = true, aoFuse = true, aoHistLen = true;
     // ... on by default (also the menu's toggles under Relight): aoAmbientOnly the AO on the ambient light alone (GTAO's
     // multi-bounce, faded on bright pixels); aoEmitterCos each occluder's light x (1 + the cosine of its surface toward
     // the pixel) / 2; aoBetterNormals the prepass' normals by Turanszki's 2-pixel extrapolation. (Tried and removed:
     // occluder thickness, a variance clip, a motion-tolerant history, a history-guided blur)
-    bool aoAmbientOnly = true, aoEmitterCos = true, aoBetterNormals = true;
+    bool aoEmitterCos = true, aoBetterNormals = true;
     // ... the GI steadier (on by default - the menu's toggles under Relight): aoGiWide a wider spatial filter for the GI
     // (3 pairs 10 pixels out; the AO's kept: the harness' GI flicker -24 %); aoGiLong a longer history for the GI (up to 31 frames: -18 %).
     // (Tried and removed: the GI's colour from the colour mips, its anti-firefly)
-    bool aoGiWide = true, aoGiLong = true;
+    bool aoGiWide = true;
     // ... (D3D12) aoHalfPrep the prepass at half size (with half resolution and the mips: no render-size normal and depth);
     // aoCurveLut the curve from a baked table (4096 entries over [0, 16]) in place of its spline a pixel and channel
-    bool aoHalfPrep = true, aoCurveLut = true;
     // ... on by default: aoNoise8 FastGI's noise cycle, the main pass' noise the same every 8
     // frames (the frames' mean a fixed one); aoGiFalloff FastGI's falloff, each occluder's light x (1 - (d / reach)^2);
     // aoFadeMeters (100, the menu's) the AO faded out from that many metres to twice that (0: none; the camera's metres a unit from FSR
     // 3.1's dispatch, 1 where it gives none)
-    bool aoNoise8 = true, aoGiFalloff = true;
+    bool aoGiFalloff = true;
     // ... (D3D12) aoBlueNoise the main pass' noise from a 64 x 64 blue noise mask stepped by the golden ratio a frame, in
     // place of IGN (and of the decorrelated noise, Vulkan's). (Tried and removed: samples guided toward bright areas,
     // screen probes and their directional variant)
@@ -100,7 +96,7 @@ struct DittoSettings {
     // main pass in 16 bits, aoGiInterleave the GI on half the pixels a frame (the rest the last result's), aoFarCheap half
     // the samples past twice the AO's fade distance. (Tried and removed: multi-bounce, sky light, a source clamp, the mips
     // in groupshared memory)
-    bool aoAlbedo2 = true, aoEdgeFill = true, aoAtrous = true, aoFp16 = true, aoGiInterleave = true, aoFarCheap = true;
+    bool aoAlbedo2 = true, aoEdgeFill = true, aoAtrous = true, aoGiInterleave = true, aoFarCheap = true;
     // ... the local exposure (D3D12; 0 off - the menu's slider; aocompose.hlsl)
     float fxLocalExp = 0.0f;
     float aoAlbedoStrength = 0.5f;  // (the better albedo's strength, 0 - 1: the old guess to the new - the menu's slider)
@@ -115,7 +111,6 @@ struct DittoSettings {
     // by the game's motion vectors, x aoTemporalWeight (0 - 0.95), less in motion)
     float aoSpatial = 1.0f;
     bool aoTemporal = true;
-    float aoTemporalWeight = 0.85f;
     float frameWeight = 2.0f;  // x the new frame's share, 0.25 - 4: lower, more persistence (smoother, blurrier in motion)
     // the frame weight above wins over the one FSR 3.1's velocity factor and reactiveness scale set (OptiScaler's
     // presets and sliders); false: those set it whenever they are not both at 1
@@ -276,10 +271,10 @@ private:
     ID3D12PipelineState *psoUpscaleAs_ = nullptr, *psoUpscaleAs16_ = nullptr;  // (the anti-shimmer variants)
     // (the 1x variants, the motion pass fused in: [fp16][anti-shimmer]; null: the motion pass as at other ratios)
     ID3D12PipelineState *psoUpscaleFm_[2][2] = {};
-    ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr, *psoAoMip_ = nullptr;
-    ID3D12PipelineState *psoAoMain16_ = nullptr, *psoAoLut_ = nullptr, *psoAoUp_ = nullptr, *psoAoHalfNd_ = nullptr, *psoAoCacao_ = nullptr,
+    ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr;
+    ID3D12PipelineState *psoAoMain16_ = nullptr, *psoAoLut_ = nullptr, *psoAoCacao_ = nullptr,
                          *psoAoMipAll_ = nullptr, *psoAoCacao2_ = nullptr, *psoAoCurve_ = nullptr,
-                         *psoAoAtrous_ = nullptr, *psoAoLocal_ = nullptr, *psoAoMainH_ = nullptr, *psoAoMain16H_ = nullptr;  // (ao_fuse; the curve's table; the GI's probes)  // (... the 16 x 16 main pass, the table, the half size's upsample)  // (EXPERIMENTAL: Ditto Relight)
+                         *psoAoAtrous_ = nullptr, *psoAoLocal_ = nullptr, *psoAoMain16H_ = nullptr;  // (the main pass (16 x 16; FP16), the mips in one pass, CACAO's 2 passes in one, the curve's table, the GI's a-trous, the area's luma)  // (EXPERIMENTAL: Ditto Relight)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     // the game's output last checked (outputWritable): its format, whether it allows unordered access, and the verdict

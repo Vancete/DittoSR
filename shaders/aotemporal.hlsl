@@ -59,12 +59,10 @@ void main(uint2 id : SV_DispatchThreadID) {
     history = clamp(history, max(0.0, lo - margin), hi + margin);
     // (less persistence in motion on screen)
     float motion = length((puv - uv) * rs);
-    // (the history's length, flags 32 (ao_history_length): its weight n / (n + 1), up to
-    // 0.94 - fast where it starts over, long where it has held)
-    // (flags 32768: the GI's up to 31 frames, n / (n + 1) up to 0.97 - the AO's still up to 15)
+    // (the weight by the history's length, n / (n + 1): fast where it starts over, long where it has held - the AO's up to
+    // 15 frames (0.94), the GI's up to 31 (0.97))
     uint na = min(cnt, 15u);
-    float tw = flagOn(32u) ? min(0.95, float(na) / float(na + 1u)) : temporal;
-    float tg = flagOn(32u) && flagOn(32768u) ? min(0.97, float(cnt) / float(cnt + 1u)) : tw;
+    float tw = min(0.95, float(na) / float(na + 1u)), tg = min(0.97, float(cnt) / float(cnt + 1u));
     float sm = saturate(ws) / (1.0 + motion * 0.1);
     OutDepth[id] = hdPack(expected, cnt + 1u);
     Out[id] = float4(lerp(current.rgb, history.rgb, tg * sm), lerp(current.a, history.a, tw * sm));

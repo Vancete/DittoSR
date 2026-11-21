@@ -16,7 +16,7 @@ cbuffer A : register(b0) {
     float giStrength;     // 0 - 4: the bounce light added
     float radiusWorld;    // the occluders' reach, view units (ini ao_radius; 0: the screen's cap alone)
     float radiusScreen;   // ... at most this share of the screen's height (ini ao_screen)
-    float rays;           // the rays a pixel (4 - 32: one bit each)
+    float rays;           // the rays a pixel without the occluder table (4 - 32: one bit each)
     float contact;        // how much more the rays the nearest occluders block darken (0 - 4)
     float giDark;         // the bounce light x this where the pixel is dark (0 - 4; 1: the same everywhere)
     float spare0;         // (free)
@@ -27,7 +27,7 @@ cbuffer A : register(b0) {
     float2 mvScale;       // the game's motion vectors -> uv (the previous uv = uv + mv x this; temporal smoothing)
     float2 mvSize;        // ... their resolution
     float giCeiling;      // the bounce light added at most this x the pixel's colour, saturating (0 - 4; 0: no ceiling)
-    float planeW;         // 1: CORTAO's filter weights (the depth against the centre's plane, pairs symmetric)
+    float spare1;         // (free)
     float mips;           // 1: the main pass' far samples from the depth mips (aomip.hlsl)
     uint params2;         // (free)
     float flags;          // bits: 1 CORTAO's backface boost (a backface occluder x its slope compensation), 2 decorrelated noise,
@@ -139,7 +139,6 @@ bool flag2On(uint b) { return (flags2 & b) != 0u; }
 // (flags2 2048: the colour linear HDR - the curve's pivot 30 % of the brightness: 0.071 (0.3 ^ 2.2), else 0.3; 8192: the
 // occlusion applied as pow(occlusion, aoStrength), not lerp(1, occlusion, aoStrength))
 #define pivot (flag2On(2048u) ? 0.071 : 0.3)
-#define aoPow (flag2On(8192u) ? 1.0 : 0.0)
 
 // the packed normal and depth (flags 4, ao_pack_nd): RG32_UINT - x the normal, octahedral, 2 x 16-bit snorm; y the linear
 // depth's bits - 8 bytes a texel in place of RGBA32F's 16, read at t7 by every pass that reads the normal and depth

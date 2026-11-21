@@ -18,12 +18,8 @@
 
 #include "spv_aocompose.h"
 #include "spv_aofilter.h"
-#include "spv_aomain.h"
-#include "spv_aomip.h"
 #include "spv_aomain16.h"
 #include "spv_aolut.h"
-#include "spv_aoup.h"
-#include "spv_aohalfnd.h"
 #include "spv_aocacao.h"
 #include "spv_aocacao2.h"
 #include "spv_aomipall.h"
@@ -207,7 +203,7 @@ DittoSRVk::~DittoSRVk() {
                        &env_[0], &env_[1], &change1_, &dummy_, &aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoLut_, &aoHalf_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1], &aoNdP_, &aoNdHalfP_, &aoCurveLut_})
             dropImage(*t);
         collect(true);
-        std::vector<VkPipeline> ps = {psoConvert_, psoMotion_, psoAoPrep_, psoAoMain_, psoAoFilter_, psoAoTemporal_, psoAoComp_, psoAoMip_, psoAoMain16_, psoAoLut_, psoAoUp_, psoAoHalfNd_, psoAoCacao_, psoAoMipAll_, psoAoCacao2_, psoAoCurve_};
+        std::vector<VkPipeline> ps = {psoConvert_, psoMotion_, psoAoPrep_, psoAoFilter_, psoAoTemporal_, psoAoComp_, psoAoMain16_, psoAoLut_, psoAoCacao_, psoAoMipAll_, psoAoCacao2_, psoAoCurve_};
         for (auto &h : psoUpscale_) ps.insert(ps.end(), h, h + 5);
         ps.insert(ps.end(), psoSharpen_, psoSharpen_ + 5);
         for (VkPipeline p : ps) if (p) fn_->vkDestroyPipeline(dev_, p, nullptr);
@@ -288,13 +284,9 @@ bool DittoSRVk::init() {
         {g_spv_sharpen_r11g11b10f, sizeof g_spv_sharpen_r11g11b10f, &psoSharpen_[3], "sharpen r11g11b10f"},
         {g_spv_sharpen_rgba32f, sizeof g_spv_sharpen_rgba32f, &psoSharpen_[4], "sharpen rgba32f"},
         {g_spv_aoprep, sizeof g_spv_aoprep, &psoAoPrep_, "ao prepass"},
-        {g_spv_aomain, sizeof g_spv_aomain, &psoAoMain_, "ao"},
         {g_spv_aofilter, sizeof g_spv_aofilter, &psoAoFilter_, "ao filter"},
-        {g_spv_aomip, sizeof g_spv_aomip, &psoAoMip_, "ao mips"},
         {g_spv_aomain16, sizeof g_spv_aomain16, &psoAoMain16_, "ao (16 x 16)"},
         {g_spv_aolut, sizeof g_spv_aolut, &psoAoLut_, "ao lookup table"},
-        {g_spv_aoup, sizeof g_spv_aoup, &psoAoUp_, "ao upsample"},
-        {g_spv_aohalfnd, sizeof g_spv_aohalfnd, &psoAoHalfNd_, "ao half normal and depth"},
         {g_spv_aocacao, sizeof g_spv_aocacao, &psoAoCacao_, "ao CACAO blur"},
         {g_spv_aocacao2, sizeof g_spv_aocacao2, &psoAoCacao2_, "ao CACAO blur (2 passes in one)"},
         {g_spv_aomipall, sizeof g_spv_aomipall, &psoAoMipAll_, "ao mips (one pass)"},
@@ -500,7 +492,7 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
     bool mips = relight && s_.aoMips;
     for (uint32_t L = 1; L <= 4 && mips; L++)
         if (!aoMip_[L - 1].image) mips = makeImage(aoMip_[L - 1], (rw + (1u << L) - 1) >> L, (rh + (1u << L) - 1) >> L, VK_FORMAT_R32G32B32A32_UINT);
-    bool lut = relight && s_.aoLut && (aoLut_.image || makeImage(aoLut_, 32 * 32, 32, VK_FORMAT_R32_UINT));
+    bool lut = relight && (aoLut_.image || makeImage(aoLut_, 32 * 32, 32, VK_FORMAT_R32_UINT));
     // (half resolution, FastGI's: the main pass, the filter and the temporal smoothing at half size, their images made
     // when first on; the history kept for one mode at a time)
     uint32_t hw2 = (rw + 1) / 2, hh2 = (rh + 1) / 2;
@@ -510,10 +502,10 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
     if (half && aoT && !aoHh_[0].image)
         aoT = makeImage(aoHh_[0], hw2, hh2, VK_FORMAT_R16G16B16A16_SFLOAT) && makeImage(aoHh_[1], hw2, hh2, VK_FORMAT_R16G16B16A16_SFLOAT) &&
               makeImage(aoHDh_[0], hw2, hh2, VK_FORMAT_R32_SFLOAT) && makeImage(aoHDh_[1], hw2, hh2, VK_FORMAT_R32_SFLOAT);
-    // (as on D3D12: the normal and depth packed (made when first on), the curve's table (new: built again))
-    bool pack = relight && s_.aoPackNd && (aoNdP_.image || makeImage(aoNdP_, rw, rh, VK_FORMAT_R32G32_UINT)) &&
+    // (as on D3D12: the normal and depth packed (made when first needed), the curve's table (new: built again))
+    bool pack = relight && (aoNdP_.image || makeImage(aoNdP_, rw, rh, VK_FORMAT_R32G32_UINT)) &&
                 (!half || aoNdHalfP_.image || makeImage(aoNdHalfP_, hw2, hh2, VK_FORMAT_R32G32_UINT));
-    bool curveTab = relight && s_.aoCurveLut && !ditto_curve_line(s_) &&
+    bool curveTab = relight && !ditto_curve_line(s_) &&
                     (aoCurveLut_.image || (curveKey_[24] = -1.0f, makeImage(aoCurveLut_, 4096, 1, VK_FORMAT_R32_SFLOAT)));
     Img *internal[] = {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &expo_[0], &expo_[1],
                        &env_[0], &env_[1], &change1_, &dummy_, &aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1],
@@ -654,13 +646,11 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
         if (half != aoLastHalf_) aoOk_ = false;
         aoLastHalf_ = half;
         bool aoValid = aoT && aoOk_ && aoLast_ + 1 == frames_ && !reset;
-        float tw = s_.aoTemporalWeight < 0.0f ? 0.0f : s_.aoTemporalWeight > 0.95f ? 0.95f : s_.aoTemporalWeight;
-        ka.temporal = aoValid ? tw : 0.0f;
+        ka.temporal = aoValid ? 1.0f : 0.0f;  // (the weight by the history's length - aotemporal.hlsl)
         ka.mips = mips ? 1.0f : 0.0f, ka.flags2 = (ka.flags2 & ~1u) | (lut ? 1u : 0u), ka.halfRes = half ? 1.0f : 0.0f;
         if (!mips) ka.cmips = 0.0f;
-        bool sparse = s_.aoSparseFilter;
-        // (as D3D12's: the upsample in the composition, fused passes, the half-size prepass, the curve's table)
-        bool upc = half && s_.aoUpCompose, fuse = s_.aoFuse, hp = s_.aoHalfPrep && half && mips;
+        // (as D3D12's: the upsample in the composition, the half-size prepass, the curve's table)
+        bool upc = half, hp = half && mips;
         bool cl8 = curveTab && ka.curveN > 1.5f, buildCurve = false;
         if (cl8) {
             float key[26];
@@ -668,8 +658,8 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
             buildCurve = memcmp(key, curveKey_, sizeof key) != 0;
             memcpy(curveKey_, key, sizeof key);
         }
-        ka.flags = (float)((uint32_t)ka.flags | (pack ? 4u : 0u) | (upc ? 8u : 0u) | (fuse && half && !hp ? 16u : 0u) |
-                           (s_.aoHistLen ? 32u : 0u) | (hp ? 131072u : 0u) | (cl8 ? 262144u : 0u));
+        ka.flags = (float)((uint32_t)ka.flags | (pack ? 4u : 0u) | (upc ? 8u : 0u) | (half && !hp ? 16u : 0u) |
+                           (hp ? 131072u : 0u) | (cl8 ? 262144u : 0u));
         // (Relight's constants: slot 1 the filter's x (and every other pass), 2 its y, 3 the sparse filter, 4 - 7 the mips)
         auto slotA = [&](uint32_t k) { return u0 + k * (VkDeviceSize)uboStride_; };
         VkDeviceSize a0 = slotA(1), a1 = slotA(2), a2 = slotA(3);
@@ -711,22 +701,14 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
             run(psoAoLut_, s, l, u, a0, 32 * 32 / 8, 32 / 8, sizeof ka);
             aoLutMade_ = true;
         }
-        if (mips && fuse) {  // (the depth mips 1 - 4 in one pass, SPD's way)
+        if (mips) {  // (the depth mips 1 - 4 in one pass, SPD's way)
             VkImageView s[kSampled] = {ndF.view, vColor, N, N, N, N, N, p7F};
             VkImageLayout l[kSampled] = {G, lColor, G, G, G, G, G, G};
             VkImageView u[kStorage] = {aoMip_[0].view, aoMip_[1].view, aoMip_[2].view, aoMip_[3].view};
             run(psoAoMipAll_, s, l, u, slotA(4), (aoMip_[0].w + 15) / 16, (aoMip_[0].h + 15) / 16, sizeof ka);
             compute_barrier();
         }
-        for (uint32_t L = 1; L <= 4 && mips && !fuse; L++) {  // (the depth mips, each from the one below; level 1 from the prepass and the colour)
-            Img &dst = aoMip_[L - 1];
-            VkImageView s[kSampled] = {ndF.view, vColor, L > 1 ? aoMip_[L - 2].view : N, N, N, N, N, p7F};
-            VkImageLayout l[kSampled] = {G, lColor, G, G, G, G, G, G};
-            VkImageView u[kStorage] = {dst.view, N, N, N};
-            run(psoAoMip_, s, l, u, slotA(3 + L), (dst.w + 7) / 8, (dst.h + 7) / 8, sizeof ka);
-            compute_barrier();
-        }
-        bool fh = fuse && half && !hp;  // (fused: the half size's normal and depth written by the main pass)
+        bool fh = half && !hp;  // (the half size's normal and depth written by the main pass)
         {
             VkImageView s[kSampled] = {ndF.view, vColor, mips ? aoMip_[0].view : N, mips ? aoMip_[1].view : N, mips ? aoMip_[2].view : N,
                                        mips ? aoMip_[3].view : N, lut ? aoLut_.view : N, p7F};
@@ -734,32 +716,22 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
             Img &tgt = half ? aoHalf_ : aoRes_;
             VkImageView u[kStorage] = {tgt.view, fh && !pack ? aoNdHalf_.view : N, fh && pack ? aoNdHalfP_.view : N, N};
             compute_barrier();
-            uint32_t g = s_.aoWg16 ? 16 : 8;
-            run(s_.aoWg16 ? psoAoMain16_ : psoAoMain_, s, l, u, a0, (tgt.w + g - 1) / g, (tgt.h + g - 1) / g, sizeof ka);
+            run(psoAoMain16_, s, l, u, a0, (tgt.w + 15) / 16, (tgt.h + 15) / 16, sizeof ka);
         }
         // (the filter and the temporal smoothing at the main pass' size: half (FastGI's) or render size)
         Img &nd = half ? aoNdHalf_ : aoNd_, &r0 = half ? aoHalf_ : aoRes_, &r1 = half ? aoHalfF_ : aoF_;
         Img *Hh = half ? aoHh_ : aoH_, *HD = half ? aoHDh_ : aoHD_;
         VkDeviceSize b0 = half ? h0 : a0, b1 = half ? h1 : a1, b2 = half ? h2 : a2;
         uint32_t fx = (r0.w + 7) / 8, fy = (r0.h + 7) / 8;
-        if (half && !fuse && !hp) {  // (the normal and depth of the pixels the half-size main pass computed)
+        {  // (the spatial filter: CORTAO's sparse one, r0 into r1)
             compute_barrier();
-            VkImageView s[kSampled] = {aoNd_.view, N, N, N, N, N, N, pack ? aoNdP_.view : N};
+            VkImageView s[kSampled] = {nd.view, r0.view, N, N, N, N, N, p7m};
             VkImageLayout l[kSampled] = {G, G, G, G, G, G, G, G};
-            VkImageView u[kStorage] = {pack ? N : aoNdHalf_.view, pack ? aoNdHalfP_.view : N, N, N};
-            run(psoAoHalfNd_, s, l, u, a0, fx, fy, sizeof ka);
-        }
-        // (the spatial filter: FastGI's x into r1, y back; or CORTAO's sparse one, one pass into r1)
-        for (int axis = 0; axis < (sparse ? 1 : 2); axis++) {
-            compute_barrier();
-            Img &src = axis ? r1 : r0, &dst = axis ? r0 : r1;
-            VkImageView s[kSampled] = {nd.view, src.view, N, N, N, N, N, p7m};
-            VkImageLayout l[kSampled] = {G, G, G, G, G, G, G, G};
-            VkImageView u[kStorage] = {dst.view, N, N, N};
-            run(psoAoFilter_, s, l, u, sparse ? b2 : axis ? b1 : b0, fx, fy, sizeof ka);
+            VkImageView u[kStorage] = {r1.view, N, N, N};
+            run(psoAoFilter_, s, l, u, b2, fx, fy, sizeof ka);
         }
         compute_barrier();
-        Img &filt = sparse ? r1 : r0;
+        Img &filt = r1;
         Img *aoOut = &filt;
         if (aoT) {  // (no valid history: never read - the filtered in its place, its weight 0)
             Img &hc = Hh[aoCur_], &hp2 = Hh[aoCur_ ^ 1], &dc = HD[aoCur_], &dp = HD[aoCur_ ^ 1];
@@ -775,7 +747,7 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
         }
         if (s_.aoCacao) {  // (CACAO's blur on the accumulated AO and GI - the history left as it is: r0 and r1 ping-ponged)
             int cp = s_.aoCacaoPasses < 1 ? 1 : s_.aoCacaoPasses > 8 ? 8 : s_.aoCacaoPasses;
-            bool two = fuse && cp == 2;  // (fused: the 2 passes in one dispatch)
+            bool two = cp == 2;  // (the 2 passes in one dispatch)
             for (int k = 0; k < (two ? 1 : cp); k++) {
                 Img &dst = aoOut == &r1 ? r0 : r1;
                 VkImageView s[kSampled] = {nd.view, aoOut->view, N, N, N, N, N, p7m};
@@ -785,14 +757,6 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
                 compute_barrier();
                 aoOut = &dst;
             }
-        }
-        if (half && !upc) {  // (back to render size by depth and normal - FastGI's composite's upsample; upc: in the composition)
-            VkImageView s[kSampled] = {ndF.view, aoOut->view, hp ? vDepth : N, N, N, N, N, p7F};
-            VkImageLayout l[kSampled] = {G, G, hp ? lDepth : G, G, G, G, G, G};
-            VkImageView u[kStorage] = {aoRes_.view, N, N, N};
-            run(psoAoUp_, s, l, u, a0, gx, gy, sizeof ka);
-            compute_barrier();
-            aoOut = &aoRes_;
         }
         {
             VkImageView s[kSampled] = {ndF.view, vColor, aoOut->view, hp ? vDepth : N, cl8 ? aoCurveLut_.view : N, N, N, p7F};

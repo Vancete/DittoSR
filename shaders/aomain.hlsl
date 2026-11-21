@@ -160,24 +160,11 @@ void main(uint2 id : SV_DispatchThreadID) {
     // the noise: the spiral's rotation and radial dither, the rays' rotation - per pixel and per frame (a fixed pattern
     // streaked: neighbours' samples on the same texels of a bright strip, in blocks); the filters and DittoSR's accumulation
     // even it out
-    // (flags 524288, FastGI's 8-frame cycle: the noise the same every 8 frames - the temporal smoothing's mean a fixed one)
-    float frm = flagOn(524288u) ? float((uint)frame & 7u) : frame;
+    // (FastGI's 8-frame cycle: the noise the same every 8 frames - the temporal smoothing's mean a fixed one)
+    float frm = float((uint)frame & 7u);
     float2 fp = float2(pix) + 5.588238 * frm;
     float rot = 6.2831853 * ign(fp), dith = ign(fp.yx + 17.0), rrot = 6.2831853 * ign(fp + float2(37.0, 11.0));
     float mir = ign(fp + 71.0);
-#if DITTO_VK
-    if (flagOn(2u)) {
-        // (decorrelated noise (Vulkan; D3D12's blue noise in its place): each dimension its own IGN, moved each frame along its own direction - its phase a
-        // different step a frame; they shared one (the swapped coordinates, the same offset), so a pixel only ever saw
-        // one curve through their combinations and its mean settled on a fixed pattern. Each still IGN moved in the
-        // image, not one value stepped for every pixel at once: what changes from a frame to the next stays fine-grained,
-        // for the filters - an R-sequence's step, the same everywhere, flickered in large patches)
-        float2 q = float2(pix), f = (float2)frm;
-        dith = ign(q + float2(17.0, 59.0) + f * float2(3.1, 9.7));
-        rrot = 6.2831853 * ign(q + float2(37.0, 11.0) + f * float2(7.9, 1.3));
-        mir = ign(q + 71.0 + f * float2(1.7, 13.3));
-    }
-#endif
 #if !DITTO_VK
     if (flagOn(8388608u)) {
         // (blue noise, flags 8388608: each dimension the 64 x 64 mask at its own offset, stepped by the golden ratio a frame

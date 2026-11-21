@@ -95,7 +95,7 @@ struct AoConstants {
     float rs[2], rsRcp[2], tanX, tanY, zNear, zFar, inverted, frame, aoStrength, giStrength, radiusWorld, radiusScreen, rays,
         contact, giDark, spare0;
     uint32_t params1;  // (the local exposure's strength, bits 0 - 7; params2 free)
-    float temporal, spatial, axis, mvScale[2], mvSize[2], giCeiling, planeW, mips;
+    float temporal, spatial, axis, mvScale[2], mvSize[2], giCeiling, spare1, mips;
     uint32_t params2;
     float flags;
     uint32_t flags2;  // (bits: 1 the lookup table; the GI tests - ao_common.hlsli)
@@ -118,12 +118,12 @@ void ditto_fill_ao(AoConstants &ka, const DittoSettings &s, const Frame &fr, boo
     ka.giStrength = s.giStrength < 0.0f ? 0.0f : s.giStrength > 4.0f ? 4.0f : s.giStrength;
     ka.giDark = s.giDark < 0.0f ? 0.0f : s.giDark > 4.0f ? 4.0f : s.giDark;
     ka.giCeiling = s.giCeiling < 0.0f ? 0.0f : s.giCeiling > 4.0f ? 4.0f : s.giCeiling;
-    ka.planeW = s.aoPlaneFilter ? 1.0f : 0.0f, ka.mips = s.aoMips ? 1.0f : 0.0f;
-    // (flags: 1 backface boost, 2 decorrelated noise)
-    ka.flags = (float)((s.aoBackBoost ? 1 : 0) | (s.aoDecorrelate ? 2 : 0) | (s.aoAmbientOnly ? 256 : 0) | (s.aoEmitterCos ? 512 : 0) |
-                       (s.aoBetterNormals ? 2048 : 0) | (s.aoGiWide ? 16384 : 0) | (s.aoGiLong ? 32768 : 0) |
-                       (s.aoNoise8 ? 524288 : 0) | (s.aoGiFalloff ? 1048576 : 0));
-    ka.flags2 = s.aoLut ? 1u : 0u, ka.cmips = s.aoColorMips && s.aoMips ? 1.0f : 0.0f;
+    ka.mips = s.aoMips ? 1.0f : 0.0f;
+    // (flags: 1 backface boost, the GI's - ao_common.hlsli)
+    ka.flags = (float)((s.aoBackBoost ? 1 : 0) | (s.aoEmitterCos ? 512 : 0) |
+                       (s.aoBetterNormals ? 2048 : 0) | (s.aoGiWide ? 16384 : 0) |
+                       (s.aoGiFalloff ? 1048576 : 0));
+    ka.flags2 = 1u, ka.cmips = s.aoMips ? 1.0f : 0.0f;  // (1: the occluder table - the API's, made)
     ka.samples = s.aoSamples < 4.0f ? 4.0f : s.aoSamples > 32.0f ? 32.0f : floorf(s.aoSamples + 0.5f);
     // (the AO's fade: from fadeZ view units on - its metres over the camera's metres a unit)
     ka.fadeZ = s.aoFadeMeters > 0.0f ? s.aoFadeMeters / (fr.metersPerUnit > 0.0f ? fr.metersPerUnit : 1.0f) : 0.0f;
@@ -133,12 +133,12 @@ void ditto_fill_ao(AoConstants &ka, const DittoSettings &s, const Frame &fr, boo
         ditto_curve_y2(n, ka.curveX, ka.curveY, ka.curveY2);
         ka.curveN = (float)n;
     }
-    // (flags2: HDR - the curve's pivot 30 % of the brightness: linear HDR 0.3 ^ 2.2, or [0, 1] colour -, the AO as a power;
+    // (flags2: HDR - the curve's pivot 30 % of the brightness: linear HDR 0.3 ^ 2.2, or [0, 1] colour;
     // the local exposure's strength in params1)
-    ka.flags2 |= (fr.hdr || floatColour ? 2048u : 0u) | (s.aoPower ? 8192u : 0u);
+    ka.flags2 |= fr.hdr || floatColour ? 2048u : 0u;
     ka.params1 = (uint32_t)((s.fxLocalExp < 0.0f ? 0.0f : s.fxLocalExp > 1.0f ? 1.0f : s.fxLocalExp) * 255.0f + 0.5f), ka.params2 = 0;
     ka.radiusWorld = s.aoRadius, ka.radiusScreen = s.aoScreen > 0.01f ? s.aoScreen : 0.5f;
-    ka.rays = s.aoRays < 4.0f ? 4.0f : s.aoRays > 32.0f ? 32.0f : floorf(s.aoRays + 0.5f);
+    ka.rays = 32.0f;
     ka.contact = s.aoContact < 0.0f ? 0.0f : s.aoContact > 4.0f ? 4.0f : s.aoContact;
     ka.spatial = s.aoSpatial < 1.0f ? 1.0f : s.aoSpatial > 2.0f ? 2.0f : s.aoSpatial;
     ka.mvScale[0] = s.mvSign * fr.mvToUv[0], ka.mvScale[1] = s.mvSign * fr.mvToUv[1];
