@@ -349,7 +349,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_QAMB, I_QCOS, I_QNRM, I_GWIDE, I_GLONG, I_FPACK, I_FUPC, I_FFUSE, I_FHIST, I_FHPREP, I_FCLUT, I_QCYC, I_QFALL, I_RFADE, I_QGUIDE, I_QPROBE, I_QBLUE, I_XBOUNCE, I_XSKY, I_XCLAMP, I_XALB, I_XEDGE, I_XPDIR, I_XATROUS, I_XFP16, I_XINTER, I_XLDS, I_XPROBE, I_XFAR, I_RALB, I_RLEXP, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_QAMB, I_QCOS, I_QNRM, I_GWIDE, I_GLONG, I_FPACK, I_FUPC, I_FFUSE, I_FHIST, I_FHPREP, I_FCLUT, I_QCYC, I_QFALL, I_RFADE, I_QBLUE, I_XALB, I_XEDGE, I_XATROUS, I_XFP16, I_XINTER, I_XFAR, I_RALB, I_RLEXP, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -461,10 +461,12 @@ float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f 
 constexpr bool kCurvesEditor = true;
 
 bool visible(int i) {
+    if (i == I_TCACAO) return g_m.relight;  // (CACAO - to compare with the a-trous filter)
     if (i == I_RLEXP) return g_m.relight;  // (the local exposure)
     if (i == I_RALB) return g_m.relight && g_m.albedo2;  // (the better albedo's strength: with it on)
-    if (i >= I_XBOUNCE && i <= I_XFAR) return false;  // (the other GI tests: ini keys)
-    if (i >= I_QGUIDE && i <= I_QBLUE) return false;  // (Relight's GI tests: ini keys)
+    if (i == I_XATROUS) return g_m.relight;  // (the a-trous filter - to compare with CACAO)
+    if (i >= I_XALB && i <= I_XFAR) return false;  // (the other GI tests: ini keys)
+    if (i == I_QBLUE) return false;  // (blue noise: an ini key)
     // (Relight's: the AO and GI strengths, the samples, FastGI's noise cycle and falloff, the AO's fade, the curves; its
     // features on by default and hidden - ini keys)
     if (i == I_RSAMPLES || i == I_RFADE) return g_m.relight;
@@ -475,7 +477,7 @@ bool visible(int i) {
     // (CORTAO's ideas on and hidden; the temporal smoothing, screen reach 0.25, the samples and the half size shown)
     // (Relight's: its settings on by default and hidden, its curves editor too - ini keys)
     if (i == I_RCURVE) return kCurvesEditor && g_m.relight;
-    if (i == I_TREACH || i == I_RSAMPLES || (i >= I_THALF && i <= I_TCACAO)) return false;
+    if (i == I_TREACH || i == I_RSAMPLES || (i >= I_THALF && i <= I_TDECOR)) return false;
     if (i >= I_TPLANE && i <= I_TCMIP) return false;
     if (i == I_RAO || i == I_RGI) return g_m.relight;  // (the AO and GI strengths)
     if (i >= I_RAO && i <= I_RTEMPW) return false;
@@ -618,20 +620,12 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_FCLUT: s.aoCurveLut = !s.aoCurveLut; return true;
     case I_QCYC: s.aoNoise8 = !s.aoNoise8; return true;
     case I_QFALL: s.aoGiFalloff = !s.aoGiFalloff; return true;
-    case I_QGUIDE: s.aoGiGuided = !s.aoGiGuided; return true;
-    case I_QPROBE: s.aoGiProbes = !s.aoGiProbes; return true;
     case I_QBLUE: s.aoBlueNoise = !s.aoBlueNoise; return true;
-    case I_XBOUNCE: s.aoGiBounce = !s.aoGiBounce; return true;
-    case I_XSKY: s.aoSkyLight = !s.aoSkyLight; return true;
-    case I_XCLAMP: s.aoGiSrcClamp = !s.aoGiSrcClamp; return true;
     case I_XALB: s.aoAlbedo2 = !s.aoAlbedo2; return true;
     case I_XEDGE: s.aoEdgeFill = !s.aoEdgeFill; return true;
-    case I_XPDIR: s.aoProbeDir = !s.aoProbeDir; return true;
     case I_XATROUS: s.aoAtrous = !s.aoAtrous; return true;
     case I_XFP16: s.aoFp16 = !s.aoFp16; return true;
     case I_XINTER: s.aoGiInterleave = !s.aoGiInterleave; return true;
-    case I_XLDS: s.aoMipLds = !s.aoMipLds; return true;
-    case I_XPROBE: s.aoGiProbes = !s.aoGiProbes; return true;
     case I_XFAR: s.aoFarCheap = !s.aoFarCheap; return true;
     case I_QAMB: s.aoAmbientOnly = !s.aoAmbientOnly; return true;
     case I_QCOS: s.aoEmitterCos = !s.aoEmitterCos; return true;
@@ -874,6 +868,8 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         slider_row(I_RAO, "Ambient occlusion", "the darkening");
         slider_row(I_RGI, "Global illumination", "the bounce light");
         slider_row(I_RSAMPLES, "Samples", "more: less noise, slower");
+        toggle_row(I_TCACAO, "CACAO blur", s.aoCacao);
+        toggle_row(I_XATROUS, "GI a-trous filter", s.aoAtrous);
         if (s.aoAlbedo2) slider_row(I_RALB, "Albedo strength", "the old guess to the new");
         slider_row(I_RLEXP, "Local exposure", "shade lifted, glare tamed");
         slider_row(I_RFADE, "AO fade distance", "faded out to twice it");

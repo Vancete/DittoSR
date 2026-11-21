@@ -35,11 +35,10 @@ cbuffer A : register(b0) {
                           // size's normal and depth, 32 the history's weight by its length (D3D12); 256 AO on the ambient light
                           // alone, 512 the emitter's cosine, 2048 better normals; 16384 a wider spatial filter for the GI,
                           // 32768 a longer history for it; 131072 the prepass at half size; 262144 the curve from its table;
-                          // 524288 FastGI's 8-frame noise cycle, 1048576 its GI falloff; GI tests (D3D12): 2097152 samples
-                          // guided toward bright areas, 4194304 screen probes, 8388608 blue noise
-    uint flags2;          // bits: 1 the occluder lookup table (aolut.hlsl - 32 rays); GI tests: 2 multi-bounce, 4 sky light,
-                          // 8 source clamp, 16 better albedo, 32 edge fill, 64 directional probes, 128 a-trous, 256 FP16,
-                          // 512 interleaved GI, 1024 mips in groupshared memory, 4096 cheaper far pixels; bits 16 - 23
+                          // 524288 FastGI's 8-frame noise cycle, 1048576 its GI falloff; 8388608 blue noise
+                          // (D3D12)
+    uint flags2;          // bits: 1 the occluder lookup table (aolut.hlsl - 32 rays); (D3D12) 16 better albedo, 32 edge
+                          // fill, 128 a-trous, 256 FP16, 512 interleaved GI, 4096 cheaper far pixels; bits 16 - 23
                           // the better albedo's strength (0 - 255); 2048 HDR, 8192 the AO as a power, 16384 the local
                           // exposure
     float cmips;          // 1: the GI's far occluders' colour from the colour mips (aocmip.hlsl)
@@ -163,15 +162,6 @@ float4 ndUnpack(uint2 v) {
 // (a pass' normal and depth at p: tex - its RGBA32F one -, or the packed one at t7)
 #define LOAD_ND(tex, p) (flagOn(4u) ? ndUnpack(NdP.Load(int3((p), 0))) : tex.Load(int3((p), 0)))
 
-// the screen probes' pixel within each 4 x 4 this frame (R2's steps; the 8-frame cycle's frame with flags 524288)
-uint2 probeJitterAt(float fr) {
-    float f = flagOn(524288u) ? float((uint)fr & 7u) : fr;
-    return uint2(uint(frac(f * 0.7548777 + 0.5) * 4.0), uint(frac(f * 0.5698403 + 0.5) * 4.0)) & 3u;
-}
-uint2 probeJitter() { return probeJitterAt(frame); }
-// (the main pass' size, and the probes' grid over it)
-uint2 mainDims() { return halfRes > 0.5 ? ((uint2)rs + 1u) >> 1 : (uint2)rs; }
-uint2 probeDims() { return (mainDims() + 3u) >> 2; }
 
 // the temporal smoothing's depth with its history's length in the 5 low bits (aotemporal.hlsl; 0 - 31)
 float hdPack(float d, uint c) { return asfloat((asuint(d) & ~31u) | min(c, 31u)); }

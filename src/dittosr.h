@@ -91,21 +91,16 @@ struct DittoSettings {
     // aoFadeMeters (100, the menu's) the AO faded out from that many metres to twice that (0: none; the camera's metres a unit from FSR
     // 3.1's dispatch, 1 where it gives none)
     bool aoNoise8 = true, aoGiFalloff = true;
-    // ... (D3D12; ini keys) aoGiGuided (off) 2 more samples a pixel toward the brightest
-    // areas on its disc (the mips' colour), for the light alone; aoGiProbes screen probes - the GI at one pixel of each
-    // 4 x 4 with twice the samples, interpolated by depth and normal, the other pixels the AO alone with half; aoBlueNoise
-    // (on) the main pass' noise from a 64 x 64 blue noise mask stepped by the golden ratio a frame, in place of IGN
-    bool aoGiGuided = false, aoGiProbes = false, aoBlueNoise = true;
-    // ... GI tests (D3D12; the menu's toggles - on by default: aoEdgeFill, aoAtrous, aoFp16, aoGiInterleave,
-    // aoFarCheap): aoGiBounce the GI's light from the last frame's relit
-    // colour (more bounces), aoSkyLight the unblocked rays the sky's colour by how far up they point, aoGiSrcClamp a
-    // full-resolution source at most 3 x its area's mean, aoAlbedo2 the albedo by the colour over its area's luma,
-    // aoEdgeFill the GI made up for the samples off the screen, aoProbeDir directional probes (the light's direction
-    // each), aoAtrous an a-trous filter on the GI (luma edge-stopping), aoFp16 the main pass in 16 bits, aoGiInterleave
-    // the GI on half the pixels a frame (the rest the last result's), aoMipLds the mips' level 4 from groupshared
-    // memory, aoFarCheap half the samples past twice the AO's fade distance
-    bool aoGiBounce = false, aoSkyLight = false, aoGiSrcClamp = false, aoAlbedo2 = true, aoEdgeFill = true, aoProbeDir = false,
-         aoAtrous = true, aoFp16 = true, aoGiInterleave = true, aoMipLds = false, aoFarCheap = true;
+    // ... (D3D12) aoBlueNoise the main pass' noise from a 64 x 64 blue noise mask stepped by the golden ratio a frame, in
+    // place of IGN (and of the decorrelated noise, Vulkan's). (Tried and removed: samples guided toward bright areas,
+    // screen probes and their directional variant)
+    bool aoBlueNoise = true;
+    // ... (D3D12; on by default) aoAlbedo2 the albedo by the colour over its area's luma, aoEdgeFill the GI made up for
+    // the samples off the screen, aoAtrous an a-trous filter on the GI (luma edge-stopping; the menu's toggle), aoFp16 the
+    // main pass in 16 bits, aoGiInterleave the GI on half the pixels a frame (the rest the last result's), aoFarCheap half
+    // the samples past twice the AO's fade distance. (Tried and removed: multi-bounce, sky light, a source clamp, the mips
+    // in groupshared memory)
+    bool aoAlbedo2 = true, aoEdgeFill = true, aoAtrous = true, aoFp16 = true, aoGiInterleave = true, aoFarCheap = true;
     // ... the local exposure (D3D12; 0 off - the menu's slider; aocompose.hlsl)
     float fxLocalExp = 0.0f;
     float aoAlbedoStrength = 0.5f;  // (the better albedo's strength, 0 - 1: the old guess to the new - the menu's slider)
@@ -286,7 +281,7 @@ private:
     ID3D12PipelineState *psoUpscaleFm_[2][2] = {};
     ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr, *psoAoMip_ = nullptr;
     ID3D12PipelineState *psoAoMain16_ = nullptr, *psoAoLut_ = nullptr, *psoAoUp_ = nullptr, *psoAoHalfNd_ = nullptr, *psoAoCacao_ = nullptr,
-                         *psoAoMipAll_ = nullptr, *psoAoCacao2_ = nullptr, *psoAoCurve_ = nullptr, *psoAoProbe_ = nullptr, *psoAoProbeT_ = nullptr, *psoAoProbeF_ = nullptr,
+                         *psoAoMipAll_ = nullptr, *psoAoCacao2_ = nullptr, *psoAoCurve_ = nullptr,
                          *psoAoAtrous_ = nullptr, *psoAoLocal_ = nullptr, *psoAoMainH_ = nullptr, *psoAoMain16H_ = nullptr;  // (ao_fuse; the curve's table; the GI's probes)  // (... the 16 x 16 main pass, the table, the half size's upsample)  // (EXPERIMENTAL: Ditto Relight)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
@@ -308,12 +303,7 @@ private:
     // (... half resolution, FastGI's: the filter's scratch, the normal and depth, the temporal smoothing's history and its
     // depth, all at half size; aoLastHalf_: the last frame's mode - the history is either size's)
     Tex aoHalfF_, aoNdHalf_, aoHh_[2], aoHDh_[2];
-    Tex aoProbe_, aoBlue_, aoBlueUp_, aoProbeH_[2], aoProbeF_;  // (... the probes' history, ping-ponged - aoProbeCur_ -, filtered)
-    int aoProbeCur_ = 0;
-    bool aoProbeOk_ = false;  // (the probes' history valid)
-    Tex aoProbeDummy_;
-    Tex aoColPrev_, aoProbeDir_, aoProbeDirH_[2], aoProbeDirF_;  // (the GI tests: the last relit colour, the probes' directions)
-    bool aoColPrevOk_ = false;
+    Tex aoBlue_, aoBlueUp_;  // (the blue noise mask and its upload buffer - aoBlueMade_: copied)
     Tex aoLocal_;  // (the area's luma - better albedo, local exposure: level 3's size)  // (the GI's probes; the blue noise mask and its upload buffer - aoBlueMade_: copied)
     bool aoBlueMade_ = false;
     Tex aoCurveLut_;  // (ao_curve_lut: the curve's table, 4096 x 1 - curveKey_: the curve it was built for)
