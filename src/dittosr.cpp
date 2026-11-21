@@ -31,6 +31,8 @@
 #include "cs_aomipall.h"
 #include "cs_aocurve.h"
 #include "cs_aoprobe.h"
+#include "cs_aoprobet.h"
+#include "cs_aoprobef.h"
 #include "bluenoise64.h"
 #include "cs_aocompose.h"
 #include "cs_upscale.h"
@@ -185,7 +187,7 @@ DittoSR::~DittoSR() {
     if (psoAoTemporal_) psoAoTemporal_->Release();
     if (psoAoFilter_) psoAoFilter_->Release();
     if (psoAoMip_) psoAoMip_->Release();
-    for (auto *p : {psoAoMain16_, psoAoLut_, psoAoUp_, psoAoHalfNd_, psoAoCacao_, psoAoMipAll_, psoAoCacao2_, psoAoCurve_, psoAoProbe_})
+    for (auto *p : {psoAoMain16_, psoAoLut_, psoAoUp_, psoAoHalfNd_, psoAoCacao_, psoAoMipAll_, psoAoCacao2_, psoAoCurve_, psoAoProbe_, psoAoProbeT_, psoAoProbeF_})
         if (p) p->Release();
     if (psoAoComp_) psoAoComp_->Release();
     if (psoUpscale16_) psoUpscale16_->Release();
@@ -246,6 +248,8 @@ bool DittoSR::createPipelines() {
         {g_cs_aomipall, sizeof g_cs_aomipall, &psoAoMipAll_, "ao mips (one pass)"},
         {g_cs_aocurve, sizeof g_cs_aocurve, &psoAoCurve_, "ao curve table"},
         {g_cs_aoprobe, sizeof g_cs_aoprobe, &psoAoProbe_, "ao GI probes"},
+        {g_cs_aoprobet, sizeof g_cs_aoprobet, &psoAoProbeT_, "ao GI probes' history"},
+        {g_cs_aoprobef, sizeof g_cs_aoprobef, &psoAoProbeF_, "ao GI probes' filter"},
         {g_cs_aocompose, sizeof g_cs_aocompose, &psoAoComp_, "ao compose"},
     };
     for (auto &c : cs) {
@@ -337,7 +341,7 @@ bool DittoSR::makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f) {
 
 void DittoSR::releaseTextures(bool now) {
     for (Tex *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &change1_, &expo_[0], &expo_[1],
-                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoLut_, &aoHalf_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1], &aoNdP_, &aoNdHalfP_, &aoCurveLut_, &aoProbe_, &aoBlue_, &aoBlueUp_})
+                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoLut_, &aoHalf_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1], &aoNdP_, &aoNdHalfP_, &aoCurveLut_, &aoProbe_, &aoBlue_, &aoBlueUp_, &aoProbeH_[0], &aoProbeH_[1], &aoProbeF_})
         retire(*t, now);
     aoBlueMade_ = false;
     texValid_ = false, aoLutMade_ = false;
@@ -731,8 +735,11 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             // (the GI tests: guided samples (with the mips), screen probes (their texture, a quarter of the main pass' size
             // each way - made when first on, at this size), blue noise (its mask uploaded once, on this command list))
             UINT pw = ((half ? hw2 : rw) + 3) / 4, ph = ((half ? hh2 : rh) + 3) / 4;
-            if (aoProbe_.res && (aoProbe_.w != pw || aoProbe_.h != ph)) retire(aoProbe_, false);
-            bool probes = s_.aoGiProbes && (aoProbe_.res || makeTex(aoProbe_, pw, ph, DXGI_FORMAT_R16G16B16A16_FLOAT));
+            if (aoProbe_.res && (aoProbe_.w != pw || aoProbe_.h != ph))
+                for (Tex *t : {&aoProbe_, &aoProbeH_[0], &aoProbeH_[1], &aoProbeF_}) retire(*t, false);
+            bool probes = s_.aoGiProbes;
+            for (Tex *t : {&aoProbe_, &aoProbeH_[0], &aoProbeH_[1], &aoProbeF_})
+                if (probes && !t->res) probes = makeTex(*t, pw, ph, DXGI_FORMAT_R16G16B16A16_FLOAT), aoProbeOk_ = false;
             bool blue = s_.aoBlueNoise && (aoBlue_.res || makeTex(aoBlue_, 64, 64, DXGI_FORMAT_R8_UNORM));
             if (blue && !aoBlueMade_) {
                 D3D12_HEAP_PROPERTIES uh = {D3D12_HEAP_TYPE_UPLOAD};
@@ -825,6 +832,35 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 }
                 if (fh) transition(cl, pack ? aoNdHalfP_ : aoNdHalf_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             }
+            if (probes) {  // (... their history - reprojected, clamped -, then their spatial filter)
+                Tex &hc = aoProbeH_[aoProbeCur_], &hp = aoProbeH_[aoProbeCur_ ^ 1];
+                bool pv = aoProbeOk_ && aoValid;
+                transition(cl, aoProbe_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                transition(cl, hp, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                transition(cl, hc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                float tsave = ka.temporal;
+                ka.temporal = pv ? 1.0f : 0.0f;
+                {
+                    ID3D12Resource *s[kSrvs] = {aoProbe_.res, hp.res, nullptr, nullptr, mv};
+                    DXGI_FORMAT f[kSrvs] = {aoProbe_.fmt, hp.fmt, X, X, md.Format};
+                    ID3D12Resource *u[kUavs] = {hc.res};
+                    DXGI_FORMAT uf[kUavs] = {hc.fmt};
+                    runA(psoAoProbeT_, s, f, u, uf, pw, ph);
+                }
+                ka.temporal = tsave;
+                transition(cl, hc, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                transition(cl, aoProbeF_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                {
+                    ID3D12Resource *s[kSrvs] = {hc.res};
+                    DXGI_FORMAT f[kSrvs] = {hc.fmt};
+                    ID3D12Resource *u[kUavs] = {aoProbeF_.res};
+                    DXGI_FORMAT uf[kUavs] = {aoProbeF_.fmt};
+                    runA(psoAoProbeF_, s, f, u, uf, pw, ph);
+                }
+                aoProbeCur_ ^= 1, aoProbeOk_ = true;
+            } else {
+                aoProbeOk_ = false;
+            }
             mark(7);
             // (the filter and the temporal smoothing at the main pass' size: half (FastGI's) or render size)
             Tex &nd = half ? aoNdHalf_ : aoNd_, &r0 = half ? aoHalf_ : aoRes_, &r1 = half ? aoHalfF_ : aoF_;
@@ -842,10 +878,10 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             mark(8);
             if (half) ka.rs[0] = (float)hw2, ka.rs[1] = (float)hh2, ka.rsRcp[0] = 1.0f / hw2, ka.rsRcp[1] = 1.0f / hh2;
             if (probes) {  // (the probes' GI brought to every pixel of the main pass' result, in place)
-                transition(cl, aoProbe_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                transition(cl, aoProbeF_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 transition(cl, r0, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                ID3D12Resource *s[kSrvs] = {nd.res, aoProbe_.res};
-                DXGI_FORMAT f[kSrvs] = {nd.fmt, aoProbe_.fmt};
+                ID3D12Resource *s[kSrvs] = {nd.res, aoProbeF_.res};
+                DXGI_FORMAT f[kSrvs] = {nd.fmt, aoProbeF_.fmt};
                 p7(s, f, ndPm);
                 ID3D12Resource *u[kUavs] = {r0.res};
                 DXGI_FORMAT uf[kUavs] = {r0.fmt};

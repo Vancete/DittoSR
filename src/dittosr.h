@@ -273,7 +273,7 @@ private:
     ID3D12PipelineState *psoUpscaleFm_[2][2] = {};
     ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr, *psoAoMip_ = nullptr;
     ID3D12PipelineState *psoAoMain16_ = nullptr, *psoAoLut_ = nullptr, *psoAoUp_ = nullptr, *psoAoHalfNd_ = nullptr, *psoAoCacao_ = nullptr,
-                         *psoAoMipAll_ = nullptr, *psoAoCacao2_ = nullptr, *psoAoCurve_ = nullptr, *psoAoProbe_ = nullptr;  // (ao_fuse; the curve's table; the GI's probes)  // (... the 16 x 16 main pass, the table, the half size's upsample)  // (EXPERIMENTAL: Ditto Relight)
+                         *psoAoMipAll_ = nullptr, *psoAoCacao2_ = nullptr, *psoAoCurve_ = nullptr, *psoAoProbe_ = nullptr, *psoAoProbeT_ = nullptr, *psoAoProbeF_ = nullptr;  // (ao_fuse; the curve's table; the GI's probes)  // (... the 16 x 16 main pass, the table, the half size's upsample)  // (EXPERIMENTAL: Ditto Relight)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     // the game's output last checked (outputWritable): its format, whether it allows unordered access, and the verdict
@@ -294,7 +294,10 @@ private:
     // (... half resolution, FastGI's: the filter's scratch, the normal and depth, the temporal smoothing's history and its
     // depth, all at half size; aoLastHalf_: the last frame's mode - the history is either size's)
     Tex aoHalfF_, aoNdHalf_, aoHh_[2], aoHDh_[2];
-    Tex aoProbe_, aoBlue_, aoBlueUp_;  // (the GI's probes; the blue noise mask and its upload buffer - aoBlueMade_: copied)
+    Tex aoProbe_, aoBlue_, aoBlueUp_, aoProbeH_[2], aoProbeF_;  // (... the probes' history, ping-ponged - aoProbeCur_ -, filtered)
+    int aoProbeCur_ = 0;
+    bool aoProbeOk_ = false;  // (the probes' history valid)
+    Tex aoProbeDummy_;  // (the GI's probes; the blue noise mask and its upload buffer - aoBlueMade_: copied)
     bool aoBlueMade_ = false;
     Tex aoCurveLut_;  // (ao_curve_lut: the curve's table, 4096 x 1 - curveKey_: the curve it was built for)
     float curveKey_[26] = {};

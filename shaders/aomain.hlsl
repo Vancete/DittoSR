@@ -230,6 +230,6 @@ void main(uint2 tid : SV_DispatchThreadID) {
         if (bl1 > 0.0) occluderAt(q1, wg, P, n, V, R, uv, tg, bt, nr, true, true, bits, gbits, gi, near);
     }
     float ao = (1.0 - float(countbits(bits)) / float(nr)) * saturate(1.0 - contact * near / float(nr));
-    if (probeRun) { Probe[tid] = float4(gi / float(nr), 1.0); return; }
+    if (probeRun) { Probe[tid] = float4(gi / float(nr), z); return; }  // (a: its depth - the probes' history and filter)
     Res[id] = float4(gi / float(nr), ao);
 }
