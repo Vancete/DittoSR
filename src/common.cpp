@@ -102,7 +102,7 @@ static void load_config() {
     s.aoRadius = ini_float(ini, "ao_radius", s.aoRadius), s.aoScreen = ini_float(ini, "ao_screen", s.aoScreen);
     s.aoRays = ini_float(ini, "ao_rays", s.aoRays), s.aoContact = ini_float(ini, "ao_contact", s.aoContact);
     s.aoStrength = ini_float(ini, "ao_strength", s.aoStrength), s.giStrength = ini_float(ini, "gi_strength", s.giStrength);
-    s.giDark = ini_float(ini, "gi_dark", s.giDark), s.giCeiling = ini_float(ini, "gi_ceiling", s.giCeiling), s.sCurve = ini_float(ini, "s_curve", s.sCurve);
+    s.giDark = ini_float(ini, "gi_dark", s.giDark), s.giCeiling = ini_float(ini, "gi_ceiling", s.giCeiling);
     s.aoTemporal = GetPrivateProfileIntA("dittosr", "ao_temporal", s.aoTemporal, ini) != 0;
     s.aoTemporalWeight = ini_float(ini, "ao_temporal_weight", s.aoTemporalWeight);
     s.aoSpatial = ini_float(ini, "ao_spatial_radius", s.aoSpatial);
@@ -246,7 +246,6 @@ bool ditto_save_settings() {
     ok = put("gi_strength", s.giStrength, d.giStrength, false) && ok;
     ok = put("gi_dark", s.giDark, d.giDark, false) && ok;
     ok = put("gi_ceiling", s.giCeiling, d.giCeiling, false) && ok;
-    ok = put("s_curve", s.sCurve, d.sCurve, false) && ok;
     ok = put("ao_rays", s.aoRays, d.aoRays, false) && ok;
     ok = put("ao_radius", s.aoRadius, d.aoRadius, false) && ok;
     ok = put("ao_screen", s.aoScreen, d.aoScreen, false) && ok;

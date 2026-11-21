@@ -8,9 +8,6 @@
 //     (giCeiling x colour))) - as added while small against the pixel, then saturating at giCeiling x its own colour:
 //     a dark material (the albedo's grey guess wrong there) no longer veiled by a bright floor's bounce, a light one in
 //     shade still lifted, by at most 1 + giCeiling.
-//   - a curve on the lights (sCurve > 0): from 30 % of the brightness up (pivot - 30 % perceived, gamma 2.2), e stops over
-//     it brightened by sCurve tanh(e / 2)^2 stops - starting flat (no kink where it begins), at most sCurve stops; below
-//     the pivot as it is. The colour scaled, its hue kept.
 //   - the curve (curveN > 0, the menu's curves editor): each channel through a natural cubic spline over its points,
 //     in a perceptual [0, 1] (linear HDR: ^ 1 / 2.2; above 1, a slope of 1 past the curve's end) - the whole image,
 //     the sky too.
@@ -99,13 +96,6 @@ void main(uint2 id : SV_DispatchThreadID) {
             // way)
             float s = float(params1 & 255u) / 255.0;
             o *= pow(clamp((flag2On(2048u) ? 0.18 : 0.5) / max(le, 1e-4), 0.25, 4.0), 0.5 * s);
-        }
-        if (sCurve > 0.0) {
-            float l = dot(o, float3(0.2126, 0.7152, 0.0722));
-            if (l > pivot) {
-                float t = tanh(0.5 * log2(l / pivot));
-                o *= exp2(sCurve * t * t);
-            }
         }
     }
     // (the curve's domain: perceptual - linear HDR's pivot 0.071 against [0, 1] colour's 0.3)

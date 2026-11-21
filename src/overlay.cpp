@@ -349,7 +349,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_QAMB, I_QCOS, I_QNRM, I_GWIDE, I_GLONG, I_FPACK, I_FUPC, I_FFUSE, I_FHIST, I_FHPREP, I_FCLUT, I_QCYC, I_QFALL, I_RFADE, I_QBLUE, I_XALB, I_XEDGE, I_XATROUS, I_XFP16, I_XINTER, I_XFAR, I_RALB, I_RLEXP, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_QAMB, I_QCOS, I_QNRM, I_GWIDE, I_GLONG, I_FPACK, I_FUPC, I_FFUSE, I_FHIST, I_FHPREP, I_FCLUT, I_QCYC, I_QFALL, I_RFADE, I_QBLUE, I_XALB, I_XEDGE, I_XATROUS, I_XFP16, I_XINTER, I_XFAR, I_RALB, I_RLEXP, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -461,6 +461,8 @@ float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f 
 constexpr bool kCurvesEditor = true;
 
 bool visible(int i) {
+    // (every toggle that can change the AO - to find what changed it)
+    if (i == I_RTEMP || i == I_FHIST || i == I_QCYC || i == I_QBLUE || i == I_TDECOR || i == I_THALF || i == I_FHPREP || i == I_FUPC || i == I_FFUSE || i == I_FPACK || i == I_QNRM || i == I_TLUT || i == I_TMIPS || i == I_TREACH || i == I_TBACK || i == I_TPOW || i == I_QAMB || i == I_XALB || i == I_TPLANE || i == I_TSPARSE || i == I_XFP16 || i == I_XINTER || i == I_XFAR) return g_m.relight;
     if (i == I_TCACAO) return g_m.relight;  // (CACAO - to compare with the a-trous filter)
     if (i == I_RLEXP) return g_m.relight;  // (the local exposure)
     if (i == I_RALB) return g_m.relight && g_m.albedo2;  // (the better albedo's strength: with it on)
@@ -494,7 +496,6 @@ Range range_of(int i) {
     case I_RGI: return {0.0f, 4.0f, 0.1f};
     case I_RGIDARK: return {0.0f, 4.0f, 0.1f};
     case I_RGICEIL: return {0.0f, 4.0f, 0.25f};
-    case I_RSCURVE: return {0.0f, 1.0f, 0.05f};
     case I_RRAYS: return {4.0f, 32.0f, 4.0f};
     case I_RRADIUS: return {0.0f, 16.0f, 0.5f};
     case I_RSCREEN: return {0.05f, 0.5f, 0.05f};
@@ -516,7 +517,6 @@ float *slider_of(DittoSettings &s, int i) {
     case I_RGI: return &s.giStrength;
     case I_RGIDARK: return &s.giDark;
     case I_RGICEIL: return &s.giCeiling;
-    case I_RSCURVE: return &s.sCurve;
     case I_RRAYS: return &s.aoRays;
     case I_RRADIUS: return &s.aoRadius;
     case I_RSCREEN: return &s.aoScreen;
@@ -574,7 +574,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
     switch (i) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
-    case I_SHARP: case I_WEIGHT: case I_RAO: case I_RGI: case I_RGIDARK: case I_RGICEIL: case I_RSCURVE: case I_RRAYS: case I_RRADIUS:
+    case I_SHARP: case I_WEIGHT: case I_RAO: case I_RGI: case I_RGIDARK: case I_RGICEIL: case I_RRAYS: case I_RRADIUS:
     case I_RSCREEN: case I_RCONTACT: case I_RSPATIAL: case I_RTEMPW: case I_RSAMPLES: case I_RFADE: case I_RALB: case I_RLEXP: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
@@ -873,6 +873,31 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         if (s.aoAlbedo2) slider_row(I_RALB, "Albedo strength", "the old guess to the new");
         slider_row(I_RLEXP, "Local exposure", "shade lifted, glare tamed");
         slider_row(I_RFADE, "AO fade distance", "faded out to twice it");
+        y += 8 * S;
+        section("AO TESTS");
+        toggle_row(I_RTEMP, "Temporal smoothing", s.aoTemporal);
+        toggle_row(I_FHIST, "History length", s.aoHistLen);
+        toggle_row(I_QCYC, "8-frame noise cycle", s.aoNoise8);
+        toggle_row(I_QBLUE, "Blue noise", s.aoBlueNoise);
+        toggle_row(I_TDECOR, "Decorrelated noise", s.aoDecorrelate);
+        toggle_row(I_THALF, "Half resolution", s.aoHalf);
+        toggle_row(I_FHPREP, "Half-size prepass", s.aoHalfPrep);
+        toggle_row(I_FUPC, "Upsample in compose", s.aoUpCompose);
+        toggle_row(I_FFUSE, "Fused passes", s.aoFuse);
+        toggle_row(I_FPACK, "Packed normals", s.aoPackNd);
+        toggle_row(I_QNRM, "Better normals", s.aoBetterNormals);
+        toggle_row(I_TLUT, "Occluder table (32 rays)", s.aoLut);
+        toggle_row(I_TMIPS, "Depth mips", s.aoMips);
+        toggle_row(I_TREACH, "Screen reach 0.25", s.aoScreen <= 0.3f);
+        toggle_row(I_TBACK, "Backface boost", s.aoBackBoost);
+        toggle_row(I_TPOW, "AO as a power", s.aoPower);
+        toggle_row(I_QAMB, "AO on ambient only", s.aoAmbientOnly);
+        toggle_row(I_XALB, "Better albedo", s.aoAlbedo2);
+        toggle_row(I_TPLANE, "Plane filter weights", s.aoPlaneFilter);
+        toggle_row(I_TSPARSE, "Sparse filter", s.aoSparseFilter);
+        toggle_row(I_XFP16, "FP16 main pass", s.aoFp16);
+        toggle_row(I_XINTER, "Interleaved GI", s.aoGiInterleave);
+        toggle_row(I_XFAR, "Cheaper far pixels", s.aoFarCheap);
     }
     if (s.relight && kCurvesEditor) {
         // the curves editor (Photoshop's): the line, the curve, its points; the

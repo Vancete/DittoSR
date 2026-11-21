@@ -19,7 +19,7 @@ cbuffer A : register(b0) {
     float rays;           // the rays a pixel (4 - 32: one bit each)
     float contact;        // how much more the rays the nearest occluders block darken (0 - 4)
     float giDark;         // the bounce light x this where the pixel is dark (0 - 4; 1: the same everywhere)
-    float sCurve;         // the curve on the lights - the luma above the pivot (0 - 1; 0 off)
+    float spare0;         // (free)
     uint params1;         // bits 0 - 7: the local exposure's strength (0 - 255; flags2 16384)
     float temporal;       // the history's weight (temporal smoothing, 0 - 0.95; 0: off, or no valid history)
     float spatial;        // the spatial filter's taps' spacing (1 - 2: x 2 pixels)

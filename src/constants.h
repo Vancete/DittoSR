@@ -93,7 +93,7 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
 // game's colour a float format (HDR read). temporal (the history valid) and axis (the filter's pass) set by the driver.
 struct AoConstants {
     float rs[2], rsRcp[2], tanX, tanY, zNear, zFar, inverted, frame, aoStrength, giStrength, radiusWorld, radiusScreen, rays,
-        contact, giDark, sCurve;
+        contact, giDark, spare0;
     uint32_t params1;  // (the local exposure's strength, bits 0 - 7; params2 free)
     float temporal, spatial, axis, mvScale[2], mvSize[2], giCeiling, planeW, mips;
     uint32_t params2;
@@ -117,7 +117,6 @@ void ditto_fill_ao(AoConstants &ka, const DittoSettings &s, const Frame &fr, boo
     ka.aoStrength = s.aoStrength < 0.0f ? 0.0f : s.aoStrength > 1.0f ? 1.0f : s.aoStrength;
     ka.giStrength = s.giStrength < 0.0f ? 0.0f : s.giStrength > 4.0f ? 4.0f : s.giStrength;
     ka.giDark = s.giDark < 0.0f ? 0.0f : s.giDark > 4.0f ? 4.0f : s.giDark;
-    ka.sCurve = s.sCurve < 0.0f ? 0.0f : s.sCurve > 1.0f ? 1.0f : s.sCurve;
     ka.giCeiling = s.giCeiling < 0.0f ? 0.0f : s.giCeiling > 4.0f ? 4.0f : s.giCeiling;
     ka.planeW = s.aoPlaneFilter ? 1.0f : 0.0f, ka.mips = s.aoMips ? 1.0f : 0.0f;
     // (flags: 1 backface boost, 2 decorrelated noise)

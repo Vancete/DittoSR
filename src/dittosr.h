@@ -110,9 +110,6 @@ struct DittoSettings {
     // a slight crush of the blacks and a darker low end (the curve tuned in Assetto Corsa EVO)
     int curveN = 3;
     float curveX[8] = {0.03145f, 0.228f, 1.0f}, curveY[8] = {0.0f, 0.2453f, 1.0f};
-    // ... a curve on the lights (0 - 1; 0 off): the luma from 30 % of the brightness up brighter - starting flat, at most
-    // sCurve stops; below, as it is
-    float sCurve = 0.3f;
     // ... their noise evened out after FastGI's: a spatial filter (aofilter.hlsl: 5 taps x then y, by depth and normal)
     // its taps aoSpatial x 2 pixels apart (1 - 2), then a temporal smoothing (aotemporal.hlsl: their history, reprojected
     // by the game's motion vectors, x aoTemporalWeight (0 - 0.95), less in motion)
