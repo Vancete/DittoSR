@@ -23,7 +23,7 @@ Texture2D<float4> Color : register(t1);
 Texture2D<float4> Res : register(t2);
 Texture2D<float> GDepth : register(t3);    // (the game's depth: flags 131072)
 Texture2D<float> CurveLut : register(t4);  // (the curve's table: flags 262144)
-Texture2D<uint4> Mip4c : register(t5);    // (better albedo, flags2 16: the mips' level 4)
+Texture2D<uint4> Mip3c : register(t5);    // (better albedo, flags2 16: the mips' level 3)
 AOFMT("rgba16f") RWTexture2D<float4> Out : register(u0);
 
 #include "ao_up.hlsli"
@@ -41,20 +41,25 @@ void main(uint2 id : SV_DispatchThreadID) {
         float mx = max(col.r, max(col.g, col.b));
         float3 albedo = lerp((float3)0.5, 0.6 * col / max(mx, 1e-4), saturate(mx * 8.0));
         if (flag2On(16u) && mips > 0.5) {
-            // (better albedo, flags2 16: the colour over its 16 x 16 area's luma - the lighting there, retinex's way - x 0.5,
-            // a mid grey's albedo where the pixel is as lit as its area; the area's luma bilinear between level 4's texels: no
-            // 16 x 16 blocks)
-            uint2 d4 = ((uint2)rs + 15u) >> 4;
-            float2 t = (float2(p) + 0.5) * rsRcp * float2(d4) - 0.5, tb = floor(t), tf = t - tb;
-            float la = 0.0;
-            [unroll] for (int k = 0; k < 4; k++) {
-                int2 o = int2(k & 1, k >> 1);
-                float3 c4;
-                mipDecode(Mip4c.Load(int3(clamp(int2(tb) + o, int2(0, 0), int2(d4) - 1), 0)), c4);
-                float2 bl = lerp(1.0 - tf, tf, float2(o));
-                la += dot(c4, float3(0.2126, 0.7152, 0.0722)) * bl.x * bl.y;
+            // (better albedo, flags2 16: the colour over its area's luma - the lighting there, retinex's way - x 0.5, a mid
+            // grey's albedo where the pixel is as lit as its area. The area: level 3's 3 x 3 texels around the pixel (8 x 8
+            // each), each x a Gaussian by its distance x how near its depth is to the pixel's (another surface - a light bar
+            // on the ceiling above a wall - left out), its luma at most 4 x the pixel's own: a bright light in the area no
+            // longer darkens the whole cell it falls in - the blocks around light bars)
+            const float3 Y = float3(0.2126, 0.7152, 0.0722);
+            uint2 d3 = ((uint2)rs + 7u) >> 3;
+            float2 t = (float2(p) + 0.5) * rsRcp * float2(d3) - 0.5;
+            int2 tb = int2(floor(t + 0.5));
+            float lp = dot(col, Y), la = 0.0, wa = 0.0;
+            [unroll] for (int k = 0; k < 9; k++) {
+                int2 q = clamp(tb + int2(k % 3 - 1, k / 3 - 1), int2(0, 0), int2(d3) - 1);
+                float3 c3;
+                float4 m = mipDecode(Mip3c.Load(int3(q, 0)), c3);
+                float2 dd = float2(q) - t;
+                float w = exp(-dot(dd, dd) * 0.7) * (m.w > 0.0 ? saturate(1.0 - abs(m.w - nd.w) / (nd.w * 0.05 + 1e-3)) : 0.0);
+                la += min(dot(c3, Y), 4.0 * lp + 1e-3) * w, wa += w;
             }
-            albedo = saturate(0.5 * col / max(la, 1e-4));
+            if (wa > 1e-3) albedo = saturate(0.5 * col / max(la / wa, 1e-4));
         }
         float dark = 1.0 - smoothstep(0.0, 0.25, dot(col, float3(0.2126, 0.7152, 0.0722)));
         float3 b = giStrength * lerp(1.0, giDark, dark) * albedo * r.rgb;

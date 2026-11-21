@@ -96,7 +96,7 @@ struct DittoSettings {
     // 4 x 4 with twice the samples, interpolated by depth and normal, the other pixels the AO alone with half; aoBlueNoise
     // (on) the main pass' noise from a 64 x 64 blue noise mask stepped by the golden ratio a frame, in place of IGN
     bool aoGiGuided = false, aoGiProbes = false, aoBlueNoise = true;
-    // ... GI tests (D3D12; the menu's toggles - on by default: aoGiBounce, aoEdgeFill, aoAtrous, aoFp16, aoGiInterleave,
+    // ... GI tests (D3D12; the menu's toggles - on by default: aoEdgeFill, aoAtrous, aoFp16, aoGiInterleave,
     // aoFarCheap): aoGiBounce the GI's light from the last frame's relit
     // colour (more bounces), aoSkyLight the unblocked rays the sky's colour by how far up they point, aoGiSrcClamp a
     // full-resolution source at most 3 x its area's mean, aoAlbedo2 the albedo by the colour over its area's luma,
@@ -104,7 +104,7 @@ struct DittoSettings {
     // each), aoAtrous an a-trous filter on the GI (luma edge-stopping), aoFp16 the main pass in 16 bits, aoGiInterleave
     // the GI on half the pixels a frame (the rest the last result's), aoMipLds the mips' level 4 from groupshared
     // memory, aoFarCheap half the samples past twice the AO's fade distance
-    bool aoGiBounce = true, aoSkyLight = false, aoGiSrcClamp = false, aoAlbedo2 = false, aoEdgeFill = true, aoProbeDir = false,
+    bool aoGiBounce = false, aoSkyLight = false, aoGiSrcClamp = false, aoAlbedo2 = false, aoEdgeFill = true, aoProbeDir = false,
          aoAtrous = true, aoFp16 = true, aoGiInterleave = true, aoMipLds = false, aoFarCheap = true;
     float aoFadeMeters = 100.0f;
     // ... the curve (the menu's curves editor; ini curve = "x,y x,y ..."): curveN points (2 - 8) by x in [0, 1], each

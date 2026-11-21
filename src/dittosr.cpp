@@ -1022,8 +1022,8 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             transition(cl, aoCol_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             {
                 ID3D12Resource *s[kSrvs] = {ndF.res, color, aoOut->res, hp ? depth : nullptr, cl8 ? aoCurveLut_.res : nullptr,
-                                            s_.aoAlbedo2 && mips ? aoMip_[3].res : nullptr};
-                DXGI_FORMAT f[kSrvs] = {ndF.fmt, cd.Format, aoOut->fmt, hp ? dd.Format : X, cl8 ? aoCurveLut_.fmt : X, s_.aoAlbedo2 && mips ? aoMip_[3].fmt : X};
+                                            s_.aoAlbedo2 && mips ? aoMip_[2].res : nullptr};
+                DXGI_FORMAT f[kSrvs] = {ndF.fmt, cd.Format, aoOut->fmt, hp ? dd.Format : X, cl8 ? aoCurveLut_.fmt : X, s_.aoAlbedo2 && mips ? aoMip_[2].fmt : X};
                 p7(s, f, ndFP);
                 ID3D12Resource *u[kUavs] = {aoCol_.res};
                 DXGI_FORMAT uf[kUavs] = {aoCol_.fmt};

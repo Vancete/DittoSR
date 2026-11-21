@@ -460,9 +460,9 @@ float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f 
 constexpr bool kCurvesEditor = true;
 
 bool visible(int i) {
-    if (i >= I_XBOUNCE && i <= I_XFAR) return g_m.relight;  // (Relight's GI tests)
+    if (i == I_XALB || i == I_XPROBE) return g_m.relight;  // (Relight's better albedo and screen probes)
+    if (i >= I_XBOUNCE && i <= I_XFAR) return false;  // (the other GI tests: ini keys)
     if (i >= I_QGUIDE && i <= I_QBLUE) return false;  // (Relight's GI tests: ini keys)
-    if (i == I_THALF) return g_m.relight;  // (half resolution or render size - to compare)
     // (Relight's: the AO and GI strengths, the samples, FastGI's noise cycle and falloff, the AO's fade, the curves; its
     // features on by default and hidden - ini keys)
     if (i == I_RSAMPLES || i == I_RFADE) return g_m.relight;
@@ -868,19 +868,8 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         slider_row(I_RAO, "Ambient occlusion", "the darkening");
         slider_row(I_RGI, "Global illumination", "the bounce light");
         slider_row(I_RSAMPLES, "Samples", "more: less noise, slower");
-        toggle_row(I_THALF, "Half resolution", s.aoHalf);
-        toggle_row(I_XBOUNCE, "GI multi-bounce", s.aoGiBounce);
-        toggle_row(I_XSKY, "Sky light", s.aoSkyLight);
-        toggle_row(I_XCLAMP, "GI source clamp", s.aoGiSrcClamp);
         toggle_row(I_XALB, "Better albedo", s.aoAlbedo2);
-        toggle_row(I_XEDGE, "Screen-edge GI fill", s.aoEdgeFill);
-        toggle_row(I_XPDIR, "Directional probes", s.aoProbeDir);
-        toggle_row(I_XATROUS, "GI a-trous filter", s.aoAtrous);
-        toggle_row(I_XFP16, "FP16 main pass", s.aoFp16);
-        toggle_row(I_XINTER, "Interleaved GI", s.aoGiInterleave);
-        toggle_row(I_XLDS, "Mips in shared memory", s.aoMipLds);
         toggle_row(I_XPROBE, "GI screen probes", s.aoGiProbes);
-        toggle_row(I_XFAR, "Cheaper far pixels", s.aoFarCheap);
         slider_row(I_RFADE, "AO fade distance", "faded out to twice it");
     }
     if (s.relight && kCurvesEditor) {
