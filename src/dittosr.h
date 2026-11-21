@@ -57,7 +57,7 @@ struct DittoSettings {
     bool aoLut = true, aoWg16 = true, aoColorMips = true;
     // ... the main pass' samples a pixel (4 - 32: fewer, noisier; more, slower), and the main pass at half size (one
     // pixel of each 2 x 2 a frame, brought back by depth and normal - about a quarter of its cost)
-    float aoSamples = 32.0f;
+    float aoSamples = 16.0f;
     bool aoHalf = true;  // (FastGI's: the filter and the temporal smoothing at half size too, the result brought back at the end)
     // ... decorrelated noise (each random dimension of the main pass its own IGN moved along its own direction a frame:
     // no fixed pattern - the bands of light a thin light left down a wall) - a test
@@ -91,11 +91,11 @@ struct DittoSettings {
     // aoFadeMeters (100, the menu's) the AO faded out from that many metres to twice that (0: none; the camera's metres a unit from FSR
     // 3.1's dispatch, 1 where it gives none)
     bool aoNoise8 = true, aoGiFalloff = true;
-    // ... GI tests (D3D12; off by default - the menu's toggles): aoGiGuided 2 more samples a pixel toward the brightest
+    // ... (D3D12; ini keys) aoGiGuided (off) 2 more samples a pixel toward the brightest
     // areas on its disc (the mips' colour), for the light alone; aoGiProbes screen probes - the GI at one pixel of each
     // 4 x 4 with twice the samples, interpolated by depth and normal, the other pixels the AO alone with half; aoBlueNoise
-    // the main pass' noise from a 64 x 64 blue noise mask stepped by the golden ratio a frame, in place of IGN
-    bool aoGiGuided = false, aoGiProbes = false, aoBlueNoise = false;
+    // (on) the main pass' noise from a 64 x 64 blue noise mask stepped by the golden ratio a frame, in place of IGN
+    bool aoGiGuided = false, aoGiProbes = false, aoBlueNoise = true;
     float aoFadeMeters = 100.0f;
     // ... the curve (the menu's curves editor; ini curve = "x,y x,y ..."): curveN points (2 - 8) by x in [0, 1], each
     // channel through their natural cubic spline in a perceptual [0, 1] (aocompose.hlsl) - the line: none. By default

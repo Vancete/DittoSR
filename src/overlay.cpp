@@ -460,7 +460,8 @@ float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f 
 constexpr bool kCurvesEditor = true;
 
 bool visible(int i) {
-    if (i >= I_QGUIDE && i <= I_QBLUE) return g_m.relight;  // (Relight's GI tests)
+    if (i >= I_QGUIDE && i <= I_QBLUE) return false;  // (Relight's GI tests: ini keys)
+    if (i == I_THALF) return g_m.relight;  // (half resolution or render size - to compare)
     // (Relight's: the AO and GI strengths, the samples, FastGI's noise cycle and falloff, the AO's fade, the curves; its
     // features on by default and hidden - ini keys)
     if (i == I_RSAMPLES || i == I_RFADE) return g_m.relight;
@@ -854,10 +855,8 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         slider_row(I_RAO, "Ambient occlusion", "the darkening");
         slider_row(I_RGI, "Global illumination", "the bounce light");
         slider_row(I_RSAMPLES, "Samples", "more: less noise, slower");
+        toggle_row(I_THALF, "Half resolution", s.aoHalf);
         slider_row(I_RFADE, "AO fade distance", "faded out to twice it");
-        toggle_row(I_QGUIDE, "GI toward bright areas", s.aoGiGuided);
-        toggle_row(I_QPROBE, "GI screen probes", s.aoGiProbes);
-        toggle_row(I_QBLUE, "Blue noise", s.aoBlueNoise);
     }
     if (s.relight && kCurvesEditor) {
         // the curves editor (Photoshop's): the line, the curve, its points; the
