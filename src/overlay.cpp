@@ -2,7 +2,8 @@
 // the frame time and DittoSR's own GPU time as a graph.
 //   D3D12: drawn into the game's frame, as below. Vulkan: a Vulkan game's present cannot be hooked once its device exists
 // (this DLL loads with the FidelityFX context, long after) - the same panel is drawn on the CPU into a layered window of
-// its own, topmost over the game's client area while the game is in front (the window section at the end).
+// its own, topmost over the game's client area while the game is in front (the window section at the end). D3D11 (the
+// NGX front end) uses the same window.
 //   DXGI's Present is hooked in the swap chain's vtable (shared by every swap chain of its class: a dummy one on the
 // game's device finds it), once per process, and ID3D12CommandQueue::ExecuteCommandLists likewise: a D3D12 swap chain
 // does not tell its queue, so the menu draws on the direct queue the presenting thread last executed on - the game's
@@ -640,7 +641,7 @@ float ease(float t) { return 1.0f - powf(1.0f - t, 3.0f); }
 
 void subclass(HWND h);
 
-const char *api_name() { return g_stats.api == 2 ? "XeSS" : "FSR"; }
+const char *api_name() { return g_stats.api == 2 ? "XeSS" : g_stats.api == 3 ? "DLSS" : "FSR"; }
 
 // ---- the panel ----
 
@@ -1557,7 +1558,7 @@ DWORD WINAPI win_thread(void *) {
         g_winMode = false;
         return 0;
     }
-    ditto_log("menu: ready (F7, menu_key) - drawn on a window of its own over the game (Vulkan)\n");
+    ditto_log("menu: ready (F7, menu_key) - drawn on a window of its own over the game (Vulkan, D3D11)\n");
     for (;;) {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) TranslateMessage(&msg), DispatchMessageW(&msg);

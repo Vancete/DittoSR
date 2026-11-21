@@ -34,7 +34,9 @@
 //     mvs=1           the motion vectors handed to the upscaler x this (0.8: 20 % short - a game's imprecise ones; the
 //                     clip has to catch what they miss)
 //     out=1440x810    the output size (the render: out / ratio); psnr=0: the GPU time alone (no reference, no PNGs)
-//     api=dx12        or vk: the upscaler on Vulkan (dll=amd_fidelityfx_vk.dll) - a device with no extension and no
+//     api=dx12        or dx11: the upscaler on D3D11 through the DLL's NGX exports (dll=nvngx.dll), as OptiScaler hands
+//                     it a game's DLSS inputs (DITTO_D3D11_DEBUG=1: the D3D11 debug layer); or vk: the upscaler on
+//                     Vulkan (dll=amd_fidelityfx_vk.dll) - a device with no extension and no
 //                     optional feature, as the least a game may hand over; gpu= its physical device's index
 //     outfmt=rgba16f  or rgba8: the output's format (the Vulkan passes are compiled per output format); r11g11b10 (D3D12
 //                     only): R11G11B10_FLOAT, as many D3D12 games hand FSR theirs
@@ -46,6 +48,7 @@
 // reference's (x 1000, perceptual).
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
 
@@ -62,6 +65,8 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 #include "ffx_api/vk/ffx_api_vk.h"
+#include <string>
+#include "ngx_abi.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
@@ -786,6 +791,174 @@ struct Vk : Api {
     bool lost() override { return false; }  // (a lost device fails the next submit: VKCHECK)
 };
 
+// D3D11 (api=dx11): the upscale through the DLL's NGX exports (nvngx.dll), as OptiScaler hands it a game's DLSS inputs
+struct Dx11 : Api {
+    ID3D11Device *dev = nullptr;
+    ID3D11DeviceContext *ctx = nullptr;
+    ID3D11Texture2D *staging = nullptr;
+    ID3D11Query *qd = nullptr, *qa = nullptr, *qb = nullptr, *qe = nullptr;
+    char name[256] = "";
+    bool init(int gpu) override {
+        IDXGIFactory1 *fac;
+        CHECK(CreateDXGIFactory1(IID_PPV_ARGS(&fac)));
+        IDXGIAdapter1 *best = nullptr, *a;
+        SIZE_T bestMem = 0;
+        for (UINT i = 0; fac->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; i++) {
+            DXGI_ADAPTER_DESC1 d;
+            a->GetDesc1(&d);
+            if (gpu >= 0 ? (int)i == gpu : !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) && d.DedicatedVideoMemory > bestMem)
+                best = a, bestMem = d.DedicatedVideoMemory;
+        }
+        if (!best) return false;
+        DXGI_ADAPTER_DESC1 ad;
+        best->GetDesc1(&ad);
+        snprintf(name, sizeof name, "%ls (D3D11)", ad.Description);
+        D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_0;
+        UINT flags = atoi(getenv("DITTO_D3D11_DEBUG") ? getenv("DITTO_D3D11_DEBUG") : "0") ? D3D11_CREATE_DEVICE_DEBUG : 0;
+        CHECK(D3D11CreateDevice(best, D3D_DRIVER_TYPE_UNKNOWN, nullptr, flags, &fl, 1, D3D11_SDK_VERSION, &dev, nullptr, &ctx));
+        D3D11_QUERY_DESC d = {D3D11_QUERY_TIMESTAMP_DISJOINT}, t = {D3D11_QUERY_TIMESTAMP}, e = {D3D11_QUERY_EVENT};
+        CHECK(dev->CreateQuery(&d, &qd));
+        CHECK(dev->CreateQuery(&t, &qa));
+        CHECK(dev->CreateQuery(&t, &qb));
+        CHECK(dev->CreateQuery(&e, &qe));
+        return true;
+    }
+    const char *adapter() override { return name; }
+    ffxCreateContextDescHeader *backend() override { return nullptr; }
+    void *device() override { return dev; }
+    Tex texture(uint32_t w, uint32_t h, Kind k, bool out8) override {
+        Tex t;
+        t.k = k, t.w = w, t.h = h, t.out8 = out8;
+        D3D11_TEXTURE2D_DESC td = {};
+        td.Width = w, td.Height = h, td.MipLevels = 1, td.ArraySize = 1, td.SampleDesc.Count = 1, td.Usage = D3D11_USAGE_DEFAULT;
+        td.Format = k == K_COLOR ? DXGI_FORMAT_R16G16B16A16_FLOAT : k == K_DEPTH ? DXGI_FORMAT_R32_TYPELESS
+                    : k == K_MV ? DXGI_FORMAT_R16G16_FLOAT : out8 ? DXGI_FORMAT_R8G8B8A8_UNORM
+                    : g_out11 ? DXGI_FORMAT_R11G11B10_FLOAT : DXGI_FORMAT_R16G16B16A16_FLOAT;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE | (k == K_OUT ? D3D11_BIND_UNORDERED_ACCESS : 0);
+        ID3D11Texture2D *r;
+        CHECK(dev->CreateTexture2D(&td, nullptr, &r));
+        t.r = r;
+        if (k == K_OUT) {
+            td.Usage = D3D11_USAGE_STAGING, td.BindFlags = 0, td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            CHECK(dev->CreateTexture2D(&td, nullptr, &staging));
+        }
+        return t;
+    }
+    void wait() {
+        ctx->End(qe);
+        BOOL done = FALSE;
+        while (ctx->GetData(qe, &done, sizeof done, 0) != S_OK || !done) {}
+    }
+    void upload(Tex *const in[3], const void *const data[3], uint32_t w, uint32_t h) override {
+        const uint32_t bpp[3] = {8, 4, 4};
+        for (int i = 0; i < 3; i++) {
+            D3D11_BOX box = {0, 0, 0, w, h, 1};
+            ctx->UpdateSubresource((ID3D11Texture2D *)in[i]->r, 0, &box, data[i], w * bpp[i], 0);
+        }
+        wait();
+    }
+    void *begin() override {
+        ctx->Begin(qd), ctx->End(qa);
+        return ctx;
+    }
+    void end(Tex &out, bool grab) override {
+        ctx->End(qb), ctx->End(qd);
+        if (grab) ctx->CopyResource(staging, (ID3D11Texture2D *)out.r);
+        double t0 = qpc_ms();
+        wait();
+        wallMs = qpc_ms() - t0;
+        // (the debug layer's warnings and errors, DITTO_D3D11_DEBUG=1: printed, the first 32)
+        ID3D11InfoQueue *iq = nullptr;
+        static int shown;
+        if (SUCCEEDED(dev->QueryInterface(__uuidof(ID3D11InfoQueue), (void **)&iq))) {
+            for (UINT64 i = 0, n = iq->GetNumStoredMessages(); i < n; i++) {
+                SIZE_T len = 0;
+                iq->GetMessage(i, nullptr, &len);
+                std::vector<char> b(len);
+                auto *msg = (D3D11_MESSAGE *)b.data();
+                if (FAILED(iq->GetMessage(i, msg, &len))) continue;
+                // (a query's results left unread - the first frames' timings: valid)
+                bool abandoned = msg->ID == D3D11_MESSAGE_ID_QUERY_BEGIN_ABANDONING_PREVIOUS_RESULTS ||
+                                 msg->ID == D3D11_MESSAGE_ID_QUERY_END_ABANDONING_PREVIOUS_RESULTS;
+                if (!abandoned && msg->Severity <= D3D11_MESSAGE_SEVERITY_WARNING && shown++ < 32)
+                    printf("D3D11 debug: %.*s\n", (int)msg->DescriptionByteLength, msg->pDescription);
+            }
+            iq->ClearStoredMessages();
+            iq->Release();
+        }
+    }
+    double gpu_ms() override {
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj = {};
+        UINT64 a = 0, b = 0;
+        while (ctx->GetData(qd, &dj, sizeof dj, 0) == S_FALSE) {}
+        ctx->GetData(qa, &a, sizeof a, 0), ctx->GetData(qb, &b, sizeof b, 0);
+        return dj.Disjoint || !dj.Frequency ? 0.0 : 1000.0 * (double)(b - a) / (double)dj.Frequency;
+    }
+    const uint8_t *map(size_t *pitch) override {
+        D3D11_MAPPED_SUBRESOURCE m = {};
+        CHECK(ctx->Map(staging, 0, D3D11_MAP_READ, 0, &m));
+        *pitch = m.RowPitch;
+        return (const uint8_t *)m.pData;
+    }
+    void unmap() override { ctx->Unmap(staging, 0); }
+    bool lost() override {
+        if (dev->GetDeviceRemovedReason() == S_OK) return false;
+        printf("device removed 0x%08x\n", (unsigned)dev->GetDeviceRemovedReason());
+        return true;
+    }
+};
+
+// The NGX parameters a game (through OptiScaler) hands DLSS: named values of the types NGX's interface has
+struct NgxParams : NVSDK_NGX_Parameter {
+    struct V { int type; unsigned long long u; double d; void *p; };
+    std::vector<std::pair<std::string, V>> vals;
+    V *at(const char *n) {
+        for (auto &kv : vals)
+            if (kv.first == n) return &kv.second;
+        return nullptr;
+    }
+    const V *at(const char *n) const { return const_cast<NgxParams *>(this)->at(n); }
+    void put(const char *n, V v) {
+        if (V *o = at(n)) *o = v;
+        else vals.push_back({n, v});
+    }
+    // (types: 0 an integer, 1 a float, 2 a pointer)
+    void Set(const char *n, unsigned long long v) override { put(n, {0, v, (double)v, nullptr}); }
+    void Set(const char *n, float v) override { put(n, {1, 0, v, nullptr}); }
+    void Set(const char *n, double v) override { put(n, {1, 0, v, nullptr}); }
+    void Set(const char *n, unsigned int v) override { put(n, {0, v, (double)v, nullptr}); }
+    void Set(const char *n, int v) override { put(n, {0, (unsigned long long)(long long)v, (double)v, nullptr}); }
+    void Set(const char *n, ID3D11Resource *v) override { put(n, {2, 0, 0, v}); }
+    void Set(const char *n, ID3D12Resource *v) override { put(n, {2, 0, 0, v}); }
+    void Set(const char *n, void *v) override { put(n, {2, 0, 0, v}); }
+    template <class T> NVSDK_NGX_Result num(const char *n, T *o) const {
+        const V *v = at(n);
+        if (!v || v->type == 2 || !o) return NVSDK_NGX_Result_Fail;
+        *o = v->type ? (T)v->d : (T)v->u;
+        return NVSDK_NGX_Result_Success;
+    }
+    NVSDK_NGX_Result ptr(const char *n, void **o) const {
+        const V *v = at(n);
+        if (!v || v->type != 2 || !o) return NVSDK_NGX_Result_Fail;
+        *o = v->p;
+        return NVSDK_NGX_Result_Success;
+    }
+    NVSDK_NGX_Result Get(const char *n, unsigned long long *o) const override { return num(n, o); }
+    NVSDK_NGX_Result Get(const char *n, float *o) const override { return num(n, o); }
+    NVSDK_NGX_Result Get(const char *n, double *o) const override { return num(n, o); }
+    NVSDK_NGX_Result Get(const char *n, unsigned int *o) const override { return num(n, o); }
+    NVSDK_NGX_Result Get(const char *n, int *o) const override { return num(n, o); }
+    NVSDK_NGX_Result Get(const char *n, ID3D11Resource **o) const override { return ptr(n, (void **)o); }
+    NVSDK_NGX_Result Get(const char *n, ID3D12Resource **o) const override { return ptr(n, (void **)o); }
+    NVSDK_NGX_Result Get(const char *n, void **o) const override { return ptr(n, o); }
+    void Reset() override { vals.clear(); }
+};
+typedef NVSDK_NGX_Result (*PfnNgxInitExt)(unsigned long long, const wchar_t *, ID3D11Device *, int, const void *);
+typedef NVSDK_NGX_Result (*PfnNgxCreate)(ID3D11DeviceContext *, NVSDK_NGX_Feature, NVSDK_NGX_Parameter *, NVSDK_NGX_Handle **);
+typedef NVSDK_NGX_Result (*PfnNgxEvaluate)(ID3D11DeviceContext *, const NVSDK_NGX_Handle *, const NVSDK_NGX_Parameter *, void *);
+typedef NVSDK_NGX_Result (*PfnNgxRelease)(NVSDK_NGX_Handle *);
+typedef NVSDK_NGX_Result (*PfnNgxShutdown)();
+
 static const char *opt(int argc, char **argv, const char *key, const char *def) {
     size_t n = strlen(key);
     for (int i = 3; i < argc; i++)
@@ -796,11 +969,11 @@ static const char *opt(int argc, char **argv, const char *key, const char *def) 
 int main(int argc, char **argv) {
     if (argc < 3) return printf("harness.exe <dir> <png prefix> [dll=] [scene=tiles|grass] [frames=] [out=WxH] [ratio=] [vel=] [dense=] [wobble=] [blur=] [mvs=] [light=] [sharpen=] [psnr=1] [flick=0] [gpu=index]\n"), 1;
     const char *dir = argv[1], *prefix = argv[2];
-    bool vk = !strcmp(opt(argc, argv, "api", "dx12"), "vk");
+    bool vk = !strcmp(opt(argc, argv, "api", "dx12"), "vk"), dx11 = !strcmp(opt(argc, argv, "api", "dx12"), "dx11");
     bool out8 = !strcmp(opt(argc, argv, "outfmt", "rgba16f"), "rgba8");
     g_out11 = !strcmp(opt(argc, argv, "outfmt", "rgba16f"), "r11g11b10");
     if (g_out11 && vk) return printf("outfmt=r11g11b10: D3D12 only\n"), 1;
-    const char *dll = opt(argc, argv, "dll", vk ? "amd_fidelityfx_vk.dll" : "amd_fidelityfx_dx12.dll");
+    const char *dll = opt(argc, argv, "dll", vk ? "amd_fidelityfx_vk.dll" : dx11 ? "nvngx.dll" : "amd_fidelityfx_dx12.dll");
     int frames = atoi(opt(argc, argv, "frames", "64"));
     sscanf(opt(argc, argv, "out", "1440x810"), "%ux%u", &OW, &OH);
     bool measure = atoi(opt(argc, argv, "psnr", "1")) != 0;
@@ -840,7 +1013,7 @@ int main(int argc, char **argv) {
         if (!lag && (k == 1 || !g_wobble) && fabsf(g_vel * k - roundf(g_vel * k)) < 1e-4f) lag = k;
     bool shimmer = (g_grass || g_glints) && lag > 0 && !g_light && !g_spec && g_wind <= 0.0f && !fgMode;  // (the light breaks the pan's shift: no shimmer then)
 
-    Api *api = vk ? (Api *)new Vk() : (Api *)new Dx12();
+    Api *api = vk ? (Api *)new Vk() : dx11 ? (Api *)new Dx11() : (Api *)new Dx12();
     if (!api->init(atoi(opt(argc, argv, "gpu", "-1")))) return printf("no GPU\n"), 1;
     printf("adapter: %s; %s, %s scene, %ux%u -> %ux%u%s\n", api->adapter(), dll, g_glints ? "glints" : g_corner ? "corner" : g_grass ? "grass" : "tiles", RW, RH,
            OW, OH, out8 ? ", RGBA8 output" : "");
@@ -852,11 +1025,30 @@ int main(int argc, char **argv) {
     if (!m) return printf("cannot load %s (%lu)\n", p, GetLastError()), 1;
     ffxContext ctx = nullptr;
     int32_t phases = 0;
+    // (D3D11: the NGX exports - DLSS's create flags as the FSR ones below: HDR, reversed-Z, render-size vectors)
+    NgxParams np;
+    NVSDK_NGX_Handle *nh = nullptr;
+    auto ngxEval = (PfnNgxEvaluate)GetProcAddress(m, "NVSDK_NGX_D3D11_EvaluateFeature");
+    if (dx11) {
+        auto ngxInit = (PfnNgxInitExt)GetProcAddress(m, "NVSDK_NGX_D3D11_Init_Ext");
+        auto ngxCreate = (PfnNgxCreate)GetProcAddress(m, "NVSDK_NGX_D3D11_CreateFeature");
+        if (!ngxInit || !ngxCreate || !ngxEval) return printf("NGX D3D11 exports missing\n"), 1;
+        if (ngxInit(0x2448, L".", (ID3D11Device *)api->device(), 0x15, nullptr) != NVSDK_NGX_Result_Success) return printf("NGX init failed\n"), 1;
+        unsigned flags = NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_DepthInverted | NVSDK_NGX_DLSS_Feature_Flags_MVLowRes;
+        if (atoi(opt(argc, argv, "autoexp", "0"))) flags |= NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
+        np.Set(NGX_DLSS_Feature_Create_Flags, flags);
+        np.Set(NGX_Width, RW), np.Set(NGX_Height, RH), np.Set(NGX_OutWidth, OW), np.Set(NGX_OutHeight, OH);
+        NVSDK_NGX_Result nr = ngxCreate(((Dx11 *)api)->ctx, NVSDK_NGX_Feature_SuperSampling, &np, &nh);
+        if (nr != NVSDK_NGX_Result_Success) return printf("NGX CreateFeature failed 0x%x\n", (unsigned)nr), 1;
+        phases = (int32_t)(8.0f * r * r);
+        printf("NGX feature %u (D3D11)\n", nh->Id);
+    }
     auto create = (PfnFfxCreateContext)GetProcAddress(m, "ffxCreateContext");
     auto destroy = (PfnFfxDestroyContext)GetProcAddress(m, "ffxDestroyContext");
     auto dispatch = (PfnFfxDispatch)GetProcAddress(m, "ffxDispatch");
     auto query = (PfnFfxQuery)GetProcAddress(m, "ffxQuery");
     if (!create || !destroy || !dispatch || !query) return printf("FidelityFX API exports missing\n"), 1;
+    if (!dx11) {
     ffxCreateContextDescUpscale cd = {};
     cd.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE, cd.header.pNext = api->backend();
     cd.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_DEPTH_INVERTED | FFX_UPSCALE_ENABLE_DEPTH_INFINITE;
@@ -887,6 +1079,7 @@ int main(int argc, char **argv) {
     }
     ffxQueryGetProviderVersion pv = {{FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION}};
     if (query(&ctx, &pv.header) == FFX_API_RETURN_OK && pv.versionName) printf("provider: %s\n", pv.versionName);
+    }
 
     Tex color = api->texture(TW, TH, K_COLOR, false), depth = api->texture(TW, TH, K_DEPTH, false), mv = api->texture(TW, TH, K_MV, false);
     Tex out = api->texture(OW, OH, K_OUT, out8);
@@ -928,7 +1121,8 @@ int main(int argc, char **argv) {
         if (t == swFrame && swRatio > 0) {  // (the new ratio: a new render size inside the same textures, a new jitter cycle)
             RW = (uint32_t)(OW / swRatio), RH = (uint32_t)(OH / swRatio), r = (float)OW / RW;
             ffxQueryDescUpscaleGetJitterPhaseCount pq2 = {{FFX_API_QUERY_DESC_TYPE_UPSCALE_GETJITTERPHASECOUNT}, RW, OW, &phases};
-            query(&ctx, &pq2.header);
+            if (dx11) phases = (int32_t)(8.0f * r * r);
+            else query(&ctx, &pq2.header);
             printf("frame %d: render %ux%u\n", t, RW, RH);
         }
         int k = t % phases + 1;
@@ -953,7 +1147,17 @@ int main(int argc, char **argv) {
             api->upload(in, data, TW, TH);
         }
         // the upscale alone in its own command list (its wall-clock time)
-        {
+        if (dx11) {  // (the evaluation's parameters, as DLSS takes them: the vectors x their scale in render pixels)
+            ID3D11DeviceContext *c11 = (ID3D11DeviceContext *)api->begin();
+            np.Set(NGX_Color, (ID3D11Resource *)color.r), np.Set(NGX_Depth, (ID3D11Resource *)depth.r);
+            np.Set(NGX_MotionVectors, (ID3D11Resource *)mv.r), np.Set(NGX_Output, (ID3D11Resource *)out.r);
+            np.Set(NGX_Jitter_Offset_X, jx), np.Set(NGX_Jitter_Offset_Y, jy);
+            np.Set(NGX_MV_Scale_X, (float)RW), np.Set(NGX_MV_Scale_Y, (float)RH);
+            np.Set(NGX_DLSS_Render_Subrect_Width, RW), np.Set(NGX_DLSS_Render_Subrect_Height, RH);
+            np.Set(NGX_Sharpness, sharpen ? 0.5f : 0.0f), np.Set(NGX_DLSS_Pre_Exposure, 1.0f), np.Set(NGX_Reset, t == 0 ? 1 : 0);
+            NVSDK_NGX_Result nr = ngxEval(c11, nh, &np, nullptr);
+            if (nr != NVSDK_NGX_Result_Success) return printf("NGX EvaluateFeature failed 0x%x at frame %d\n", (unsigned)nr, t), 1;
+        } else {
             ffxDispatchDescUpscale dd = {};
             dd.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
             dd.commandList = api->begin();
@@ -1134,7 +1338,14 @@ int main(int argc, char **argv) {
             printf("menu: %s (%.1f ms a draw; the first, with the font atlas, %.1f ms)\n", f, snapMs, atlasMs);
         }
     }
-    if (fgc) destroy(&fgc, nullptr);
-    destroy(&ctx, nullptr);
+    if (dx11) {
+        auto rel = (PfnNgxRelease)GetProcAddress(m, "NVSDK_NGX_D3D11_ReleaseFeature");
+        auto sd = (PfnNgxShutdown)GetProcAddress(m, "NVSDK_NGX_D3D11_Shutdown");
+        if (rel) rel(nh);
+        if (sd) sd();
+    } else {
+        if (fgc) destroy(&fgc, nullptr);
+        destroy(&ctx, nullptr);
+    }
     return 0;
 }

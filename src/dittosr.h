@@ -411,7 +411,7 @@ extern bool (*g_settingsSave)(const DittoSettings &s, const char *key);
 struct DittoStats {
     volatile float upscaleMs = 0.0f;  // (DittoSR's passes on the GPU, a few frames late; 0: unknown)
     volatile uint32_t rw = 0, rh = 0, ow = 0, oh = 0;
-    volatile int api = 0;  // 1 the FidelityFX API (AMD's FSR), 2 XeSS
+    volatile int api = 0;  // 1 the FidelityFX API (AMD's FSR), 2 XeSS, 3 NGX (DLSS's inputs, D3D11)
     volatile bool active = false, compare = false, hasReal = false;
     volatile int64_t lastQpc = 0;  // (QueryPerformanceCounter at the last upscale)
     // the frame weight FSR 3.1's velocity factor and reactiveness scale set in place of the settings' (OptiScaler's
