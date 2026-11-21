@@ -42,11 +42,19 @@ void main(uint2 id : SV_DispatchThreadID) {
         float3 albedo = lerp((float3)0.5, 0.6 * col / max(mx, 1e-4), saturate(mx * 8.0));
         if (flag2On(16u) && mips > 0.5) {
             // (better albedo, flags2 16: the colour over its 16 x 16 area's luma - the lighting there, retinex's way - x 0.5,
-            // a mid grey's albedo where the pixel is as lit as its area)
+            // a mid grey's albedo where the pixel is as lit as its area; the area's luma bilinear between level 4's texels: no
+            // 16 x 16 blocks)
             uint2 d4 = ((uint2)rs + 15u) >> 4;
-            float3 c4;
-            mipDecode(Mip4c.Load(int3(min(int2((float2(p) + 0.5) * rsRcp * float2(d4)), int2(d4) - 1), 0)), c4);
-            albedo = saturate(0.5 * col / max(dot(c4, float3(0.2126, 0.7152, 0.0722)), 1e-4));
+            float2 t = (float2(p) + 0.5) * rsRcp * float2(d4) - 0.5, tb = floor(t), tf = t - tb;
+            float la = 0.0;
+            [unroll] for (int k = 0; k < 4; k++) {
+                int2 o = int2(k & 1, k >> 1);
+                float3 c4;
+                mipDecode(Mip4c.Load(int3(clamp(int2(tb) + o, int2(0, 0), int2(d4) - 1), 0)), c4);
+                float2 bl = lerp(1.0 - tf, tf, float2(o));
+                la += dot(c4, float3(0.2126, 0.7152, 0.0722)) * bl.x * bl.y;
+            }
+            albedo = saturate(0.5 * col / max(la, 1e-4));
         }
         float dark = 1.0 - smoothstep(0.0, 0.25, dot(col, float3(0.2126, 0.7152, 0.0722)));
         float3 b = giStrength * lerp(1.0, giDark, dark) * albedo * r.rgb;
