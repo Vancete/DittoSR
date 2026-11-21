@@ -96,6 +96,15 @@ struct DittoSettings {
     // 4 x 4 with twice the samples, interpolated by depth and normal, the other pixels the AO alone with half; aoBlueNoise
     // (on) the main pass' noise from a 64 x 64 blue noise mask stepped by the golden ratio a frame, in place of IGN
     bool aoGiGuided = false, aoGiProbes = false, aoBlueNoise = true;
+    // ... GI tests (D3D12; off by default - the menu's toggles): aoGiBounce the GI's light from the last frame's relit
+    // colour (more bounces), aoSkyLight the unblocked rays the sky's colour by how far up they point, aoGiSrcClamp a
+    // full-resolution source at most 3 x its area's mean, aoAlbedo2 the albedo by the colour over its area's luma,
+    // aoEdgeFill the GI made up for the samples off the screen, aoProbeDir directional probes (the light's direction
+    // each), aoAtrous an a-trous filter on the GI (luma edge-stopping), aoFp16 the main pass in 16 bits, aoGiInterleave
+    // the GI on half the pixels a frame (the rest the last result's), aoMipLds the mips' level 4 from groupshared
+    // memory, aoFarCheap half the samples past twice the AO's fade distance
+    bool aoGiBounce = false, aoSkyLight = false, aoGiSrcClamp = false, aoAlbedo2 = false, aoEdgeFill = false, aoProbeDir = false,
+         aoAtrous = false, aoFp16 = false, aoGiInterleave = false, aoMipLds = false, aoFarCheap = false;
     float aoFadeMeters = 100.0f;
     // ... the curve (the menu's curves editor; ini curve = "x,y x,y ..."): curveN points (2 - 8) by x in [0, 1], each
     // channel through their natural cubic spline in a perceptual [0, 1] (aocompose.hlsl) - the line: none. By default
@@ -273,7 +282,8 @@ private:
     ID3D12PipelineState *psoUpscaleFm_[2][2] = {};
     ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr, *psoAoMip_ = nullptr;
     ID3D12PipelineState *psoAoMain16_ = nullptr, *psoAoLut_ = nullptr, *psoAoUp_ = nullptr, *psoAoHalfNd_ = nullptr, *psoAoCacao_ = nullptr,
-                         *psoAoMipAll_ = nullptr, *psoAoCacao2_ = nullptr, *psoAoCurve_ = nullptr, *psoAoProbe_ = nullptr, *psoAoProbeT_ = nullptr, *psoAoProbeF_ = nullptr;  // (ao_fuse; the curve's table; the GI's probes)  // (... the 16 x 16 main pass, the table, the half size's upsample)  // (EXPERIMENTAL: Ditto Relight)
+                         *psoAoMipAll_ = nullptr, *psoAoCacao2_ = nullptr, *psoAoCurve_ = nullptr, *psoAoProbe_ = nullptr, *psoAoProbeT_ = nullptr, *psoAoProbeF_ = nullptr,
+                         *psoAoAtrous_ = nullptr, *psoAoMainH_ = nullptr, *psoAoMain16H_ = nullptr;  // (ao_fuse; the curve's table; the GI's probes)  // (... the 16 x 16 main pass, the table, the half size's upsample)  // (EXPERIMENTAL: Ditto Relight)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     // the game's output last checked (outputWritable): its format, whether it allows unordered access, and the verdict
@@ -297,7 +307,9 @@ private:
     Tex aoProbe_, aoBlue_, aoBlueUp_, aoProbeH_[2], aoProbeF_;  // (... the probes' history, ping-ponged - aoProbeCur_ -, filtered)
     int aoProbeCur_ = 0;
     bool aoProbeOk_ = false;  // (the probes' history valid)
-    Tex aoProbeDummy_;  // (the GI's probes; the blue noise mask and its upload buffer - aoBlueMade_: copied)
+    Tex aoProbeDummy_;
+    Tex aoColPrev_, aoProbeDir_, aoProbeDirH_[2], aoProbeDirF_;  // (the GI tests: the last relit colour, the probes' directions)
+    bool aoColPrevOk_ = false;  // (the GI's probes; the blue noise mask and its upload buffer - aoBlueMade_: copied)
     bool aoBlueMade_ = false;
     Tex aoCurveLut_;  // (ao_curve_lut: the curve's table, 4096 x 1 - curveKey_: the curve it was built for)
     float curveKey_[26] = {};

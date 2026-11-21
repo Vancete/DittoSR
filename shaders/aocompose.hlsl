@@ -23,6 +23,7 @@ Texture2D<float4> Color : register(t1);
 Texture2D<float4> Res : register(t2);
 Texture2D<float> GDepth : register(t3);    // (the game's depth: flags 131072)
 Texture2D<float> CurveLut : register(t4);  // (the curve's table: flags 262144)
+Texture2D<uint4> Mip4c : register(t5);    // (better albedo, flags2 16: the mips' level 4)
 AOFMT("rgba16f") RWTexture2D<float4> Out : register(u0);
 
 #include "ao_up.hlsli"
@@ -39,6 +40,14 @@ void main(uint2 id : SV_DispatchThreadID) {
         float3 col = max(c.rgb, 0.0);
         float mx = max(col.r, max(col.g, col.b));
         float3 albedo = lerp((float3)0.5, 0.6 * col / max(mx, 1e-4), saturate(mx * 8.0));
+        if (flag2On(16u) && mips > 0.5) {
+            // (better albedo, flags2 16: the colour over its 16 x 16 area's luma - the lighting there, retinex's way - x 0.5,
+            // a mid grey's albedo where the pixel is as lit as its area)
+            uint2 d4 = ((uint2)rs + 15u) >> 4;
+            float3 c4;
+            mipDecode(Mip4c.Load(int3(min(int2((float2(p) + 0.5) * rsRcp * float2(d4)), int2(d4) - 1), 0)), c4);
+            albedo = saturate(0.5 * col / max(dot(c4, float3(0.2126, 0.7152, 0.0722)), 1e-4));
+        }
         float dark = 1.0 - smoothstep(0.0, 0.25, dot(col, float3(0.2126, 0.7152, 0.0722)));
         float3 b = giStrength * lerp(1.0, giDark, dark) * albedo * r.rgb;
         if (giCeiling > 0.0) {

@@ -7,6 +7,7 @@
 
 Texture2D<float4> Nd : register(t0);
 Texture2D<float4> Probes : register(t1);
+Texture2D<float4> PDir : register(t2);  // (directional probes, flags2 64: each probe's light direction)
 AOFMT("rgba16f") RWTexture2D<float4> Res : register(u0);
 
 [numthreads(8, 8, 1)]
@@ -28,6 +29,10 @@ void main(uint2 id : SV_DispatchThreadID) {
         float2 bl = lerp(1.0 - fr, fr, float2(o));
         float w = bl.x * bl.y * geoWeight(nd.w, sn.w, nd.xyz, sn.xyz) + 1e-6 * bl.x * bl.y;
         float3 v = Probes.Load(int3(pq, 0)).rgb;
+        if (flag2On(64u)) {  // (directional: its light x how this pixel's normal faces it, against the probe's own)
+            float3 dp = PDir.Load(int3(pq, 0)).xyz;
+            if (dot(dp, dp) > 0.25) v *= clamp((0.5 + 0.5 * dot(nd.xyz, dp)) / max(0.5 + 0.5 * dot(sn.xyz, dp), 0.25), 0.0, 2.0);
+        }
         acc += v * w, ws += w;
         float e = abs(sn.w - nd.w);
         if (sn.w > 0.0 && e < bd) bd = e, best = v;

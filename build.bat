@@ -22,7 +22,7 @@ if not exist "%SPV%" set "SPV=%VULKAN_SDK%\Bin\dxc.exe"
 if not exist "%SPV%" (echo no dxc with SPIR-V: put the DirectXShaderCompiler release in tools\dxc\ or install the Vulkan SDK & exit /b 1)
 
 rem D3D12 (DXIL)
-for %%s in (convert motion upscale sharpen aoprep aomain aomip aofilter aotemporal aocompose aolut aoup aohalfnd aocacao aocurve aoprobe aoprobet aoprobef fg_field fg_dilate fg_warp) do (
+for %%s in (convert motion upscale sharpen aoprep aomain aomip aofilter aotemporal aocompose aolut aoup aohalfnd aocacao aocurve aoprobe aoprobet aoprobef aoatrous fg_field fg_dilate fg_warp) do (
   %DXC% -nologo -T cs_6_0 -E main -O3 -Fh "%OUT%\gen\cs_%%s.h" -Vn g_cs_%%s "%ROOT%shaders\%%s.hlsl" || exit /b 1
 )
 rem Ditto Relight: its main pass in 16 x 16 groups (ao_workgroup16)
@@ -31,6 +31,8 @@ rem Ditto Relight's fused passes (D3D12, ao_fuse): its mips in one pass, CACAO's
 %DXC% -nologo -T cs_6_0 -E main -O3 -Fh "%OUT%\gen\cs_aomipall.h" -Vn g_cs_aomipall "%ROOT%shaders\aomipall.hlsl" || exit /b 1
 %DXC% -nologo -T cs_6_0 -D CACAO_FUSED=1 -E main -O3 -Fh "%OUT%\gen\cs_aocacao2.h" -Vn g_cs_aocacao2 "%ROOT%shaders\aocacao.hlsl" || exit /b 1
 rem the FP16 variants: native 16-bit types (SM 6.2), picked at run time where the GPU supports them
+%DXC% -nologo -T cs_6_2 -enable-16bit-types -D AO_HALF=1 -E main -O3 -Fh "%OUT%\gen\cs_aomainh.h" -Vn g_cs_aomainh "%ROOT%shaders\aomain.hlsl" || exit /b 1
+%DXC% -nologo -T cs_6_2 -enable-16bit-types -D AO_HALF=1 -D AO_WG=16 -E main -O3 -Fh "%OUT%\gen\cs_aomain16h.h" -Vn g_cs_aomain16h "%ROOT%shaders\aomain.hlsl" || exit /b 1
 for %%s in (upscale sharpen) do (
   %DXC% -nologo -T cs_6_2 -enable-16bit-types -D DITTO_FP16=1 -E main -O3 -Fh "%OUT%\gen\cs_%%s16.h" -Vn g_cs_%%s16 "%ROOT%shaders\%%s.hlsl" || exit /b 1
 )

@@ -656,7 +656,7 @@ bool DittoSRVk::dispatch(const DittoFrameVk &fr, bool forceReset) {
         bool aoValid = aoT && aoOk_ && aoLast_ + 1 == frames_ && !reset;
         float tw = s_.aoTemporalWeight < 0.0f ? 0.0f : s_.aoTemporalWeight > 0.95f ? 0.95f : s_.aoTemporalWeight;
         ka.temporal = aoValid ? tw : 0.0f;
-        ka.mips = mips ? 1.0f : 0.0f, ka.lut = lut ? 1.0f : 0.0f, ka.halfRes = half ? 1.0f : 0.0f;
+        ka.mips = mips ? 1.0f : 0.0f, ka.flags2 = lut ? 1u : 0u, ka.halfRes = half ? 1.0f : 0.0f;
         if (!mips) ka.cmips = 0.0f;
         bool sparse = s_.aoSparseFilter;
         // (as D3D12's: the upsample in the composition, fused passes, the half-size prepass, the curve's table)

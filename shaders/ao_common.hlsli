@@ -37,7 +37,9 @@ cbuffer A : register(b0) {
                           // 32768 a longer history for it; 131072 the prepass at half size; 262144 the curve from its table;
                           // 524288 FastGI's 8-frame noise cycle, 1048576 its GI falloff; GI tests (D3D12): 2097152 samples
                           // guided toward bright areas, 4194304 screen probes, 8388608 blue noise
-    float lut;            // 1: the occluder lookup table (aolut.hlsl) - 32 rays
+    uint flags2;          // bits: 1 the occluder lookup table (aolut.hlsl - 32 rays); GI tests: 2 multi-bounce, 4 sky light,
+                          // 8 source clamp, 16 better albedo, 32 edge fill, 64 directional probes, 128 a-trous, 256 FP16,
+                          // 512 interleaved GI, 1024 mips in groupshared memory, 4096 cheaper far pixels
     float cmips;          // 1: the GI's far occluders' colour from the colour mips (aocmip.hlsl)
     float samples;        // the main pass' samples a pixel (4 - 32)
     float halfRes;        // 1: the main pass at half size (the pixel at 2x, 2y of each 2 x 2) - aoup.hlsl back
@@ -132,6 +134,7 @@ float curveIn(float t) {
 float curveAt(float t) { return t > 1.0 ? curveIn(1.0) + (t - 1.0) : curveIn(t); }
 
 bool flagOn(uint b) { return ((uint)flags & b) != 0u; }
+bool flag2On(uint b) { return (flags2 & b) != 0u; }
 
 // the packed normal and depth (flags 4, ao_pack_nd): RG32_UINT - x the normal, octahedral, 2 x 16-bit snorm; y the linear
 // depth's bits - 8 bytes a texel in place of RGBA32F's 16, read at t7 by every pass that reads the normal and depth

@@ -136,6 +136,17 @@ static void load_config() {
     s.aoGiGuided = GetPrivateProfileIntA("dittosr", "ao_gi_guided", s.aoGiGuided, ini) != 0;
     s.aoGiProbes = GetPrivateProfileIntA("dittosr", "ao_gi_probes", s.aoGiProbes, ini) != 0;
     s.aoBlueNoise = GetPrivateProfileIntA("dittosr", "ao_blue_noise", s.aoBlueNoise, ini) != 0;
+    s.aoGiBounce = GetPrivateProfileIntA("dittosr", "ao_gi_bounce", s.aoGiBounce, ini) != 0;
+    s.aoSkyLight = GetPrivateProfileIntA("dittosr", "ao_sky_light", s.aoSkyLight, ini) != 0;
+    s.aoGiSrcClamp = GetPrivateProfileIntA("dittosr", "ao_gi_source_clamp", s.aoGiSrcClamp, ini) != 0;
+    s.aoAlbedo2 = GetPrivateProfileIntA("dittosr", "ao_better_albedo", s.aoAlbedo2, ini) != 0;
+    s.aoEdgeFill = GetPrivateProfileIntA("dittosr", "ao_edge_fill", s.aoEdgeFill, ini) != 0;
+    s.aoProbeDir = GetPrivateProfileIntA("dittosr", "ao_probe_directional", s.aoProbeDir, ini) != 0;
+    s.aoAtrous = GetPrivateProfileIntA("dittosr", "ao_gi_atrous", s.aoAtrous, ini) != 0;
+    s.aoFp16 = GetPrivateProfileIntA("dittosr", "ao_fp16", s.aoFp16, ini) != 0;
+    s.aoGiInterleave = GetPrivateProfileIntA("dittosr", "ao_gi_interleave", s.aoGiInterleave, ini) != 0;
+    s.aoMipLds = GetPrivateProfileIntA("dittosr", "ao_mips_lds", s.aoMipLds, ini) != 0;
+    s.aoFarCheap = GetPrivateProfileIntA("dittosr", "ao_far_cheap", s.aoFarCheap, ini) != 0;
     s.aoFadeMeters = ini_float(ini, "ao_fade_distance", s.aoFadeMeters);
     {  // (the curve: "x,y x,y ...", by x, 2 - 8 points in [0, 1]; else the line)
         char cb[256];
@@ -276,6 +287,17 @@ bool ditto_save_settings() {
     ok = put("ao_gi_guided", b(s.aoGiGuided), b(d.aoGiGuided), false) && ok;
     ok = put("ao_gi_probes", b(s.aoGiProbes), b(d.aoGiProbes), false) && ok;
     ok = put("ao_blue_noise", b(s.aoBlueNoise), b(d.aoBlueNoise), false) && ok;
+    ok = put("ao_gi_bounce", b(s.aoGiBounce), b(d.aoGiBounce), false) && ok;
+    ok = put("ao_sky_light", b(s.aoSkyLight), b(d.aoSkyLight), false) && ok;
+    ok = put("ao_gi_source_clamp", b(s.aoGiSrcClamp), b(d.aoGiSrcClamp), false) && ok;
+    ok = put("ao_better_albedo", b(s.aoAlbedo2), b(d.aoAlbedo2), false) && ok;
+    ok = put("ao_edge_fill", b(s.aoEdgeFill), b(d.aoEdgeFill), false) && ok;
+    ok = put("ao_probe_directional", b(s.aoProbeDir), b(d.aoProbeDir), false) && ok;
+    ok = put("ao_gi_atrous", b(s.aoAtrous), b(d.aoAtrous), false) && ok;
+    ok = put("ao_fp16", b(s.aoFp16), b(d.aoFp16), false) && ok;
+    ok = put("ao_gi_interleave", b(s.aoGiInterleave), b(d.aoGiInterleave), false) && ok;
+    ok = put("ao_mips_lds", b(s.aoMipLds), b(d.aoMipLds), false) && ok;
+    ok = put("ao_far_cheap", b(s.aoFarCheap), b(d.aoFarCheap), false) && ok;
     ok = put("ao_fade_distance", s.aoFadeMeters, d.aoFadeMeters, false) && ok;
     {
         char cb[256] = "";

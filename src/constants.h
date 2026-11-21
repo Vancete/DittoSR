@@ -93,7 +93,9 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
 // game's colour a float format (HDR read). temporal (the history valid) and axis (the filter's pass) set by the driver.
 struct AoConstants {
     float rs[2], rsRcp[2], tanX, tanY, zNear, zFar, inverted, frame, aoStrength, giStrength, radiusWorld, radiusScreen, rays,
-        contact, giDark, sCurve, pivot, temporal, spatial, axis, mvScale[2], mvSize[2], giCeiling, planeW, mips, aoPow, flags, lut, cmips, samples, halfRes, fadeZ;
+        contact, giDark, sCurve, pivot, temporal, spatial, axis, mvScale[2], mvSize[2], giCeiling, planeW, mips, aoPow, flags;
+    uint32_t flags2;  // (bits: 1 the lookup table; the GI tests - ao_common.hlsli)
+    float cmips, samples, halfRes, fadeZ;
     float curveX[8], curveY[8], curveY2[8], curveN;  // (the curve: its points, the spline's second derivatives; 0: none)
 };
 static_assert(sizeof(AoConstants) == 61 * 4, "Relight's constants (D3D12: within the 61 root constants)");
@@ -119,7 +121,7 @@ void ditto_fill_ao(AoConstants &ka, const DittoSettings &s, const Frame &fr, boo
     ka.flags = (float)((s.aoBackBoost ? 1 : 0) | (s.aoDecorrelate ? 2 : 0) | (s.aoAmbientOnly ? 256 : 0) | (s.aoEmitterCos ? 512 : 0) |
                        (s.aoBetterNormals ? 2048 : 0) | (s.aoGiWide ? 16384 : 0) | (s.aoGiLong ? 32768 : 0) |
                        (s.aoNoise8 ? 524288 : 0) | (s.aoGiFalloff ? 1048576 : 0));
-    ka.lut = s.aoLut ? 1.0f : 0.0f, ka.cmips = s.aoColorMips && s.aoMips ? 1.0f : 0.0f;
+    ka.flags2 = s.aoLut ? 1u : 0u, ka.cmips = s.aoColorMips && s.aoMips ? 1.0f : 0.0f;
     ka.samples = s.aoSamples < 4.0f ? 4.0f : s.aoSamples > 32.0f ? 32.0f : floorf(s.aoSamples + 0.5f);
     // (the AO's fade: from fadeZ view units on - its metres over the camera's metres a unit)
     ka.fadeZ = s.aoFadeMeters > 0.0f ? s.aoFadeMeters / (fr.metersPerUnit > 0.0f ? fr.metersPerUnit : 1.0f) : 0.0f;
