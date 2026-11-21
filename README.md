@@ -9,7 +9,7 @@ turns, high ratios) while staying lighter than the usual alternatives. Thought f
 
 It ships as a drop-in **FidelityFX API** provider for **DirectX 12 and Vulkan**: a game that offers FSR 3.1 upscales
 through DittoSR instead, with no change to the game. For games whose FSR it can't reach, it can also take **XeSS**'s
-place on DirectX 12.
+place on DirectX 12. Through OptiScaler it also runs natively on **DirectX 11**, as an NGX (DLSS) runtime.
 
 You can expect a perceived quality between FSR 3.1 and FSR 4.1 while being lighter than both. A small `dittosr.ini`
 next to the DLL sets the sharpness and the frame blending, reloaded live with **F9**.
@@ -45,6 +45,17 @@ custom\DittoSR\ffx_vk\amd_fidelityfx_vk.dll
 
 The first serves DirectX 12 games, the second Vulkan ones (Enshrouded, No Man's Sky): OptiScaler looks for each in its
 own folder.
+
+**DirectX 11, natively** (an OptiScaler build whose custom DLSS runs on DX11 itself, not only through DX12): DittoSR
+also speaks NGX, the API DLSS is driven through, on D3D11. Copy `build\nvngx.dll` (the same DLL) as:
+
+```
+custom\DittoSR\dlss\nvngx.dll
+```
+
+OptiScaler hands it the game's DLSS inputs and DittoSR upscales on the game's own D3D11 device, with no DX12 copy in
+between. On DX11 the upscaler is the same as on DX12 (the FP32 shaders); Ditto Relight and the F8 capture are DX12 and
+Vulkan only, and the F7 menu is the window one Vulkan uses.
 
 DittoSR then shows up in OptiScaler's upscaler list. A `dittosr.ini` in the same folder is optional (the defaults apply without it).
 OptiScaler's settings drive it:

@@ -69,6 +69,11 @@ typedef float hf;
 typedef float3 hf3;
 #endif
 
+// D3D11 (FXC, SM 5.0: DITTO_DX11): HLSL 2021's select is HLSL 2018's per-component ?:
+#ifndef __HLSL_VERSION
+#define select(c, a, b) ((c) ? (a) : (b))
+#endif
+
 SamplerState linearClamp : register(s0);
 
 // Vulkan (DITTO_VK, SPIR-V): every storage image with its format spelled out - writing one without needs a device

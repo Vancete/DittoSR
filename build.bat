@@ -1,9 +1,10 @@
 @echo off
 rem Builds build\amd_fidelityfx_dx12.dll, build\amd_fidelityfx_loader_dx12.dll and build\amd_fidelityfx_vk.dll (DittoSR:
-rem one DLL, D3D12 and Vulkan, under the three names games load), build\libxess.dll (DittoSR in place of XeSS),
-rem build\harness.exe (the offline test) and build\DittoSRLoader.exe (the loader, by loader\build.bat).
-rem Needs Visual Studio's C++ tools, the Windows SDK's dxc (DXIL) and a dxc with SPIR-V (the Vulkan shaders): the
-rem DirectXShaderCompiler release in tools\dxc\ (bin\x64\dxc.exe) or the Vulkan SDK's (%VULKAN_SDK%\Bin\dxc.exe).
+rem one DLL, D3D12 and Vulkan, under the three names games load; as build\nvngx.dll, DittoSR on D3D11 for OptiScaler's
+rem custom DLSS), build\libxess.dll (DittoSR in place of XeSS), build\harness.exe (the offline test) and
+rem build\DittoSRLoader.exe (the loader, by loader\build.bat).
+rem Needs Visual Studio's C++ tools, the Windows SDK's dxc (DXIL) and fxc (D3D11's DXBC), and a dxc with SPIR-V (the
+rem Vulkan shaders): the DirectXShaderCompiler release in tools\dxc\ (bin\x64\dxc.exe) or the Vulkan SDK's (%VULKAN_SDK%\Bin\dxc.exe).
 setlocal
 set "ROOT=%~dp0"
 set "OUT=%ROOT%build"
@@ -20,6 +21,8 @@ where dxc.exe >nul 2>nul || set DXC="%WindowsSdkVerBinPath%x64\dxc.exe"
 set "SPV=%ROOT%tools\dxc\bin\x64\dxc.exe"
 if not exist "%SPV%" set "SPV=%VULKAN_SDK%\Bin\dxc.exe"
 if not exist "%SPV%" (echo no dxc with SPIR-V: put the DirectXShaderCompiler release in tools\dxc\ or install the Vulkan SDK & exit /b 1)
+set FXC=fxc.exe
+where fxc.exe >nul 2>nul || set FXC="%WindowsSdkVerBinPath%x64\fxc.exe"
 
 rem D3D12 (DXIL)
 for %%s in (convert motion upscale sharpen aoprep aomain aomip aofilter aotemporal aocompose aolut aoup aohalfnd aocacao aocurve) do (
@@ -60,19 +63,31 @@ for %%f in (rgba16f rgba8 rgb10a2 r11g11b10f rgba32f) do (
   "%SPV%" %SPVF% -DANTI_SHIMMER=1 -DHISTFMT=\"rgba16f\" -DOUTFMT=\"%%f\" -Fh "%OUT%\gen\spv_upscale_h16_%%f.h" -Vn g_spv_upscale_h16_%%f "%ROOT%shaders\upscale.hlsl" || exit /b 1
 )
 
+rem D3D11 (DXBC, SM 5.0 by fxc): the core passes - the upscale with and without the anti-shimmer, at 1x the motion pass
+rem fused in
+set FXCF=/nologo /T cs_5_0 /E main /O3
+for %%s in (convert motion upscale sharpen) do (
+  %FXC% %FXCF% /Fh "%OUT%\gen\cs11_%%s.h" /Vn g_cs11_%%s "%ROOT%shaders\%%s.hlsl" >nul || exit /b 1
+)
+%FXC% %FXCF% /DANTI_SHIMMER=1 /Fh "%OUT%\gen\cs11_upscale_as.h" /Vn g_cs11_upscale_as "%ROOT%shaders\upscale.hlsl" >nul || exit /b 1
+%FXC% %FXCF% /DFUSED_MOTION=1 /Fh "%OUT%\gen\cs11_upscale_fm.h" /Vn g_cs11_upscale_fm "%ROOT%shaders\upscale.hlsl" >nul || exit /b 1
+%FXC% %FXCF% /DFUSED_MOTION=1 /DANTI_SHIMMER=1 /Fh "%OUT%\gen\cs11_upscale_as_fm.h" /Vn g_cs11_upscale_as_fm "%ROOT%shaders\upscale.hlsl" >nul || exit /b 1
+
+rem one DLL: the FidelityFX API (D3D12, Vulkan) and NGX's D3D11 exports (as nvngx.dll: OptiScaler's custom DLSS)
 cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /LD /I"%ROOT%src" /I"%OUT%\gen" /I"%ROOT%third_party\vulkan\include" "%ROOT%src\ffx_dll.cpp" ^
    "%ROOT%src\dittosr.cpp" "%ROOT%src\dittosr_vk.cpp" "%ROOT%src\common.cpp" "%ROOT%src\overlay.cpp" ^
-   "%ROOT%src\opti_plugin.cpp" /Fo"%OUT%\obj\\" ^
+   "%ROOT%src\opti_plugin.cpp" "%ROOT%src\dittosr_dx11.cpp" "%ROOT%src\ngx_dll.cpp" /Fo"%OUT%\obj\\" ^
    /Fe"%OUT%\amd_fidelityfx_dx12.dll" ^
    /link d3d12.lib dxgi.lib user32.lib gdi32.lib || exit /b 1
 copy /y "%OUT%\amd_fidelityfx_dx12.dll" "%OUT%\amd_fidelityfx_loader_dx12.dll" >nul || exit /b 1
 copy /y "%OUT%\amd_fidelityfx_dx12.dll" "%OUT%\amd_fidelityfx_vk.dll" >nul || exit /b 1
+copy /y "%OUT%\amd_fidelityfx_dx12.dll" "%OUT%\nvngx.dll" >nul || exit /b 1
 rem the libxess.dll proxy (XeSS on D3D12; the game's own XeSS renamed libxess_orig.dll behind it)
 if not exist "%OUT%\obj_xess" mkdir "%OUT%\obj_xess"
 cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /LD /I"%ROOT%src" /I"%OUT%\gen" "%ROOT%src\xess_dll.cpp" "%ROOT%src\dittosr.cpp" ^
    "%ROOT%src\common.cpp" "%ROOT%src\overlay.cpp" /Fo"%OUT%\obj_xess\\" /Fe"%OUT%\libxess.dll" /link d3d12.lib dxgi.lib user32.lib gdi32.lib || exit /b 1
 
 cl /nologo /std:c++17 /O2 /MT /W3 /EHsc /I"%ROOT%src" /I"%ROOT%test" /I"%ROOT%third_party\vulkan\include" "%ROOT%test\harness.cpp" ^
-   /Fo"%OUT%\obj\\" /Fe"%OUT%\harness.exe" /link d3d12.lib dxgi.lib || exit /b 1
+   /Fo"%OUT%\obj\\" /Fe"%OUT%\harness.exe" /link d3d12.lib d3d11.lib dxgi.lib || exit /b 1
 call "%ROOT%loader\build.bat" || exit /b 1
-echo built %OUT%\amd_fidelityfx_dx12.dll, amd_fidelityfx_loader_dx12.dll, amd_fidelityfx_vk.dll, libxess.dll, harness.exe
+echo built %OUT%\amd_fidelityfx_dx12.dll, amd_fidelityfx_loader_dx12.dll, amd_fidelityfx_vk.dll, nvngx.dll, libxess.dll, harness.exe
