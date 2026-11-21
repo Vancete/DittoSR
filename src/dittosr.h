@@ -91,6 +91,11 @@ struct DittoSettings {
     // aoFadeMeters (100, the menu's) the AO faded out from that many metres to twice that (0: none; the camera's metres a unit from FSR
     // 3.1's dispatch, 1 where it gives none)
     bool aoNoise8 = true, aoGiFalloff = true;
+    // ... GI tests (D3D12; off by default - the menu's toggles): aoGiGuided 2 more samples a pixel toward the brightest
+    // areas on its disc (the mips' colour), for the light alone; aoGiProbes screen probes - the GI at one pixel of each
+    // 4 x 4 with twice the samples, interpolated by depth and normal, the other pixels the AO alone with half; aoBlueNoise
+    // the main pass' noise from a 64 x 64 blue noise mask stepped by the golden ratio a frame, in place of IGN
+    bool aoGiGuided = false, aoGiProbes = false, aoBlueNoise = false;
     float aoFadeMeters = 100.0f;
     // ... the curve (the menu's curves editor; ini curve = "x,y x,y ..."): curveN points (2 - 8) by x in [0, 1], each
     // channel through their natural cubic spline in a perceptual [0, 1] (aocompose.hlsl) - the line: none. By default
@@ -268,7 +273,7 @@ private:
     ID3D12PipelineState *psoUpscaleFm_[2][2] = {};
     ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr, *psoAoMip_ = nullptr;
     ID3D12PipelineState *psoAoMain16_ = nullptr, *psoAoLut_ = nullptr, *psoAoUp_ = nullptr, *psoAoHalfNd_ = nullptr, *psoAoCacao_ = nullptr,
-                         *psoAoMipAll_ = nullptr, *psoAoCacao2_ = nullptr, *psoAoCurve_ = nullptr;  // (ao_fuse; the curve's table)  // (... the 16 x 16 main pass, the table, the half size's upsample)  // (EXPERIMENTAL: Ditto Relight)
+                         *psoAoMipAll_ = nullptr, *psoAoCacao2_ = nullptr, *psoAoCurve_ = nullptr, *psoAoProbe_ = nullptr;  // (ao_fuse; the curve's table; the GI's probes)  // (... the 16 x 16 main pass, the table, the half size's upsample)  // (EXPERIMENTAL: Ditto Relight)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     // the game's output last checked (outputWritable): its format, whether it allows unordered access, and the verdict
@@ -289,6 +294,8 @@ private:
     // (... half resolution, FastGI's: the filter's scratch, the normal and depth, the temporal smoothing's history and its
     // depth, all at half size; aoLastHalf_: the last frame's mode - the history is either size's)
     Tex aoHalfF_, aoNdHalf_, aoHh_[2], aoHDh_[2];
+    Tex aoProbe_, aoBlue_, aoBlueUp_;  // (the GI's probes; the blue noise mask and its upload buffer - aoBlueMade_: copied)
+    bool aoBlueMade_ = false;
     Tex aoCurveLut_;  // (ao_curve_lut: the curve's table, 4096 x 1 - curveKey_: the curve it was built for)
     float curveKey_[26] = {};
     Tex aoNdP_, aoNdHalfP_;  // (ao_pack_nd: the normal and depth packed, render and half size)

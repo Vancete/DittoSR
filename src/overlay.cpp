@@ -349,7 +349,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_QAMB, I_QCOS, I_QNRM, I_GWIDE, I_GLONG, I_FPACK, I_FUPC, I_FFUSE, I_FHIST, I_FHPREP, I_FCLUT, I_QCYC, I_QFALL, I_RFADE, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_QAMB, I_QCOS, I_QNRM, I_GWIDE, I_GLONG, I_FPACK, I_FUPC, I_FFUSE, I_FHIST, I_FHPREP, I_FCLUT, I_QCYC, I_QFALL, I_RFADE, I_QGUIDE, I_QPROBE, I_QBLUE, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -460,6 +460,7 @@ float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f 
 constexpr bool kCurvesEditor = true;
 
 bool visible(int i) {
+    if (i >= I_QGUIDE && i <= I_QBLUE) return g_m.relight;  // (Relight's GI tests)
     // (Relight's: the AO and GI strengths, the samples, FastGI's noise cycle and falloff, the AO's fade, the curves; its
     // features on by default and hidden - ini keys)
     if (i == I_RSAMPLES || i == I_RFADE) return g_m.relight;
@@ -609,6 +610,9 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_FCLUT: s.aoCurveLut = !s.aoCurveLut; return true;
     case I_QCYC: s.aoNoise8 = !s.aoNoise8; return true;
     case I_QFALL: s.aoGiFalloff = !s.aoGiFalloff; return true;
+    case I_QGUIDE: s.aoGiGuided = !s.aoGiGuided; return true;
+    case I_QPROBE: s.aoGiProbes = !s.aoGiProbes; return true;
+    case I_QBLUE: s.aoBlueNoise = !s.aoBlueNoise; return true;
     case I_QAMB: s.aoAmbientOnly = !s.aoAmbientOnly; return true;
     case I_QCOS: s.aoEmitterCos = !s.aoEmitterCos; return true;
     case I_QNRM: s.aoBetterNormals = !s.aoBetterNormals; return true;
@@ -851,6 +855,9 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         slider_row(I_RGI, "Global illumination", "the bounce light");
         slider_row(I_RSAMPLES, "Samples", "more: less noise, slower");
         slider_row(I_RFADE, "AO fade distance", "faded out to twice it");
+        toggle_row(I_QGUIDE, "GI toward bright areas", s.aoGiGuided);
+        toggle_row(I_QPROBE, "GI screen probes", s.aoGiProbes);
+        toggle_row(I_QBLUE, "Blue noise", s.aoBlueNoise);
     }
     if (s.relight && kCurvesEditor) {
         // the curves editor (Photoshop's): the line, the curve, its points; the
@@ -1069,7 +1076,7 @@ void input(DittoSettings &s, bool &changed, double t) {
             }
         }
     } else if (click) {
-        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR && hit != I_RELIGHT && hit != I_RTEMP && !(hit >= I_TPLANE && hit <= I_TCMIP) && hit != I_THALF && hit != I_TDECOR && !(hit >= I_TCACAO && hit <= I_QFALL) ? -1 : 1);
+        changed |= adjust(s, hit, mx < (g_m.trackX0 + g_m.trackX1) / 2 && hit != I_INDICATOR && hit != I_RELIGHT && hit != I_RTEMP && !(hit >= I_TPLANE && hit <= I_TCMIP) && hit != I_THALF && hit != I_TDECOR && !(hit >= I_TCACAO && hit <= I_QBLUE) ? -1 : 1);
     }
 }
 

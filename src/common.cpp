@@ -133,6 +133,9 @@ static void load_config() {
     s.fgAmd = GetPrivateProfileIntA("dittosr", "frame_gen_amd", s.fgAmd, ini) != 0;
     s.aoNoise8 = GetPrivateProfileIntA("dittosr", "ao_noise_cycle8", s.aoNoise8, ini) != 0;
     s.aoGiFalloff = GetPrivateProfileIntA("dittosr", "ao_gi_falloff", s.aoGiFalloff, ini) != 0;
+    s.aoGiGuided = GetPrivateProfileIntA("dittosr", "ao_gi_guided", s.aoGiGuided, ini) != 0;
+    s.aoGiProbes = GetPrivateProfileIntA("dittosr", "ao_gi_probes", s.aoGiProbes, ini) != 0;
+    s.aoBlueNoise = GetPrivateProfileIntA("dittosr", "ao_blue_noise", s.aoBlueNoise, ini) != 0;
     s.aoFadeMeters = ini_float(ini, "ao_fade_distance", s.aoFadeMeters);
     {  // (the curve: "x,y x,y ...", by x, 2 - 8 points in [0, 1]; else the line)
         char cb[256];
@@ -270,6 +273,9 @@ bool ditto_save_settings() {
     ok = put("frame_gen_amd", b(s.fgAmd), b(d.fgAmd), false) && ok;
     ok = put("ao_noise_cycle8", b(s.aoNoise8), b(d.aoNoise8), false) && ok;
     ok = put("ao_gi_falloff", b(s.aoGiFalloff), b(d.aoGiFalloff), false) && ok;
+    ok = put("ao_gi_guided", b(s.aoGiGuided), b(d.aoGiGuided), false) && ok;
+    ok = put("ao_gi_probes", b(s.aoGiProbes), b(d.aoGiProbes), false) && ok;
+    ok = put("ao_blue_noise", b(s.aoBlueNoise), b(d.aoBlueNoise), false) && ok;
     ok = put("ao_fade_distance", s.aoFadeMeters, d.aoFadeMeters, false) && ok;
     {
         char cb[256] = "";

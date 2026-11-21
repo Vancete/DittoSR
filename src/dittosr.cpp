@@ -30,6 +30,8 @@
 #include "cs_aocacao2.h"
 #include "cs_aomipall.h"
 #include "cs_aocurve.h"
+#include "cs_aoprobe.h"
+#include "bluenoise64.h"
 #include "cs_aocompose.h"
 #include "cs_upscale.h"
 #include "cs_upscale16.h"
@@ -183,7 +185,7 @@ DittoSR::~DittoSR() {
     if (psoAoTemporal_) psoAoTemporal_->Release();
     if (psoAoFilter_) psoAoFilter_->Release();
     if (psoAoMip_) psoAoMip_->Release();
-    for (auto *p : {psoAoMain16_, psoAoLut_, psoAoUp_, psoAoHalfNd_, psoAoCacao_, psoAoMipAll_, psoAoCacao2_, psoAoCurve_})
+    for (auto *p : {psoAoMain16_, psoAoLut_, psoAoUp_, psoAoHalfNd_, psoAoCacao_, psoAoMipAll_, psoAoCacao2_, psoAoCurve_, psoAoProbe_})
         if (p) p->Release();
     if (psoAoComp_) psoAoComp_->Release();
     if (psoUpscale16_) psoUpscale16_->Release();
@@ -243,6 +245,7 @@ bool DittoSR::createPipelines() {
         {g_cs_aocacao2, sizeof g_cs_aocacao2, &psoAoCacao2_, "ao CACAO blur (2 passes in one)"},
         {g_cs_aomipall, sizeof g_cs_aomipall, &psoAoMipAll_, "ao mips (one pass)"},
         {g_cs_aocurve, sizeof g_cs_aocurve, &psoAoCurve_, "ao curve table"},
+        {g_cs_aoprobe, sizeof g_cs_aoprobe, &psoAoProbe_, "ao GI probes"},
         {g_cs_aocompose, sizeof g_cs_aocompose, &psoAoComp_, "ao compose"},
     };
     for (auto &c : cs) {
@@ -334,8 +337,9 @@ bool DittoSR::makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f) {
 
 void DittoSR::releaseTextures(bool now) {
     for (Tex *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &change1_, &expo_[0], &expo_[1],
-                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoLut_, &aoHalf_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1], &aoNdP_, &aoNdHalfP_, &aoCurveLut_})
+                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoLut_, &aoHalf_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1], &aoNdP_, &aoNdHalfP_, &aoCurveLut_, &aoProbe_, &aoBlue_, &aoBlueUp_})
         retire(*t, now);
+    aoBlueMade_ = false;
     texValid_ = false, aoLutMade_ = false;
 }
 
@@ -724,6 +728,36 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             }
             ka.flags = (float)((uint32_t)ka.flags | (pack ? 4u : 0u) | (upc ? 8u : 0u) | (fuse && half && !hp ? 16u : 0u) |
                                  (s_.aoHistLen ? 32u : 0u) | (hp ? 131072u : 0u) | (cl8 ? 262144u : 0u));
+            // (the GI tests: guided samples (with the mips), screen probes (their texture, a quarter of the main pass' size
+            // each way - made when first on, at this size), blue noise (its mask uploaded once, on this command list))
+            UINT pw = ((half ? hw2 : rw) + 3) / 4, ph = ((half ? hh2 : rh) + 3) / 4;
+            if (aoProbe_.res && (aoProbe_.w != pw || aoProbe_.h != ph)) retire(aoProbe_, false);
+            bool probes = s_.aoGiProbes && (aoProbe_.res || makeTex(aoProbe_, pw, ph, DXGI_FORMAT_R16G16B16A16_FLOAT));
+            bool blue = s_.aoBlueNoise && (aoBlue_.res || makeTex(aoBlue_, 64, 64, DXGI_FORMAT_R8_UNORM));
+            if (blue && !aoBlueMade_) {
+                D3D12_HEAP_PROPERTIES uh = {D3D12_HEAP_TYPE_UPLOAD};
+                D3D12_RESOURCE_DESC bd = {};
+                bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, bd.Width = 256 * 64, bd.Height = 1, bd.DepthOrArraySize = 1;
+                bd.MipLevels = 1, bd.SampleDesc.Count = 1, bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+                uint8_t *mp = nullptr;
+                if (!aoBlueUp_.res && FAILED(dev_->CreateCommittedResource(&uh, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                                          IID_PPV_ARGS(&aoBlueUp_.res))))
+                    aoBlueUp_.res = nullptr;
+                if (aoBlueUp_.res && SUCCEEDED(aoBlueUp_.res->Map(0, nullptr, (void **)&mp))) {
+                    for (int y = 0; y < 64; y++) memcpy(mp + 256 * y, kBlueNoise64 + 64 * y, 64);  // (rows 256-byte aligned)
+                    aoBlueUp_.res->Unmap(0, nullptr);
+                    transition(cl, aoBlue_, D3D12_RESOURCE_STATE_COPY_DEST);
+                    D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
+                    dst.pResource = aoBlue_.res, dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                    src.pResource = aoBlueUp_.res, src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+                    src.PlacedFootprint.Footprint = {DXGI_FORMAT_R8_UNORM, 64, 64, 1, 256};
+                    cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+                    transition(cl, aoBlue_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                    aoBlueMade_ = true;
+                }
+                blue = aoBlueMade_;
+            }
+            ka.flags = (float)((uint32_t)ka.flags | (s_.aoGiGuided && mips ? 2097152u : 0u) | (probes ? 4194304u : 0u) | (blue ? 8388608u : 0u));
             // (the render-size normal and depth the passes read: the half size's with hp)
             Tex &ndF = hp ? aoNdHalf_ : aoNd_, &ndFP = hp ? aoNdHalfP_ : aoNdP_;
             Tex *H = half ? aoHh_ : aoH_, *HD = half ? aoHDh_ : aoHD_;
@@ -777,10 +811,18 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 DXGI_FORMAT f[kSrvs] = {ndF.fmt, cd.Format, mips ? aoMip_[0].fmt : X, mips ? aoMip_[1].fmt : X, mips ? aoMip_[2].fmt : X,
                                         mips ? aoMip_[3].fmt : X, lut ? aoLut_.fmt : X};
                 p7(s, f, ndFP);
-                ID3D12Resource *u[kUavs] = {tgt.res, fh && !pack ? aoNdHalf_.res : nullptr, fh && pack ? aoNdHalfP_.res : nullptr};
-                DXGI_FORMAT uf[kUavs] = {tgt.fmt, fh && !pack ? aoNdHalf_.fmt : X, fh && pack ? aoNdHalfP_.fmt : X};
+                if (blue) s[8] = aoBlue_.res, f[8] = aoBlue_.fmt;
+                if (probes) transition(cl, aoProbe_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                ID3D12Resource *u[kUavs] = {tgt.res, fh && !pack ? aoNdHalf_.res : nullptr, fh && pack ? aoNdHalfP_.res : nullptr,
+                                            probes ? aoProbe_.res : nullptr};
+                DXGI_FORMAT uf[kUavs] = {tgt.fmt, fh && !pack ? aoNdHalf_.fmt : X, fh && pack ? aoNdHalfP_.fmt : X, probes ? aoProbe_.fmt : X};
                 bool wg = s_.aoWg16;
                 runA(wg ? psoAoMain16_ : psoAoMain_, s, f, u, uf, tgt.w, tgt.h, wg ? 16 : 8);
+                if (probes) {  // (the probes: the main pass again, a thread a probe - axis 5)
+                    ka.axis = 5.0f;
+                    runA(psoAoMain_, s, f, u, uf, pw, ph, 8);
+                    ka.axis = 0.0f;
+                }
                 if (fh) transition(cl, pack ? aoNdHalfP_ : aoNdHalf_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             }
             mark(7);
@@ -799,6 +841,19 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             }
             mark(8);
             if (half) ka.rs[0] = (float)hw2, ka.rs[1] = (float)hh2, ka.rsRcp[0] = 1.0f / hw2, ka.rsRcp[1] = 1.0f / hh2;
+            if (probes) {  // (the probes' GI brought to every pixel of the main pass' result, in place)
+                transition(cl, aoProbe_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                transition(cl, r0, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                ID3D12Resource *s[kSrvs] = {nd.res, aoProbe_.res};
+                DXGI_FORMAT f[kSrvs] = {nd.fmt, aoProbe_.fmt};
+                p7(s, f, ndPm);
+                ID3D12Resource *u[kUavs] = {r0.res};
+                DXGI_FORMAT uf[kUavs] = {r0.fmt};
+                runA(psoAoProbe_, s, f, u, uf, r0.w, r0.h);
+                D3D12_RESOURCE_BARRIER pb = {};
+                pb.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV, pb.UAV.pResource = r0.res;
+                cl->ResourceBarrier(1, &pb);
+            }
             // (the spatial filter: FastGI's x into r1, y back; or CORTAO's sparse one, one pass into r1)
             bool sparse = s_.aoSparseFilter;
             for (int axis = 0; axis < (sparse ? 1 : 2); axis++) {
