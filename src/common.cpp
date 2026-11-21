@@ -148,15 +148,7 @@ static void load_config() {
     s.aoMipLds = GetPrivateProfileIntA("dittosr", "ao_mips_lds", s.aoMipLds, ini) != 0;
     s.aoFarCheap = GetPrivateProfileIntA("dittosr", "ao_far_cheap", s.aoFarCheap, ini) != 0;
     s.aoAlbedoStrength = ini_float(ini, "ao_albedo_strength", s.aoAlbedoStrength);
-    s.fxLights = ini_float(ini, "fx_emissive_lights", s.fxLights);
     s.fxLocalExp = ini_float(ini, "fx_local_exposure", s.fxLocalExp);
-    s.fxSkyAmb = ini_float(ini, "fx_sky_ambient", s.fxSkyAmb);
-    s.fxContact = ini_float(ini, "fx_contact_shadows", s.fxContact);
-    s.fxAerial = ini_float(ini, "fx_aerial", s.fxAerial);
-    s.fxGodRays = ini_float(ini, "fx_god_rays", s.fxGodRays);
-    s.fxReflect = ini_float(ini, "fx_reflections", s.fxReflect);
-    s.fxFoliage = ini_float(ini, "fx_foliage", s.fxFoliage);
-    s.fxShadowTint = ini_float(ini, "fx_shadow_tint", s.fxShadowTint);
     s.aoFadeMeters = ini_float(ini, "ao_fade_distance", s.aoFadeMeters);
     {  // (the curve: "x,y x,y ...", by x, 2 - 8 points in [0, 1]; else the line)
         char cb[256];
@@ -309,15 +301,7 @@ bool ditto_save_settings() {
     ok = put("ao_mips_lds", b(s.aoMipLds), b(d.aoMipLds), false) && ok;
     ok = put("ao_far_cheap", b(s.aoFarCheap), b(d.aoFarCheap), false) && ok;
     ok = put("ao_albedo_strength", s.aoAlbedoStrength, d.aoAlbedoStrength, false) && ok;
-    ok = put("fx_emissive_lights", s.fxLights, d.fxLights, false) && ok;
     ok = put("fx_local_exposure", s.fxLocalExp, d.fxLocalExp, false) && ok;
-    ok = put("fx_sky_ambient", s.fxSkyAmb, d.fxSkyAmb, false) && ok;
-    ok = put("fx_contact_shadows", s.fxContact, d.fxContact, false) && ok;
-    ok = put("fx_aerial", s.fxAerial, d.fxAerial, false) && ok;
-    ok = put("fx_god_rays", s.fxGodRays, d.fxGodRays, false) && ok;
-    ok = put("fx_reflections", s.fxReflect, d.fxReflect, false) && ok;
-    ok = put("fx_foliage", s.fxFoliage, d.fxFoliage, false) && ok;
-    ok = put("fx_shadow_tint", s.fxShadowTint, d.fxShadowTint, false) && ok;
     ok = put("ao_fade_distance", s.aoFadeMeters, d.aoFadeMeters, false) && ok;
     {
         char cb[256] = "";

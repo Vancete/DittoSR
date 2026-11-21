@@ -22,7 +22,7 @@ if not exist "%SPV%" set "SPV=%VULKAN_SDK%\Bin\dxc.exe"
 if not exist "%SPV%" (echo no dxc with SPIR-V: put the DirectXShaderCompiler release in tools\dxc\ or install the Vulkan SDK & exit /b 1)
 
 rem D3D12 (DXIL)
-for %%s in (convert motion upscale sharpen aoprep aomain aomip aofilter aotemporal aocompose aolut aoup aohalfnd aocacao aocurve aoprobe aoprobet aoprobef aoatrous aoscene fg_field fg_dilate fg_warp) do (
+for %%s in (convert motion upscale sharpen aoprep aomain aomip aofilter aotemporal aocompose aolut aoup aohalfnd aocacao aocurve aoprobe aoprobet aoprobef aoatrous aolocal fg_field fg_dilate fg_warp) do (
   %DXC% -nologo -T cs_6_0 -E main -O3 -Fh "%OUT%\gen\cs_%%s.h" -Vn g_cs_%%s "%ROOT%shaders\%%s.hlsl" || exit /b 1
 )
 rem Ditto Relight: its main pass in 16 x 16 groups (ao_workgroup16)

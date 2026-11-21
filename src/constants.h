@@ -94,7 +94,7 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
 struct AoConstants {
     float rs[2], rsRcp[2], tanX, tanY, zNear, zFar, inverted, frame, aoStrength, giStrength, radiusWorld, radiusScreen, rays,
         contact, giDark, sCurve;
-    uint32_t params1;  // (the lighting extras' strengths 0 - 3, 8 bits each; params2 4 - 7, the 9th in flags2's bits 24 - 31)
+    uint32_t params1;  // (the local exposure's strength, bits 0 - 7; params2 free)
     float temporal, spatial, axis, mvScale[2], mvSize[2], giCeiling, planeW, mips;
     uint32_t params2;
     float flags;
@@ -135,15 +135,9 @@ void ditto_fill_ao(AoConstants &ka, const DittoSettings &s, const Frame &fr, boo
         ka.curveN = (float)n;
     }
     // (flags2: HDR - the curve's pivot 30 % of the brightness: linear HDR 0.3 ^ 2.2, or [0, 1] colour -, the AO as a power;
-    // the lighting extras' strengths)
+    // the local exposure's strength in params1)
     ka.flags2 |= (fr.hdr || floatColour ? 2048u : 0u) | (s.aoPower ? 8192u : 0u);
-    {
-        const float fxs[9] = {s.fxLights, s.fxLocalExp, s.fxSkyAmb, s.fxContact, s.fxAerial, s.fxGodRays, s.fxReflect, s.fxFoliage, s.fxShadowTint};
-        uint32_t q[9];
-        for (int i = 0; i < 9; i++) q[i] = (uint32_t)((fxs[i] < 0.0f ? 0.0f : fxs[i] > 1.0f ? 1.0f : fxs[i]) * 255.0f + 0.5f);
-        ka.params1 = q[0] | (q[1] << 8) | (q[2] << 16) | (q[3] << 24), ka.params2 = q[4] | (q[5] << 8) | (q[6] << 16) | (q[7] << 24);
-        ka.flags2 |= q[8] << 24;
-    }
+    ka.params1 = (uint32_t)((s.fxLocalExp < 0.0f ? 0.0f : s.fxLocalExp > 1.0f ? 1.0f : s.fxLocalExp) * 255.0f + 0.5f), ka.params2 = 0;
     ka.radiusWorld = s.aoRadius, ka.radiusScreen = s.aoScreen > 0.01f ? s.aoScreen : 0.5f;
     ka.rays = s.aoRays < 4.0f ? 4.0f : s.aoRays > 32.0f ? 32.0f : floorf(s.aoRays + 0.5f);
     ka.contact = s.aoContact < 0.0f ? 0.0f : s.aoContact > 4.0f ? 4.0f : s.aoContact;

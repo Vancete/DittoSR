@@ -106,9 +106,8 @@ struct DittoSettings {
     // memory, aoFarCheap half the samples past twice the AO's fade distance
     bool aoGiBounce = false, aoSkyLight = false, aoGiSrcClamp = false, aoAlbedo2 = true, aoEdgeFill = true, aoProbeDir = false,
          aoAtrous = true, aoFp16 = true, aoGiInterleave = true, aoMipLds = false, aoFarCheap = true;
-    // ... the lighting extras (D3D12; 0 off - the menu's sliders; ao_extra.hlsli): emissive lights, local exposure, sky
-    // ambient, contact shadows, aerial perspective, god rays, reflections, foliage translucency, shadow tint
-    float fxLights = 0.0f, fxLocalExp = 0.0f, fxSkyAmb = 0.0f, fxContact = 0.0f, fxAerial = 0.0f, fxGodRays = 0.0f, fxReflect = 0.0f, fxFoliage = 0.0f, fxShadowTint = 0.0f;
+    // ... the local exposure (D3D12; 0 off - the menu's slider; aocompose.hlsl)
+    float fxLocalExp = 0.0f;
     float aoAlbedoStrength = 0.5f;  // (the better albedo's strength, 0 - 1: the old guess to the new - the menu's slider)
     float aoFadeMeters = 100.0f;
     // ... the curve (the menu's curves editor; ini curve = "x,y x,y ..."): curveN points (2 - 8) by x in [0, 1], each
@@ -288,7 +287,7 @@ private:
     ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoMain_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr, *psoAoMip_ = nullptr;
     ID3D12PipelineState *psoAoMain16_ = nullptr, *psoAoLut_ = nullptr, *psoAoUp_ = nullptr, *psoAoHalfNd_ = nullptr, *psoAoCacao_ = nullptr,
                          *psoAoMipAll_ = nullptr, *psoAoCacao2_ = nullptr, *psoAoCurve_ = nullptr, *psoAoProbe_ = nullptr, *psoAoProbeT_ = nullptr, *psoAoProbeF_ = nullptr,
-                         *psoAoAtrous_ = nullptr, *psoAoScene_ = nullptr, *psoAoMainH_ = nullptr, *psoAoMain16H_ = nullptr;  // (ao_fuse; the curve's table; the GI's probes)  // (... the 16 x 16 main pass, the table, the half size's upsample)  // (EXPERIMENTAL: Ditto Relight)
+                         *psoAoAtrous_ = nullptr, *psoAoLocal_ = nullptr, *psoAoMainH_ = nullptr, *psoAoMain16H_ = nullptr;  // (ao_fuse; the curve's table; the GI's probes)  // (... the 16 x 16 main pass, the table, the half size's upsample)  // (EXPERIMENTAL: Ditto Relight)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     // the game's output last checked (outputWritable): its format, whether it allows unordered access, and the verdict
@@ -315,7 +314,7 @@ private:
     Tex aoProbeDummy_;
     Tex aoColPrev_, aoProbeDir_, aoProbeDirH_[2], aoProbeDirF_;  // (the GI tests: the last relit colour, the probes' directions)
     bool aoColPrevOk_ = false;
-    Tex aoScene_;  // (the lighting extras' scene analysis, 64 x 1)  // (the GI's probes; the blue noise mask and its upload buffer - aoBlueMade_: copied)
+    Tex aoLocal_;  // (the area's luma - better albedo, local exposure: level 3's size)  // (the GI's probes; the blue noise mask and its upload buffer - aoBlueMade_: copied)
     bool aoBlueMade_ = false;
     Tex aoCurveLut_;  // (ao_curve_lut: the curve's table, 4096 x 1 - curveKey_: the curve it was built for)
     float curveKey_[26] = {};

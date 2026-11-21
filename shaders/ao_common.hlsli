@@ -20,7 +20,7 @@ cbuffer A : register(b0) {
     float contact;        // how much more the rays the nearest occluders block darken (0 - 4)
     float giDark;         // the bounce light x this where the pixel is dark (0 - 4; 1: the same everywhere)
     float sCurve;         // the curve on the lights - the luma above the pivot (0 - 1; 0 off)
-    uint params1;         // the lighting extras' strengths 0 - 3 (8 bits each, 0 - 255) - ao_extra.hlsli
+    uint params1;         // bits 0 - 7: the local exposure's strength (0 - 255; flags2 16384)
     float temporal;       // the history's weight (temporal smoothing, 0 - 0.95; 0: off, or no valid history)
     float spatial;        // the spatial filter's taps' spacing (1 - 2: x 2 pixels)
     float axis;           // ... its axis this pass (0 x, 1 y)
@@ -29,7 +29,7 @@ cbuffer A : register(b0) {
     float giCeiling;      // the bounce light added at most this x the pixel's colour, saturating (0 - 4; 0: no ceiling)
     float planeW;         // 1: CORTAO's filter weights (the depth against the centre's plane, pairs symmetric)
     float mips;           // 1: the main pass' far samples from the depth mips (aomip.hlsl)
-    uint params2;         // ... 4 - 7 (the 9th: flags2's bits 24 - 31)
+    uint params2;         // (free)
     float flags;          // bits: 1 CORTAO's backface boost (a backface occluder x its slope compensation), 2 decorrelated noise,
                           // 4 packed normal and depth, 8 the upsample in the composition, 16 the main pass writes the half
                           // size's normal and depth, 32 the history's weight by its length (D3D12); 256 AO on the ambient light
@@ -40,8 +40,8 @@ cbuffer A : register(b0) {
     uint flags2;          // bits: 1 the occluder lookup table (aolut.hlsl - 32 rays); GI tests: 2 multi-bounce, 4 sky light,
                           // 8 source clamp, 16 better albedo, 32 edge fill, 64 directional probes, 128 a-trous, 256 FP16,
                           // 512 interleaved GI, 1024 mips in groupshared memory, 4096 cheaper far pixels; bits 16 - 23
-                          // the better albedo's strength (0 - 255); 2048 HDR, 8192 the AO as a power, 16384 the lighting
-                          // extras (bits 24 - 31: the 9th's strength)
+                          // the better albedo's strength (0 - 255); 2048 HDR, 8192 the AO as a power, 16384 the local
+                          // exposure
     float cmips;          // 1: the GI's far occluders' colour from the colour mips (aocmip.hlsl)
     float samples;        // the main pass' samples a pixel (4 - 32)
     float halfRes;        // 1: the main pass at half size (the pixel at 2x, 2y of each 2 x 2) - aoup.hlsl back
