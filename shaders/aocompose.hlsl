@@ -59,7 +59,8 @@ void main(uint2 id : SV_DispatchThreadID) {
                 float w = exp(-dot(dd, dd) * 0.7) * (m.w > 0.0 ? saturate(1.0 - abs(m.w - nd.w) / (nd.w * 0.05 + 1e-3)) : 0.0);
                 la += min(dot(c3, Y), 4.0 * lp + 1e-3) * w, wa += w;
             }
-            if (wa > 1e-3) albedo = saturate(0.5 * col / max(la / wa, 1e-4));
+            // (its strength - flags2's bits 16 - 23: the old guess to this)
+            if (wa > 1e-3) albedo = lerp(albedo, saturate(0.5 * col / max(la / wa, 1e-4)), float((flags2 >> 16) & 255u) / 255.0);
         }
         float dark = 1.0 - smoothstep(0.0, 0.25, dot(col, float3(0.2126, 0.7152, 0.0722)));
         float3 b = giStrength * lerp(1.0, giDark, dark) * albedo * r.rgb;

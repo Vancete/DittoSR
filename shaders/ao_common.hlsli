@@ -39,7 +39,8 @@ cbuffer A : register(b0) {
                           // guided toward bright areas, 4194304 screen probes, 8388608 blue noise
     uint flags2;          // bits: 1 the occluder lookup table (aolut.hlsl - 32 rays); GI tests: 2 multi-bounce, 4 sky light,
                           // 8 source clamp, 16 better albedo, 32 edge fill, 64 directional probes, 128 a-trous, 256 FP16,
-                          // 512 interleaved GI, 1024 mips in groupshared memory, 4096 cheaper far pixels
+                          // 512 interleaved GI, 1024 mips in groupshared memory, 4096 cheaper far pixels; bits 16 - 23
+                          // the better albedo's strength (0 - 255)
     float cmips;          // 1: the GI's far occluders' colour from the colour mips (aocmip.hlsl)
     float samples;        // the main pass' samples a pixel (4 - 32)
     float halfRes;        // 1: the main pass at half size (the pixel at 2x, 2y of each 2 x 2) - aoup.hlsl back

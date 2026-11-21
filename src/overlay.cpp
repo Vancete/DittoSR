@@ -349,7 +349,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_QAMB, I_QCOS, I_QNRM, I_GWIDE, I_GLONG, I_FPACK, I_FUPC, I_FFUSE, I_FHIST, I_FHPREP, I_FCLUT, I_QCYC, I_QFALL, I_RFADE, I_QGUIDE, I_QPROBE, I_QBLUE, I_XBOUNCE, I_XSKY, I_XCLAMP, I_XALB, I_XEDGE, I_XPDIR, I_XATROUS, I_XFP16, I_XINTER, I_XLDS, I_XPROBE, I_XFAR, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_QAMB, I_QCOS, I_QNRM, I_GWIDE, I_GLONG, I_FPACK, I_FUPC, I_FFUSE, I_FHIST, I_FHPREP, I_FCLUT, I_QCYC, I_QFALL, I_RFADE, I_QGUIDE, I_QPROBE, I_QBLUE, I_XBOUNCE, I_XSKY, I_XCLAMP, I_XALB, I_XEDGE, I_XPDIR, I_XATROUS, I_XFP16, I_XINTER, I_XLDS, I_XPROBE, I_XFAR, I_RALB, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -381,6 +381,7 @@ struct Menu : Perf {  // (its Perf: a copy of g_perf, taken before each draw)
     int drag = -1;  // (the slider the mouse holds)
     bool relight = false;  // (Ditto Relight on: its sliders shown)
     bool sharpOff = false;  // (the sharpening off: its slider hidden)
+    bool albedo2 = false;  // (the better albedo on: its strength's slider shown)
     // the curves editor: its graph (gx0, gy0, gx1, gy1, in the rows' coordinates), the point selected, the point the
     // mouse holds (-1 none), the keyboard's editing, the last click (a double click resets), the UI's scale
     float cg[4] = {};
@@ -460,6 +461,7 @@ float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f 
 constexpr bool kCurvesEditor = true;
 
 bool visible(int i) {
+    if (i == I_RALB) return g_m.relight && g_m.albedo2;  // (the better albedo's strength: with it on)
     if (i == I_XALB || i == I_XPROBE) return g_m.relight;  // (Relight's better albedo and screen probes)
     if (i >= I_XBOUNCE && i <= I_XFAR) return false;  // (the other GI tests: ini keys)
     if (i >= I_QGUIDE && i <= I_QBLUE) return false;  // (Relight's GI tests: ini keys)
@@ -499,6 +501,7 @@ Range range_of(int i) {
     case I_RTEMPW: return {0.0f, 0.95f, 0.05f};
     case I_RSAMPLES: return {4.0f, 32.0f, 4.0f};
     case I_RFADE: return {0.0f, 300.0f, 10.0f};
+    case I_RALB: return {0.0f, 1.0f, 0.05f};
     default: return {0, 1, 1};
     }
 }
@@ -519,6 +522,7 @@ float *slider_of(DittoSettings &s, int i) {
     case I_RTEMPW: return &s.aoTemporalWeight;
     case I_RSAMPLES: return &s.aoSamples;
     case I_RFADE: return &s.aoFadeMeters;
+    case I_RALB: return &s.aoAlbedoStrength;
     default: return nullptr;
     }
 }
@@ -567,7 +571,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
     case I_SHARP: case I_WEIGHT: case I_RAO: case I_RGI: case I_RGIDARK: case I_RGICEIL: case I_RSCURVE: case I_RRAYS: case I_RRADIUS:
-    case I_RSCREEN: case I_RCONTACT: case I_RSPATIAL: case I_RTEMPW: case I_RSAMPLES: case I_RFADE: {
+    case I_RSCREEN: case I_RCONTACT: case I_RSPATIAL: case I_RTEMPW: case I_RSAMPLES: case I_RFADE: case I_RALB: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
         // (the frame weight: moved, it overrides FSR 3.1's settings' - OptiScaler's presets - from the weight in use;
@@ -869,6 +873,7 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         slider_row(I_RGI, "Global illumination", "the bounce light");
         slider_row(I_RSAMPLES, "Samples", "more: less noise, slower");
         toggle_row(I_XALB, "Better albedo", s.aoAlbedo2);
+        if (s.aoAlbedo2) slider_row(I_RALB, "Albedo strength", "the old guess to the new");
         toggle_row(I_XPROBE, "GI screen probes", s.aoGiProbes);
         slider_row(I_RFADE, "AO fade distance", "faded out to twice it");
     }
@@ -1098,10 +1103,10 @@ void make_panel(Ui &u, float W, float H, float scale, double t, bool focus) {
     take_perf();
     DittoSettings s = ditto_settings();
     bool changed = false;
-    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2;
+    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2, g_m.albedo2 = s.aoAlbedo2;
     if (g_m.open && focus) input(s, changed, t);
     if (changed) ditto_set_settings(s);
-    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2;
+    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2, g_m.albedo2 = s.aoAlbedo2;
     if (!visible(g_m.sel)) g_m.sel = I_RELIGHT;  // (its sliders hidden under the selection: Relight off, or Defaults)
     u.s = scale, u.alpha = ease(g_m.anim), u.dx = -(1.0f - ease(g_m.anim)) * 420.0f * scale;
     u.q.reserve(2048);

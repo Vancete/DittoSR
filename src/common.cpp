@@ -147,6 +147,7 @@ static void load_config() {
     s.aoGiInterleave = GetPrivateProfileIntA("dittosr", "ao_gi_interleave", s.aoGiInterleave, ini) != 0;
     s.aoMipLds = GetPrivateProfileIntA("dittosr", "ao_mips_lds", s.aoMipLds, ini) != 0;
     s.aoFarCheap = GetPrivateProfileIntA("dittosr", "ao_far_cheap", s.aoFarCheap, ini) != 0;
+    s.aoAlbedoStrength = ini_float(ini, "ao_albedo_strength", s.aoAlbedoStrength);
     s.aoFadeMeters = ini_float(ini, "ao_fade_distance", s.aoFadeMeters);
     {  // (the curve: "x,y x,y ...", by x, 2 - 8 points in [0, 1]; else the line)
         char cb[256];
@@ -298,6 +299,7 @@ bool ditto_save_settings() {
     ok = put("ao_gi_interleave", b(s.aoGiInterleave), b(d.aoGiInterleave), false) && ok;
     ok = put("ao_mips_lds", b(s.aoMipLds), b(d.aoMipLds), false) && ok;
     ok = put("ao_far_cheap", b(s.aoFarCheap), b(d.aoFarCheap), false) && ok;
+    ok = put("ao_albedo_strength", s.aoAlbedoStrength, d.aoAlbedoStrength, false) && ok;
     ok = put("ao_fade_distance", s.aoFadeMeters, d.aoFadeMeters, false) && ok;
     {
         char cb[256] = "";

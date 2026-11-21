@@ -106,6 +106,7 @@ struct DittoSettings {
     // memory, aoFarCheap half the samples past twice the AO's fade distance
     bool aoGiBounce = false, aoSkyLight = false, aoGiSrcClamp = false, aoAlbedo2 = false, aoEdgeFill = true, aoProbeDir = false,
          aoAtrous = true, aoFp16 = true, aoGiInterleave = true, aoMipLds = false, aoFarCheap = true;
+    float aoAlbedoStrength = 1.0f;  // (the better albedo's strength, 0 - 1: the old guess to the new - the menu's slider)
     float aoFadeMeters = 100.0f;
     // ... the curve (the menu's curves editor; ini curve = "x,y x,y ..."): curveN points (2 - 8) by x in [0, 1], each
     // channel through their natural cubic spline in a perceptual [0, 1] (aocompose.hlsl) - the line: none. By default

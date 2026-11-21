@@ -792,6 +792,10 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             ka.flags2 |= (useBounce ? 2u : 0u) | (s_.aoSkyLight && mips ? 4u : 0u) | (s_.aoGiSrcClamp ? 8u : 0u) | (s_.aoAlbedo2 && mips ? 16u : 0u) |
                          (s_.aoEdgeFill ? 32u : 0u) | (pdir ? 64u : 0u) | (s_.aoAtrous ? 128u : 0u) | (fp16m ? 256u : 0u) | (interleave ? 512u : 0u) |
                          (s_.aoMipLds && mips ? 1024u : 0u) | (s_.aoFarCheap ? 4096u : 0u);
+            {  // (the better albedo's strength in flags2's bits 16 - 23, 0 - 255)
+                float as = s_.aoAlbedoStrength < 0.0f ? 0.0f : s_.aoAlbedoStrength > 1.0f ? 1.0f : s_.aoAlbedoStrength;
+                ka.flags2 |= (uint32_t)(as * 255.0f + 0.5f) << 16;
+            }
             // (the GI's light source: the game's colour, or the last frame's relit one - more bounces)
             ID3D12Resource *gcolor = useBounce ? aoColPrev_.res : color;
             DXGI_FORMAT gcfmt = useBounce ? aoColPrev_.fmt : cd.Format;
