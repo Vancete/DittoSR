@@ -34,6 +34,7 @@
 #include "cs_aoprobet.h"
 #include "cs_aoprobef.h"
 #include "cs_aoatrous.h"
+#include "cs_aoscene.h"
 #include "cs_aomainh.h"
 #include "cs_aomain16h.h"
 #include "bluenoise64.h"
@@ -190,7 +191,7 @@ DittoSR::~DittoSR() {
     if (psoAoTemporal_) psoAoTemporal_->Release();
     if (psoAoFilter_) psoAoFilter_->Release();
     if (psoAoMip_) psoAoMip_->Release();
-    for (auto *p : {psoAoMain16_, psoAoLut_, psoAoUp_, psoAoHalfNd_, psoAoCacao_, psoAoMipAll_, psoAoCacao2_, psoAoCurve_, psoAoProbe_, psoAoProbeT_, psoAoProbeF_, psoAoAtrous_, psoAoMainH_, psoAoMain16H_})
+    for (auto *p : {psoAoMain16_, psoAoLut_, psoAoUp_, psoAoHalfNd_, psoAoCacao_, psoAoMipAll_, psoAoCacao2_, psoAoCurve_, psoAoProbe_, psoAoProbeT_, psoAoProbeF_, psoAoAtrous_, psoAoMainH_, psoAoMain16H_, psoAoScene_})
         if (p) p->Release();
     if (psoAoComp_) psoAoComp_->Release();
     if (psoUpscale16_) psoUpscale16_->Release();
@@ -254,6 +255,7 @@ bool DittoSR::createPipelines() {
         {g_cs_aoprobet, sizeof g_cs_aoprobet, &psoAoProbeT_, "ao GI probes' history"},
         {g_cs_aoprobef, sizeof g_cs_aoprobef, &psoAoProbeF_, "ao GI probes' filter"},
         {g_cs_aoatrous, sizeof g_cs_aoatrous, &psoAoAtrous_, "ao GI a-trous"},
+        {g_cs_aoscene, sizeof g_cs_aoscene, &psoAoScene_, "ao scene analysis"},
         {g_cs_aocompose, sizeof g_cs_aocompose, &psoAoComp_, "ao compose"},
     };
     for (auto &c : cs) {
@@ -353,7 +355,7 @@ bool DittoSR::makeTex(Tex &t, uint32_t w, uint32_t h, DXGI_FORMAT f) {
 
 void DittoSR::releaseTextures(bool now) {
     for (Tex *t : {&mda_[0], &mda_[1], &hist_[0], &hist_[1], &aux_[0], &aux_[1], &stab_[0], &stab_[1], &change1_, &expo_[0], &expo_[1],
-                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoLut_, &aoHalf_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1], &aoNdP_, &aoNdHalfP_, &aoCurveLut_, &aoProbe_, &aoBlue_, &aoBlueUp_, &aoProbeH_[0], &aoProbeH_[1], &aoProbeF_, &aoColPrev_, &aoProbeDir_, &aoProbeDirH_[0], &aoProbeDirH_[1], &aoProbeDirF_})
+                   &env_[0], &env_[1], &aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoLut_, &aoHalf_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1], &aoNdP_, &aoNdHalfP_, &aoCurveLut_, &aoProbe_, &aoBlue_, &aoBlueUp_, &aoProbeH_[0], &aoProbeH_[1], &aoProbeF_, &aoColPrev_, &aoProbeDir_, &aoProbeDirH_[0], &aoProbeDirH_[1], &aoProbeDirF_, &aoScene_})
         retire(*t, now);
     aoColPrevOk_ = false;
     aoBlueMade_ = false;
@@ -731,7 +733,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             bool cl8 = ka.curveN > 1.5f && s_.aoCurveLut && (aoCurveLut_.res || (curveKey_[24] = -1.0f, makeTex(aoCurveLut_, 4096, 1, DXGI_FORMAT_R32_FLOAT)));  // (new: built again)
             if (cl8) {
                 float key[26];
-                memcpy(key, ka.curveX, sizeof(float) * 24), key[24] = ka.curveN, key[25] = ka.pivot;
+                memcpy(key, ka.curveX, sizeof(float) * 24), key[24] = ka.curveN, key[25] = (float)(ka.flags2 & 2048u);
                 if (memcmp(key, curveKey_, sizeof key) != 0) {
                     transition(cl, aoCurveLut_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
                     ID3D12Resource *s[kSrvs] = {};
@@ -796,6 +798,10 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 float as = s_.aoAlbedoStrength < 0.0f ? 0.0f : s_.aoAlbedoStrength > 1.0f ? 1.0f : s_.aoAlbedoStrength;
                 ka.flags2 |= (uint32_t)(as * 255.0f + 0.5f) << 16;
             }
+            // (the lighting extras: any slider up, with the mips - the scene's analysis made when first on)
+            bool fx = mips && (ka.params1 || ka.params2 || (ka.flags2 >> 24)) &&
+                      (aoScene_.res || makeTex(aoScene_, 64, 1, DXGI_FORMAT_R32G32B32A32_FLOAT));
+            if (fx) ka.flags2 |= 16384u;
             // (the GI's light source: the game's colour, or the last frame's relit one - more bounces)
             ID3D12Resource *gcolor = useBounce ? aoColPrev_.res : color;
             DXGI_FORMAT gcfmt = useBounce ? aoColPrev_.fmt : cd.Format;
@@ -840,6 +846,15 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 DXGI_FORMAT uf[kUavs] = {dst.fmt};
                 runA(psoAoMip_, s, f, u, uf, dst.w, dst.h);
                 transition(cl, dst, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            }
+            if (fx) {  // (the lighting extras' scene analysis - one group, from the mips)
+                transition(cl, aoScene_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                ID3D12Resource *s[kSrvs] = {aoMip_[2].res, aoMip_[3].res};
+                DXGI_FORMAT f[kSrvs] = {aoMip_[2].fmt, aoMip_[3].fmt};
+                ID3D12Resource *u[kUavs] = {aoScene_.res};
+                DXGI_FORMAT uf[kUavs] = {aoScene_.fmt};
+                runA(psoAoScene_, s, f, u, uf, 1, 1, 1);
+                transition(cl, aoScene_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             }
             mark(6);
             {
@@ -1025,9 +1040,10 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             mark(12);
             transition(cl, aoCol_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             {
-                ID3D12Resource *s[kSrvs] = {ndF.res, color, aoOut->res, hp ? depth : nullptr, cl8 ? aoCurveLut_.res : nullptr,
+                ID3D12Resource *s[kSrvs] = {ndF.res, color, aoOut->res, hp || fx ? depth : nullptr, cl8 ? aoCurveLut_.res : nullptr,
                                             s_.aoAlbedo2 && mips ? aoMip_[2].res : nullptr};
-                DXGI_FORMAT f[kSrvs] = {ndF.fmt, cd.Format, aoOut->fmt, hp ? dd.Format : X, cl8 ? aoCurveLut_.fmt : X, s_.aoAlbedo2 && mips ? aoMip_[2].fmt : X};
+                DXGI_FORMAT f[kSrvs] = {ndF.fmt, cd.Format, aoOut->fmt, hp || fx ? dd.Format : X, cl8 ? aoCurveLut_.fmt : X, s_.aoAlbedo2 && mips ? aoMip_[2].fmt : X};
+                if (fx) s[5] = aoMip_[2].res, f[5] = aoMip_[2].fmt, s[6] = aoScene_.res, f[6] = aoScene_.fmt, s[9] = aoMip_[1].res, f[9] = aoMip_[1].fmt;
                 p7(s, f, ndFP);
                 ID3D12Resource *u[kUavs] = {aoCol_.res};
                 DXGI_FORMAT uf[kUavs] = {aoCol_.fmt};

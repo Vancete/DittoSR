@@ -349,7 +349,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_QAMB, I_QCOS, I_QNRM, I_GWIDE, I_GLONG, I_FPACK, I_FUPC, I_FFUSE, I_FHIST, I_FHPREP, I_FCLUT, I_QCYC, I_QFALL, I_RFADE, I_QGUIDE, I_QPROBE, I_QBLUE, I_XBOUNCE, I_XSKY, I_XCLAMP, I_XALB, I_XEDGE, I_XPDIR, I_XATROUS, I_XFP16, I_XINTER, I_XLDS, I_XPROBE, I_XFAR, I_RALB, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RSCURVE, I_RRAYS, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_RTEMPW, I_TPLANE, I_TSPARSE, I_TMIPS, I_TREACH, I_TPOW, I_TBACK, I_TLUT, I_TWG, I_TCMIP, I_RSAMPLES, I_THALF, I_TDECOR, I_TCACAO, I_QAMB, I_QCOS, I_QNRM, I_GWIDE, I_GLONG, I_FPACK, I_FUPC, I_FFUSE, I_FHIST, I_FHPREP, I_FCLUT, I_QCYC, I_QFALL, I_RFADE, I_QGUIDE, I_QPROBE, I_QBLUE, I_XBOUNCE, I_XSKY, I_XCLAMP, I_XALB, I_XEDGE, I_XPDIR, I_XATROUS, I_XFP16, I_XINTER, I_XLDS, I_XPROBE, I_XFAR, I_RALB, I_FX0, I_FX1, I_FX2, I_FX3, I_FX4, I_FX5, I_FX6, I_FX7, I_FX8, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -461,6 +461,7 @@ float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f 
 constexpr bool kCurvesEditor = true;
 
 bool visible(int i) {
+    if (i >= I_FX0 && i <= I_FX8) return g_m.relight;  // (the lighting extras)
     if (i == I_RALB) return g_m.relight && g_m.albedo2;  // (the better albedo's strength: with it on)
     if (i >= I_XBOUNCE && i <= I_XFAR) return false;  // (the other GI tests: ini keys)
     if (i >= I_QGUIDE && i <= I_QBLUE) return false;  // (Relight's GI tests: ini keys)
@@ -501,6 +502,15 @@ Range range_of(int i) {
     case I_RSAMPLES: return {4.0f, 32.0f, 4.0f};
     case I_RFADE: return {0.0f, 300.0f, 10.0f};
     case I_RALB: return {0.0f, 1.0f, 0.05f};
+    case I_FX0: return {0.0f, 1.0f, 0.05f};
+    case I_FX1: return {0.0f, 1.0f, 0.05f};
+    case I_FX2: return {0.0f, 1.0f, 0.05f};
+    case I_FX3: return {0.0f, 1.0f, 0.05f};
+    case I_FX4: return {0.0f, 1.0f, 0.05f};
+    case I_FX5: return {0.0f, 1.0f, 0.05f};
+    case I_FX6: return {0.0f, 1.0f, 0.05f};
+    case I_FX7: return {0.0f, 1.0f, 0.05f};
+    case I_FX8: return {0.0f, 1.0f, 0.05f};
     default: return {0, 1, 1};
     }
 }
@@ -522,6 +532,15 @@ float *slider_of(DittoSettings &s, int i) {
     case I_RSAMPLES: return &s.aoSamples;
     case I_RFADE: return &s.aoFadeMeters;
     case I_RALB: return &s.aoAlbedoStrength;
+    case I_FX0: return &s.fxLights;
+    case I_FX1: return &s.fxLocalExp;
+    case I_FX2: return &s.fxSkyAmb;
+    case I_FX3: return &s.fxContact;
+    case I_FX4: return &s.fxAerial;
+    case I_FX5: return &s.fxGodRays;
+    case I_FX6: return &s.fxReflect;
+    case I_FX7: return &s.fxFoliage;
+    case I_FX8: return &s.fxShadowTint;
     default: return nullptr;
     }
 }
@@ -570,7 +589,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
     case I_SHARP: case I_WEIGHT: case I_RAO: case I_RGI: case I_RGIDARK: case I_RGICEIL: case I_RSCURVE: case I_RRAYS: case I_RRADIUS:
-    case I_RSCREEN: case I_RCONTACT: case I_RSPATIAL: case I_RTEMPW: case I_RSAMPLES: case I_RFADE: case I_RALB: {
+    case I_RSCREEN: case I_RCONTACT: case I_RSPATIAL: case I_RTEMPW: case I_RSAMPLES: case I_RFADE: case I_RALB: case I_FX0: case I_FX1: case I_FX2: case I_FX3: case I_FX4: case I_FX5: case I_FX6: case I_FX7: case I_FX8: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
         // (the frame weight: moved, it overrides FSR 3.1's settings' - OptiScaler's presets - from the weight in use;
@@ -872,6 +891,15 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         slider_row(I_RGI, "Global illumination", "the bounce light");
         slider_row(I_RSAMPLES, "Samples", "more: less noise, slower");
         if (s.aoAlbedo2) slider_row(I_RALB, "Albedo strength", "the old guess to the new");
+        slider_row(I_FX0, "Emissive lights", "neons, screens: their spill");
+        slider_row(I_FX1, "Local exposure", "shade lifted, glare tamed");
+        slider_row(I_FX2, "Sky ambient", "the sky's tint in shade");
+        slider_row(I_FX3, "Contact shadows", "toward the main light");
+        slider_row(I_FX4, "Aerial perspective", "distance haze");
+        slider_row(I_FX5, "God rays", "the sun's shafts");
+        slider_row(I_FX6, "Reflections", "on faces pointing up");
+        slider_row(I_FX7, "Foliage translucency", "leaves lit from behind");
+        slider_row(I_FX8, "Shadow tint", "the light's complementary");
         slider_row(I_RFADE, "AO fade distance", "faded out to twice it");
     }
     if (s.relight && kCurvesEditor) {

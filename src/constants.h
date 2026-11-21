@@ -93,7 +93,11 @@ void ditto_fill_constants(DittoConstants &k, const DittoSettings &s, const Frame
 // game's colour a float format (HDR read). temporal (the history valid) and axis (the filter's pass) set by the driver.
 struct AoConstants {
     float rs[2], rsRcp[2], tanX, tanY, zNear, zFar, inverted, frame, aoStrength, giStrength, radiusWorld, radiusScreen, rays,
-        contact, giDark, sCurve, pivot, temporal, spatial, axis, mvScale[2], mvSize[2], giCeiling, planeW, mips, aoPow, flags;
+        contact, giDark, sCurve;
+    uint32_t params1;  // (the lighting extras' strengths 0 - 3, 8 bits each; params2 4 - 7, the 9th in flags2's bits 24 - 31)
+    float temporal, spatial, axis, mvScale[2], mvSize[2], giCeiling, planeW, mips;
+    uint32_t params2;
+    float flags;
     uint32_t flags2;  // (bits: 1 the lookup table; the GI tests - ao_common.hlsli)
     float cmips, samples, halfRes, fadeZ;
     float curveX[8], curveY[8], curveY2[8], curveN;  // (the curve: its points, the spline's second derivatives; 0: none)
@@ -116,7 +120,6 @@ void ditto_fill_ao(AoConstants &ka, const DittoSettings &s, const Frame &fr, boo
     ka.sCurve = s.sCurve < 0.0f ? 0.0f : s.sCurve > 1.0f ? 1.0f : s.sCurve;
     ka.giCeiling = s.giCeiling < 0.0f ? 0.0f : s.giCeiling > 4.0f ? 4.0f : s.giCeiling;
     ka.planeW = s.aoPlaneFilter ? 1.0f : 0.0f, ka.mips = s.aoMips ? 1.0f : 0.0f;
-    ka.aoPow = s.aoPower ? 1.0f : 0.0f;
     // (flags: 1 backface boost, 2 decorrelated noise)
     ka.flags = (float)((s.aoBackBoost ? 1 : 0) | (s.aoDecorrelate ? 2 : 0) | (s.aoAmbientOnly ? 256 : 0) | (s.aoEmitterCos ? 512 : 0) |
                        (s.aoBetterNormals ? 2048 : 0) | (s.aoGiWide ? 16384 : 0) | (s.aoGiLong ? 32768 : 0) |
@@ -131,7 +134,16 @@ void ditto_fill_ao(AoConstants &ka, const DittoSettings &s, const Frame &fr, boo
         ditto_curve_y2(n, ka.curveX, ka.curveY, ka.curveY2);
         ka.curveN = (float)n;
     }
-    ka.pivot = fr.hdr || floatColour ? 0.071f : 0.3f;  // (30 % of the brightness: linear HDR 0.3 ^ 2.2, or [0, 1] colour)
+    // (flags2: HDR - the curve's pivot 30 % of the brightness: linear HDR 0.3 ^ 2.2, or [0, 1] colour -, the AO as a power;
+    // the lighting extras' strengths)
+    ka.flags2 |= (fr.hdr || floatColour ? 2048u : 0u) | (s.aoPower ? 8192u : 0u);
+    {
+        const float fxs[9] = {s.fxLights, s.fxLocalExp, s.fxSkyAmb, s.fxContact, s.fxAerial, s.fxGodRays, s.fxReflect, s.fxFoliage, s.fxShadowTint};
+        uint32_t q[9];
+        for (int i = 0; i < 9; i++) q[i] = (uint32_t)((fxs[i] < 0.0f ? 0.0f : fxs[i] > 1.0f ? 1.0f : fxs[i]) * 255.0f + 0.5f);
+        ka.params1 = q[0] | (q[1] << 8) | (q[2] << 16) | (q[3] << 24), ka.params2 = q[4] | (q[5] << 8) | (q[6] << 16) | (q[7] << 24);
+        ka.flags2 |= q[8] << 24;
+    }
     ka.radiusWorld = s.aoRadius, ka.radiusScreen = s.aoScreen > 0.01f ? s.aoScreen : 0.5f;
     ka.rays = s.aoRays < 4.0f ? 4.0f : s.aoRays > 32.0f ? 32.0f : floorf(s.aoRays + 0.5f);
     ka.contact = s.aoContact < 0.0f ? 0.0f : s.aoContact > 4.0f ? 4.0f : s.aoContact;

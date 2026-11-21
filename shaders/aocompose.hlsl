@@ -24,6 +24,11 @@ Texture2D<float4> Res : register(t2);
 Texture2D<float> GDepth : register(t3);    // (the game's depth: flags 131072)
 Texture2D<float> CurveLut : register(t4);  // (the curve's table: flags 262144)
 Texture2D<uint4> Mip3c : register(t5);    // (better albedo, flags2 16: the mips' level 3)
+#if !DITTO_VK
+Texture2D<float4> Scene : register(t6);   // (the lighting extras, flags2 16384: aoscene.hlsl's analysis)
+Texture2D<uint4> Mip2x : register(t9);    // (... the mips' level 2)
+#include "ao_extra.hlsli"
+#endif
 AOFMT("rgba16f") RWTexture2D<float4> Out : register(u0);
 
 #include "ao_up.hlsli"
@@ -84,6 +89,9 @@ void main(uint2 id : SV_DispatchThreadID) {
         }
         if (fadeZ > 0.0) occ3 = lerp(occ3, 1.0, saturate((nd.w - fadeZ) / fadeZ));  // (the AO faded from fadeZ to twice it)
         o = col * occ3 + b;
+#if !DITTO_VK
+        if (flag2On(16384u)) o = lightingExtras(o, col, albedo, nd, p);  // (the lighting extras - ao_extra.hlsli)
+#endif
         if (sCurve > 0.0) {
             float l = dot(o, float3(0.2126, 0.7152, 0.0722));
             if (l > pivot) {
