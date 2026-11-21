@@ -1,7 +1,8 @@
-// Ditto Relight (experimental), the GI's a-trous filter (flags2 128, ao_gi_atrous; D3D12): after the temporal smoothing,
-// on the GI alone (the AO as it is) - a 3 x 3 at a spacing of axis pixels (1, then 2), each tap x 0.25 / 0.5 / 1 by its
-// place x geoWeight (its depth and normal) x its luma's closeness to this pixel's (edge-stopping: e^(-|dl| / (0.25 x l +
-// 0.02)) - the GI's own edges kept).
+// Ditto Relight (experimental), the a-trous filter (D3D12): after the temporal smoothing - a 3 x 3 at a spacing of axis
+// pixels (1, then 2), each tap x 0.25 / 0.5 / 1 by its place x geoWeight (its depth and normal); the GI's also x its
+// luma's closeness to this pixel's (edge-stopping: e^(-|dl| / (0.25 x l + 0.02)) - the GI's own edges kept).
+//   flags2 128 (ao_gi_atrous): the GI alone, after it CACAO's blur on both; flags2 2 (ao_unified_filter): the AO too, a third pass at
+// spacing 4 - one filter for both in place of the two.
 // t0 = the normal and depth at the main pass' size (t7 packed), t1 = the GI and AO; u0 = filtered.
 #include "ao_common.hlsli"
 
@@ -20,14 +21,15 @@ void main(uint2 id : SV_DispatchThreadID) {
     int st = max(int(axis + 0.5), 1);
     int2 m = int2(rs) - 1;
     float3 acc = 0.0;
-    float ws = 0.0;
+    float ws = 0.0, ao = 0.0, wo = 0.0;
     [unroll] for (int j = 0; j < 9; j++) {
         int2 o = int2(j % 3 - 1, j / 3 - 1), q = clamp(int2(id) + o * st, int2(0, 0), m);
         float4 qn = LOAD_ND(Nd, q);
         float4 v = Res.Load(int3(q, 0));
-        float w = (o.x == 0 ? 1.0 : 0.5) * (o.y == 0 ? 1.0 : 0.5) * (j == 4 ? 1.0 : geoWeight(nd.w, qn.w, nd.xyz, qn.xyz)) *
-                  exp(-abs(dot(v.rgb, Y) - lc) / sg);
+        float wg = (o.x == 0 ? 1.0 : 0.5) * (o.y == 0 ? 1.0 : 0.5) * (j == 4 ? 1.0 : geoWeight(nd.w, qn.w, nd.xyz, qn.xyz));
+        float w = wg * exp(-abs(dot(v.rgb, Y) - lc) / sg);
         acc += v.rgb * w, ws += w;
+        ao += v.a * wg, wo += wg;
     }
-    Out[id] = float4(acc / max(ws, 1e-6), c.a);
+    Out[id] = float4(acc / max(ws, 1e-6), flag2On(2u) ? ao / max(wo, 1e-6) : c.a);
 }

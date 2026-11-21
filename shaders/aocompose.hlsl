@@ -35,7 +35,7 @@ void main(uint2 id : SV_DispatchThreadID) {
     float4 nd = ndAt(GDepth, p);
     float3 o = c.rgb;
     if (nd.w > 0.0) {
-        float4 r = flagOn(8u) ? upHalf(Res, p, nd) : Res.Load(int3(p, 0));  // (flags 8: t2 the half size's - upsampled here)
+        float4 r = flagOn(8u) ? upHalfGuided(Res, Color, p, nd) : Res.Load(int3(p, 0));  // (flags 8: t2 the half size's - upsampled here)
         float3 col = max(c.rgb, 0.0);
         float mx = max(col.r, max(col.g, col.b));
         float3 albedo = lerp((float3)0.5, 0.6 * col / max(mx, 1e-4), saturate(mx * 8.0));
@@ -63,9 +63,12 @@ void main(uint2 id : SV_DispatchThreadID) {
             }
             la = wa > 1e-3 ? la / wa : lp;
             le /= we;
-            // (better albedo: the colour over its area's luma - the lighting there, retinex's way - x 0.5, a mid grey's
-            // albedo where the pixel is as lit as its area; its strength - flags2's bits 16 - 23: the old guess to this)
-            if (flag2On(16u)) albedo = lerp(albedo, saturate(0.5 * col / max(la, 1e-4)), float((flags2 >> 16) & 255u) / 255.0);
+            // (better albedo: the colour over the lighting there, retinex's way, x 0.5 - a mid grey's albedo where the pixel is
+            // as lit as its area. The lighting: the geometric mean of the pixel's luma and its area's - normalized: a pixel in
+            // shade (darker than its area) no longer taken for a dark material, its bounce no longer halved; its strength -
+            // flags2's bits 16 - 23: the old guess to this)
+            if (flag2On(16u))
+                albedo = lerp(albedo, saturate(0.5 * col / max(sqrt(max(lp, 1e-6) * la), 1e-4)), float((flags2 >> 16) & 255u) / 255.0);
         }
 #endif
         float dark = 1.0 - smoothstep(0.0, 0.25, dot(col, float3(0.2126, 0.7152, 0.0722)));

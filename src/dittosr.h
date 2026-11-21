@@ -63,6 +63,9 @@ struct DittoSettings {
     // ... FidelityFX CACAO's edge-sensitive blur after the temporal smoothing (aocacao.hlsl; D3D12): on the accumulated AO
     // and GI at the main pass' size, the history left as it is - aoCacaoPasses of it (1 - 8; CACAO's default 2) - a test
     bool aoCacao = true;
+    // ... (D3D12) the unified filter: the a-trous filter on the AO and the GI together after the temporal smoothing, in place
+    // of the GI's a-trous and CACAO (the menu's toggle)
+    bool aoUnified = true;
     int aoCacaoPasses = 2;
     // ... (D3D12, on by default - ini keys) aoPackNd the normal and depth packed (8 bytes a texel in place of 16: the
     // octahedral normal, the depth); aoUpCompose the half size's upsample in the composition (FastGI's: no render-size
@@ -92,8 +95,8 @@ struct DittoSettings {
     // screen probes and their directional variant)
     bool aoBlueNoise = true;
     // ... (D3D12; on by default) aoAlbedo2 the albedo by the colour over its area's luma, aoEdgeFill the GI made up for
-    // the samples off the screen, aoAtrous an a-trous filter on the GI (luma edge-stopping; the menu's toggle), aoFp16 the
-    // main pass in 16 bits, aoGiInterleave the GI on half the pixels a frame (the rest the last result's), aoFarCheap half
+    // the samples off the screen, aoAtrous an a-trous filter on the GI (luma edge-stopping; the menu's toggle), 
+    // aoGiInterleave the GI on half the pixels a frame (the rest the last result's), aoFarCheap half
     // the samples past twice the AO's fade distance. (Tried and removed: multi-bounce, sky light, a source clamp, the mips
     // in groupshared memory)
     bool aoAlbedo2 = true, aoEdgeFill = true, aoAtrous = true, aoGiInterleave = true, aoFarCheap = true;

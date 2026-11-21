@@ -755,7 +755,8 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             // (interleaved GI (a valid history), the 16-bit main pass (its variants made))
             bool interleave = s_.aoGiInterleave && aoT && aoValid;
             bool fp16m = psoAoMain16H_ != nullptr;  // (FP16 where the GPU has it)
-            ka.flags2 |= (s_.aoAlbedo2 && mips ? 16u : 0u) | (s_.aoEdgeFill ? 32u : 0u) | (s_.aoAtrous ? 128u : 0u) | (fp16m ? 256u : 0u) |
+            bool uni = s_.aoUnified, atr = uni || s_.aoAtrous;  // (the unified filter: the a-trous one on both, no CACAO)
+            ka.flags2 |= (uni ? 2u : 0u) | (s_.aoAlbedo2 && mips ? 16u : 0u) | (s_.aoEdgeFill ? 32u : 0u) | (atr ? 128u : 0u) | (fp16m ? 256u : 0u) |
                          (interleave ? 512u : 0u) | (s_.aoFarCheap ? 4096u : 0u);
             {  // (the better albedo's strength in flags2's bits 16 - 23, 0 - 255)
                 float as = s_.aoAlbedoStrength < 0.0f ? 0.0f : s_.aoAlbedoStrength > 1.0f ? 1.0f : s_.aoAlbedoStrength;
@@ -862,8 +863,8 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             } else {
                 aoOk_ = false;
             }
-            if (s_.aoAtrous) {  // (the GI's a-trous filter: 2 passes, spacing 1 then 2 - r0 and r1 ping-ponged, the history kept)
-                for (int st = 1; st <= 2; st *= 2) {
+            if (atr) {  // (the a-trous filter (the GI's; with uni the AO's too): 2 passes, spacing 1 then 2 (uni: 3, then 4) - r0 and r1 ping-ponged, the history kept)
+                for (int st = 1; st <= (uni ? 4 : 2); st *= 2) {  // (unified: a third at 4 - CACAO's 2 passes' reach)
                     Tex &dst = aoOut == &r1 ? r0 : r1;
                     transition(cl, *aoOut, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                     transition(cl, dst, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -880,7 +881,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 transition(cl, *aoOut, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             }
             mark(10);
-            if (s_.aoCacao) {  // (CACAO's blur on the accumulated AO and GI - the history left as it is: r0 and r1 ping-ponged)
+            if (s_.aoCacao && !uni) {  // (CACAO's blur on the accumulated AO and GI - the history left as it is: r0 and r1 ping-ponged)
                 int cp = s_.aoCacaoPasses < 1 ? 1 : s_.aoCacaoPasses > 8 ? 8 : s_.aoCacaoPasses;
                 bool two = cp == 2;  // (the 2 passes in one dispatch)
                 Tex *src = aoOut;
