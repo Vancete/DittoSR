@@ -28,6 +28,7 @@
 #include "cs_aocurve.h"
 #include "cs_aoatrous.h"
 #include "cs_aolocal.h"
+#include "cs_aorestir.h"
 #include "cs_aomain16h.h"
 #include "bluenoise64.h"
 #include "cs_aocompose.h"
@@ -181,7 +182,7 @@ DittoSR::~DittoSR() {
     if (psoAoPrep_) psoAoPrep_->Release();
     if (psoAoTemporal_) psoAoTemporal_->Release();
     if (psoAoFilter_) psoAoFilter_->Release();
-    for (auto *p : {psoAoMain16_, psoAoLut_, psoAoCacao_, psoAoMipAll_, psoAoCacao2_, psoAoCurve_, psoAoAtrous_, psoAoMain16H_, psoAoLocal_})
+    for (auto *p : {psoAoMain16_, psoAoLut_, psoAoCacao_, psoAoMipAll_, psoAoCacao2_, psoAoCurve_, psoAoAtrous_, psoAoMain16H_, psoAoLocal_, psoAoRestir_})
         if (p) p->Release();
     if (psoAoComp_) psoAoComp_->Release();
     if (psoUpscale16_) psoUpscale16_->Release();
@@ -239,6 +240,7 @@ bool DittoSR::createPipelines() {
         {g_cs_aocurve, sizeof g_cs_aocurve, &psoAoCurve_, "ao curve table"},
         {g_cs_aoatrous, sizeof g_cs_aoatrous, &psoAoAtrous_, "ao GI a-trous"},
         {g_cs_aolocal, sizeof g_cs_aolocal, &psoAoLocal_, "ao area luma"},
+        {g_cs_aorestir, sizeof g_cs_aorestir, &psoAoRestir_, "ao ReSTIR GI"},
         {g_cs_aocompose, sizeof g_cs_aocompose, &psoAoComp_, "ao compose"},
     };
     for (auto &c : cs) {
@@ -645,7 +647,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     if (s_.relight && depth && !s_.debugView) {
         bool made = aoNd_.res && aoNd_.w == rw && aoNd_.h == rh;
         if (!made) {
-            for (Tex *t : {&aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoHalf_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1], &aoNdP_, &aoNdHalfP_, &aoLocal_})
+            for (Tex *t : {&aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoHalf_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1], &aoNdP_, &aoNdHalfP_, &aoLocal_, &aoRsA_, &aoRsB_, &aoRsTA_[0], &aoRsTA_[1], &aoRsTB_[0], &aoRsTB_[1]})
                 retire(*t, false);
             made = makeTex(aoNd_, rw, rh, DXGI_FORMAT_R32G32B32A32_FLOAT) && makeTex(aoRes_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
                    makeTex(aoF_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) && makeTex(aoCol_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT);
@@ -756,6 +758,16 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             bool interleave = s_.aoGiInterleave && aoT && aoValid;
             bool fp16m = psoAoMain16H_ != nullptr;  // (FP16 where the GPU has it)
             bool uni = s_.aoUnified, atr = uni || s_.aoAtrous;  // (the unified filter: the a-trous one on both, no CACAO)
+            // (ReSTIR's reservoirs at the main pass' size: made when first on, again when that size changes; reflections with
+            // the mips)
+            UINT mw = half ? hw2 : rw, mh = half ? hh2 : rh;
+            if (aoRsA_.res && (aoRsA_.w != mw || aoRsA_.h != mh))
+                for (Tex *t : {&aoRsA_, &aoRsB_, &aoRsTA_[0], &aoRsTA_[1], &aoRsTB_[0], &aoRsTB_[1]}) retire(*t, false);
+            bool rst = s_.aoRestir && psoAoRestir_;
+            for (Tex *t : {&aoRsA_, &aoRsTA_[0], &aoRsTA_[1]}) if (rst && !t->res) rst = makeTex(*t, mw, mh, DXGI_FORMAT_R32G32B32A32_FLOAT);
+            for (Tex *t : {&aoRsB_, &aoRsTB_[0], &aoRsTB_[1]}) if (rst && !t->res) rst = makeTex(*t, mw, mh, F16);
+            bool refl = s_.aoReflect && mips;
+            ka.flags2 |= (rst ? 8u : 0u) | (refl ? 64u : 0u);
             ka.flags2 |= (uni ? 2u : 0u) | (s_.aoEdgeFill ? 32u : 0u) | (atr ? 128u : 0u) | (fp16m ? 256u : 0u) |
                          (interleave ? 512u : 0u) | (s_.aoFarCheap ? 4096u : 0u);
             // (the area's luma - the local exposure (its slider up): with the mips, made when first needed)
@@ -817,6 +829,10 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 if (interleave) transition(cl, prevH, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE), s[9] = prevH.res, f[9] = prevH.fmt;
                 ID3D12Resource *u[kUavs] = {tgt.res, fh && !pack ? aoNdHalf_.res : nullptr, fh && pack ? aoNdHalfP_.res : nullptr};
                 DXGI_FORMAT uf[kUavs] = {tgt.fmt, fh && !pack ? aoNdHalf_.fmt : X, fh && pack ? aoNdHalfP_.fmt : X};
+                if (rst) {  // (ReSTIR: this frame's reservoirs, u3 and u4)
+                    transition(cl, aoRsA_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS), transition(cl, aoRsB_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                    u[3] = aoRsA_.res, uf[3] = aoRsA_.fmt, u[4] = aoRsB_.res, uf[4] = aoRsB_.fmt;
+                }
                 runA(fp16m ? psoAoMain16H_ : psoAoMain16_, s, f, u, uf, tgt.w, tgt.h, 16);
                 if (fh) transition(cl, pack ? aoNdHalfP_ : aoNdHalf_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             }
@@ -825,18 +841,52 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             Tex &nd = half ? aoNdHalf_ : aoNd_, &r0 = half ? aoHalf_ : aoRes_, &r1 = half ? aoHalfF_ : aoF_;
             mark(8);
             if (half) ka.rs[0] = (float)hw2, ka.rs[1] = (float)hh2, ka.rsRcp[0] = 1.0f / hw2, ka.rsRcp[1] = 1.0f / hh2;
-            {  // (the spatial filter: CORTAO's sparse one, r0 into r1)
+            if (rst) {  // (ReSTIR GI: the reservoirs reused over the frames (the next frame's history), then 4 neighbours - r0 into r1)
+                Tex &ta = aoRsTA_[aoRsCur_], &tb = aoRsTB_[aoRsCur_], &pa = aoRsTA_[aoRsCur_ ^ 1], &pb = aoRsTB_[aoRsCur_ ^ 1];
+                Tex *pd = aoT ? &HD[aoCur_ ^ 1] : nullptr;
+                for (Tex *t : {&aoRsA_, &aoRsB_, &pa, &pb}) transition(cl, *t, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                if (pd && pd->res) transition(cl, *pd, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                transition(cl, ta, D3D12_RESOURCE_STATE_UNORDERED_ACCESS), transition(cl, tb, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                bool pv = pd && pd->res && aoValid;
+                float tsave = ka.temporal;
+                ka.temporal = pv ? 1.0f : 0.0f, ka.axis = 0.0f;
+                {
+                    ID3D12Resource *s[kSrvs] = {nd.res, aoRsA_.res, aoRsB_.res, pa.res, pb.res, mv, pv ? pd->res : nullptr};
+                    DXGI_FORMAT f[kSrvs] = {nd.fmt, aoRsA_.fmt, aoRsB_.fmt, pa.fmt, pb.fmt, md.Format, pv ? pd->fmt : X};
+                    p7(s, f, ndPm);
+                    ID3D12Resource *u[kUavs] = {ta.res, tb.res};
+                    DXGI_FORMAT uf[kUavs] = {ta.fmt, tb.fmt};
+                    runA(psoAoRestir_, s, f, u, uf, ta.w, ta.h);
+                }
+                ka.temporal = tsave;
+                transition(cl, ta, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE), transition(cl, tb, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 transition(cl, r0, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 transition(cl, r1, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                ID3D12Resource *s[kSrvs] = {nd.res, r0.res};
-                DXGI_FORMAT f[kSrvs] = {nd.fmt, r0.fmt};
+                ka.axis = 1.0f;
+                {
+                    ID3D12Resource *s[kSrvs] = {nd.res, ta.res, tb.res, r0.res};
+                    DXGI_FORMAT f[kSrvs] = {nd.fmt, ta.fmt, tb.fmt, r0.fmt};
+                    p7(s, f, ndPm);
+                    ID3D12Resource *u[kUavs] = {r1.res};
+                    DXGI_FORMAT uf[kUavs] = {r1.fmt};
+                    runA(psoAoRestir_, s, f, u, uf, r1.w, r1.h);
+                }
+                ka.axis = 0.0f;
+                aoRsCur_ ^= 1;
+            }
+            Tex &fsrc = rst ? r1 : r0, &fdst = rst ? r0 : r1;
+            {  // (the spatial filter: CORTAO's sparse one, r0 into r1 - after ReSTIR, r1 into r0)
+                transition(cl, fsrc, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                transition(cl, fdst, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                ID3D12Resource *s[kSrvs] = {nd.res, fsrc.res};
+                DXGI_FORMAT f[kSrvs] = {nd.fmt, fsrc.fmt};
                 p7(s, f, ndPm);
-                ID3D12Resource *u[kUavs] = {r1.res};
-                DXGI_FORMAT uf[kUavs] = {r1.fmt};
-                runA(psoAoFilter_, s, f, u, uf, r1.w, r1.h);
+                ID3D12Resource *u[kUavs] = {fdst.res};
+                DXGI_FORMAT uf[kUavs] = {fdst.fmt};
+                runA(psoAoFilter_, s, f, u, uf, fdst.w, fdst.h);
             }
             mark(9);
-            Tex &filt = r1;
+            Tex &filt = fdst;
             transition(cl, filt, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             Tex *aoOut = &filt;
             if (aoT) {  // (the temporal smoothing: no valid history - never read, the filtered in its place)
@@ -900,8 +950,9 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             transition(cl, aoCol_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             {
                 ID3D12Resource *s[kSrvs] = {ndF.res, color, aoOut->res, hp ? depth : nullptr, cl8 ? aoCurveLut_.res : nullptr,
-                                            fx ? aoLocal_.res : nullptr};
-                DXGI_FORMAT f[kSrvs] = {ndF.fmt, cd.Format, aoOut->fmt, hp ? dd.Format : X, cl8 ? aoCurveLut_.fmt : X, fx ? aoLocal_.fmt : X};
+                                            fx ? aoLocal_.res : nullptr, refl ? aoMip_[0].res : nullptr};
+                DXGI_FORMAT f[kSrvs] = {ndF.fmt, cd.Format, aoOut->fmt, hp ? dd.Format : X, cl8 ? aoCurveLut_.fmt : X, fx ? aoLocal_.fmt : X,
+                                        refl ? aoMip_[0].fmt : X};
                 p7(s, f, ndFP);
                 ID3D12Resource *u[kUavs] = {aoCol_.res};
                 DXGI_FORMAT uf[kUavs] = {aoCol_.fmt};

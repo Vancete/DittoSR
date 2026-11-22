@@ -66,6 +66,10 @@ struct DittoSettings {
     // ... (D3D12) the unified filter: the a-trous filter on the AO and the GI together after the temporal smoothing, in place
     // of the GI's a-trous and CACAO (the menu's toggle)
     bool aoUnified = true;
+    // ... (D3D12; the menu's toggles - off) aoRestir ReSTIR GI in screen space (aorestir.hlsl: one occluder kept a pixel by
+    // weighted reservoir sampling, reused over the frames and 4 neighbours); aoReflect stochastic screen-space
+    // reflections (the normal jittered a frame, x Fresnel)
+    bool aoRestir = false, aoReflect = false;
     int aoCacaoPasses = 2;
     // ... (D3D12, on by default - ini keys) aoPackNd the normal and depth packed (8 bytes a texel in place of 16: the
     // octahedral normal, the depth); aoUpCompose the half size's upsample in the composition (FastGI's: no render-size
@@ -100,8 +104,8 @@ struct DittoSettings {
     // the samples past twice the AO's fade distance. (Tried and removed: the better albedo, multi-bounce, sky light, a source clamp, the mips
     // in groupshared memory)
     bool aoEdgeFill = true, aoAtrous = true, aoGiInterleave = true, aoFarCheap = true;
-    // ... the local exposure (D3D12; 0 off - the menu's slider; aocompose.hlsl)
-    float fxLocalExp = 0.0f;
+    // ... the local exposure (D3D12; 0 off - the menu's slider, 0.5; aocompose.hlsl)
+    float fxLocalExp = 0.5f;
     float aoFadeMeters = 100.0f;
     // ... the curve (the menu's curves editor; ini curve = "x,y x,y ..."): curveN points (2 - 8) by x in [0, 1], each
     // channel through their natural cubic spline in a perceptual [0, 1] (aocompose.hlsl) - the line: none. By default
@@ -276,7 +280,7 @@ private:
     ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr;
     ID3D12PipelineState *psoAoMain16_ = nullptr, *psoAoLut_ = nullptr, *psoAoCacao_ = nullptr,
                          *psoAoMipAll_ = nullptr, *psoAoCacao2_ = nullptr, *psoAoCurve_ = nullptr,
-                         *psoAoAtrous_ = nullptr, *psoAoLocal_ = nullptr, *psoAoMain16H_ = nullptr;  // (the main pass (16 x 16; FP16), the mips in one pass, CACAO's 2 passes in one, the curve's table, the GI's a-trous, the area's luma)  // (EXPERIMENTAL: Ditto Relight)
+                         *psoAoAtrous_ = nullptr, *psoAoLocal_ = nullptr, *psoAoRestir_ = nullptr, *psoAoMain16H_ = nullptr;  // (the main pass (16 x 16; FP16), the mips in one pass, CACAO's 2 passes in one, the curve's table, the GI's a-trous, the area's luma)  // (EXPERIMENTAL: Ditto Relight)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     // the game's output last checked (outputWritable): its format, whether it allows unordered access, and the verdict
@@ -298,6 +302,8 @@ private:
     // depth, all at half size; aoLastHalf_: the last frame's mode - the history is either size's)
     Tex aoHalfF_, aoNdHalf_, aoHh_[2], aoHDh_[2];
     Tex aoBlue_, aoBlueUp_;  // (the blue noise mask and its upload buffer - aoBlueMade_: copied)
+    Tex aoRsA_, aoRsB_, aoRsTA_[2], aoRsTB_[2];  // (ReSTIR's reservoirs: this frame's, the temporal ones ping-ponged - aoRsCur_)
+    int aoRsCur_ = 0;
     Tex aoLocal_;  // (the area's luma - the local exposure: level 3's size)  // (the GI's probes; the blue noise mask and its upload buffer - aoBlueMade_: copied)
     bool aoBlueMade_ = false;
     Tex aoCurveLut_;  // (ao_curve_lut: the curve's table, 4096 x 1 - curveKey_: the curve it was built for)
