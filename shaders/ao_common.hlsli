@@ -37,9 +37,9 @@ cbuffer A : register(b0) {
                           // 32768 a longer history for it; 131072 the prepass at half size; 262144 the curve from its table;
                           // 524288 FastGI's 8-frame noise cycle, 1048576 its GI falloff; 8388608 blue noise
                           // (D3D12)
-    uint flags2;          // bits: 1 the occluder lookup table (aolut.hlsl - 32 rays); (D3D12) 2 the unified filter, 16 better albedo, 32 edge
-                          // fill, 128 a-trous, 256 FP16, 512 interleaved GI, 4096 cheaper far pixels; bits 16 - 23
-                          // the better albedo's strength (0 - 255); 2048 HDR, 8192 the AO as a power, 16384 the local
+    uint flags2;          // bits: 1 the occluder lookup table (aolut.hlsl - 32 rays); (D3D12) 2 the unified filter, 32 edge
+                          // fill, 128 a-trous, 256 FP16, 512 interleaved GI, 4096 cheaper far pixels;
+                          //  2048 HDR, 8192 the AO as a power, 16384 the local
                           // exposure
     float cmips;          // 1: the GI's far occluders' colour from the colour mips (aocmip.hlsl)
     float samples;        // the main pass' samples a pixel (4 - 32)

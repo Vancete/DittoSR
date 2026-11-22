@@ -117,12 +117,10 @@ static void load_config() {
     s.fgAmd = GetPrivateProfileIntA("dittosr", "frame_gen_amd", s.fgAmd, ini) != 0;
     s.aoGiFalloff = GetPrivateProfileIntA("dittosr", "ao_gi_falloff", s.aoGiFalloff, ini) != 0;
     s.aoBlueNoise = GetPrivateProfileIntA("dittosr", "ao_blue_noise", s.aoBlueNoise, ini) != 0;
-    s.aoAlbedo2 = GetPrivateProfileIntA("dittosr", "ao_better_albedo", s.aoAlbedo2, ini) != 0;
     s.aoEdgeFill = GetPrivateProfileIntA("dittosr", "ao_edge_fill", s.aoEdgeFill, ini) != 0;
     s.aoAtrous = GetPrivateProfileIntA("dittosr", "ao_gi_atrous", s.aoAtrous, ini) != 0;
     s.aoGiInterleave = GetPrivateProfileIntA("dittosr", "ao_gi_interleave", s.aoGiInterleave, ini) != 0;
     s.aoFarCheap = GetPrivateProfileIntA("dittosr", "ao_far_cheap", s.aoFarCheap, ini) != 0;
-    s.aoAlbedoStrength = ini_float(ini, "ao_albedo_strength", s.aoAlbedoStrength);
     s.fxLocalExp = ini_float(ini, "fx_local_exposure", s.fxLocalExp);
     s.aoFadeMeters = ini_float(ini, "ao_fade_distance", s.aoFadeMeters);
     {  // (the curve: "x,y x,y ...", by x, 2 - 8 points in [0, 1]; else the line)
@@ -245,12 +243,10 @@ bool ditto_save_settings() {
     ok = put("frame_gen_amd", b(s.fgAmd), b(d.fgAmd), false) && ok;
     ok = put("ao_gi_falloff", b(s.aoGiFalloff), b(d.aoGiFalloff), false) && ok;
     ok = put("ao_blue_noise", b(s.aoBlueNoise), b(d.aoBlueNoise), false) && ok;
-    ok = put("ao_better_albedo", b(s.aoAlbedo2), b(d.aoAlbedo2), false) && ok;
     ok = put("ao_edge_fill", b(s.aoEdgeFill), b(d.aoEdgeFill), false) && ok;
     ok = put("ao_gi_atrous", b(s.aoAtrous), b(d.aoAtrous), false) && ok;
     ok = put("ao_gi_interleave", b(s.aoGiInterleave), b(d.aoGiInterleave), false) && ok;
     ok = put("ao_far_cheap", b(s.aoFarCheap), b(d.aoFarCheap), false) && ok;
-    ok = put("ao_albedo_strength", s.aoAlbedoStrength, d.aoAlbedoStrength, false) && ok;
     ok = put("fx_local_exposure", s.fxLocalExp, d.fxLocalExp, false) && ok;
     ok = put("ao_fade_distance", s.aoFadeMeters, d.aoFadeMeters, false) && ok;
     {

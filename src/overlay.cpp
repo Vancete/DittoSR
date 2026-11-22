@@ -349,7 +349,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_TMIPS, I_TREACH, I_TBACK, I_RSAMPLES, I_THALF, I_TCACAO, I_QCOS, I_QNRM, I_GWIDE, I_QFALL, I_RFADE, I_QBLUE, I_XALB, I_XEDGE, I_XATROUS, I_TUNI, I_XINTER, I_XFAR, I_RALB, I_RLEXP, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_TMIPS, I_TBACK, I_RSAMPLES, I_THALF, I_TCACAO, I_QCOS, I_QNRM, I_GWIDE, I_QFALL, I_RFADE, I_QBLUE, I_XEDGE, I_XATROUS, I_TUNI, I_XINTER, I_XFAR, I_RLEXP, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -381,7 +381,6 @@ struct Menu : Perf {  // (its Perf: a copy of g_perf, taken before each draw)
     int drag = -1;  // (the slider the mouse holds)
     bool relight = false;  // (Ditto Relight on: its sliders shown)
     bool sharpOff = false;  // (the sharpening off: its slider hidden)
-    bool albedo2 = false;  // (the better albedo on: its strength's slider shown)
     bool unified = true;  // (the unified filter on: CACAO's and the a-trous filter's toggles hidden)
     // the curves editor: its graph (gx0, gy0, gx1, gy1, in the rows' coordinates), the point selected, the point the
     // mouse holds (-1 none), the keyboard's editing, the last click (a double click resets), the UI's scale
@@ -468,8 +467,7 @@ bool visible(int i) {
     // the AO's fade, the AO tests, the curves editor; the rest ini keys)
     if (i == I_RAO || i == I_RGI || i == I_RSAMPLES || i == I_TUNI || i == I_RLEXP || i == I_RFADE) return g_m.relight;
     if (i == I_TCACAO || i == I_XATROUS) return g_m.relight && !g_m.unified;  // (the separate filters: without the unified one)
-    if (i == I_RALB) return g_m.relight && g_m.albedo2;  // (the better albedo's strength: with it on)
-    if (i == I_RTEMP || i == I_QBLUE || i == I_THALF || i == I_QNRM || i == I_TMIPS || i == I_TREACH || i == I_TBACK || i == I_XALB || i == I_XINTER || i == I_XFAR) return g_m.relight;  // (the AO tests)
+    if (i == I_RTEMP || i == I_QBLUE || i == I_THALF || i == I_QNRM || i == I_TMIPS || i == I_TBACK || i == I_XINTER || i == I_XFAR) return g_m.relight;  // (the AO tests)
     if (i == I_RCURVE) return kCurvesEditor && g_m.relight;
     if (i >= I_RAO && i <= I_RLEXP) return false;  // (Relight's other settings: ini keys)
     return true;
@@ -491,7 +489,6 @@ Range range_of(int i) {
     case I_RSPATIAL: return {1.0f, 2.0f, 0.25f};
     case I_RSAMPLES: return {4.0f, 32.0f, 4.0f};
     case I_RFADE: return {0.0f, 300.0f, 10.0f};
-    case I_RALB: return {0.0f, 1.0f, 0.05f};
     case I_RLEXP: return {0.0f, 1.0f, 0.05f};
     default: return {0, 1, 1};
     }
@@ -510,7 +507,6 @@ float *slider_of(DittoSettings &s, int i) {
     case I_RSPATIAL: return &s.aoSpatial;
     case I_RSAMPLES: return &s.aoSamples;
     case I_RFADE: return &s.aoFadeMeters;
-    case I_RALB: return &s.aoAlbedoStrength;
     case I_RLEXP: return &s.fxLocalExp;
     default: return nullptr;
     }
@@ -556,7 +552,7 @@ int shimmer_index(float v) {
 // the on / off rows (a click anywhere on them flips them)
 bool is_toggle(int i) {
     switch (i) {
-    case I_INDICATOR: case I_RELIGHT: case I_RTEMP: case I_TMIPS: case I_TREACH: case I_TBACK: case I_THALF: case I_TCACAO: case I_QCOS: case I_QNRM: case I_GWIDE: case I_QFALL: case I_QBLUE: case I_XALB: case I_XEDGE: case I_XATROUS: case I_TUNI: case I_XINTER: case I_XFAR:
+    case I_INDICATOR: case I_RELIGHT: case I_RTEMP: case I_TMIPS: case I_TBACK: case I_THALF: case I_TCACAO: case I_QCOS: case I_QNRM: case I_GWIDE: case I_QFALL: case I_QBLUE: case I_XEDGE: case I_XATROUS: case I_TUNI: case I_XINTER: case I_XFAR:
         return true;
     default: return false;
     }
@@ -569,7 +565,7 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_UPSCALER: InterlockedExchange(&g_reqToggle, 1); return false;
     case I_COMPARE: InterlockedExchange(&g_reqCompare, 1); return false;
     case I_SHARP: case I_WEIGHT: case I_RAO: case I_RGI: case I_RGIDARK: case I_RGICEIL: case I_RRADIUS:
-    case I_RSCREEN: case I_RCONTACT: case I_RSPATIAL: case I_RSAMPLES: case I_RFADE: case I_RALB: case I_RLEXP: {
+    case I_RSCREEN: case I_RCONTACT: case I_RSPATIAL: case I_RSAMPLES: case I_RFADE: case I_RLEXP: {
         float *v = slider_of(s, i);
         Range r = range_of(i);
         // (the frame weight: moved, it overrides FSR 3.1's settings' - OptiScaler's presets - from the weight in use;
@@ -595,13 +591,11 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_RELIGHT: s.relight = !s.relight; return true;
     case I_RTEMP: s.aoTemporal = !s.aoTemporal; return true;
     case I_TMIPS: s.aoMips = !s.aoMips; return true;
-    case I_TREACH: s.aoScreen = s.aoScreen <= 0.3f ? d.aoScreen : 0.25f; return true;
     case I_TBACK: s.aoBackBoost = !s.aoBackBoost; return true;
     case I_THALF: s.aoHalf = !s.aoHalf; return true;
     case I_TCACAO: s.aoCacao = !s.aoCacao; return true;
     case I_QFALL: s.aoGiFalloff = !s.aoGiFalloff; return true;
     case I_QBLUE: s.aoBlueNoise = !s.aoBlueNoise; return true;
-    case I_XALB: s.aoAlbedo2 = !s.aoAlbedo2; return true;
     case I_XEDGE: s.aoEdgeFill = !s.aoEdgeFill; return true;
     case I_XATROUS: s.aoAtrous = !s.aoAtrous; return true;
     case I_TUNI: s.aoUnified = !s.aoUnified; return true;
@@ -851,7 +845,6 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
             toggle_row(I_TCACAO, "CACAO blur", s.aoCacao);
             toggle_row(I_XATROUS, "GI a-trous filter", s.aoAtrous);
         }
-        if (s.aoAlbedo2) slider_row(I_RALB, "Albedo strength", "the old guess to the new");
         slider_row(I_RLEXP, "Local exposure", "shade lifted, glare tamed");
         slider_row(I_RFADE, "AO fade distance", "faded out to twice it");
         y += 8 * S;
@@ -861,9 +854,7 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         toggle_row(I_THALF, "Half resolution", s.aoHalf);
         toggle_row(I_QNRM, "Better normals", s.aoBetterNormals);
         toggle_row(I_TMIPS, "Depth mips", s.aoMips);
-        toggle_row(I_TREACH, "Screen reach 0.25", s.aoScreen <= 0.3f);
         toggle_row(I_TBACK, "Backface boost", s.aoBackBoost);
-        toggle_row(I_XALB, "Better albedo", s.aoAlbedo2);
         toggle_row(I_XINTER, "Interleaved GI", s.aoGiInterleave);
         toggle_row(I_XFAR, "Cheaper far pixels", s.aoFarCheap);
     }
@@ -1093,10 +1084,10 @@ void make_panel(Ui &u, float W, float H, float scale, double t, bool focus) {
     take_perf();
     DittoSettings s = ditto_settings();
     bool changed = false;
-    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2, g_m.albedo2 = s.aoAlbedo2, g_m.unified = s.aoUnified;
+    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2, g_m.unified = s.aoUnified;
     if (g_m.open && focus) input(s, changed, t);
     if (changed) ditto_set_settings(s);
-    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2, g_m.albedo2 = s.aoAlbedo2, g_m.unified = s.aoUnified;
+    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2, g_m.unified = s.aoUnified;
     if (!visible(g_m.sel)) g_m.sel = I_RELIGHT;  // (its sliders hidden under the selection: Relight off, or Defaults)
     u.s = scale, u.alpha = ease(g_m.anim), u.dx = -(1.0f - ease(g_m.anim)) * 420.0f * scale;
     u.q.reserve(2048);

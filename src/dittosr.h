@@ -94,21 +94,20 @@ struct DittoSettings {
     // place of IGN (and of the decorrelated noise, Vulkan's). (Tried and removed: samples guided toward bright areas,
     // screen probes and their directional variant)
     bool aoBlueNoise = true;
-    // ... (D3D12; on by default) aoAlbedo2 the albedo by the colour over its area's luma, aoEdgeFill the GI made up for
+    // ... (D3D12; on by default) aoEdgeFill the GI made up for
     // the samples off the screen, aoAtrous an a-trous filter on the GI (luma edge-stopping; the menu's toggle), 
     // aoGiInterleave the GI on half the pixels a frame (the rest the last result's), aoFarCheap half
-    // the samples past twice the AO's fade distance. (Tried and removed: multi-bounce, sky light, a source clamp, the mips
+    // the samples past twice the AO's fade distance. (Tried and removed: the better albedo, multi-bounce, sky light, a source clamp, the mips
     // in groupshared memory)
-    bool aoAlbedo2 = true, aoEdgeFill = true, aoAtrous = true, aoGiInterleave = true, aoFarCheap = true;
+    bool aoEdgeFill = true, aoAtrous = true, aoGiInterleave = true, aoFarCheap = true;
     // ... the local exposure (D3D12; 0 off - the menu's slider; aocompose.hlsl)
     float fxLocalExp = 0.0f;
-    float aoAlbedoStrength = 0.5f;  // (the better albedo's strength, 0 - 1: the old guess to the new - the menu's slider)
     float aoFadeMeters = 100.0f;
     // ... the curve (the menu's curves editor; ini curve = "x,y x,y ..."): curveN points (2 - 8) by x in [0, 1], each
     // channel through their natural cubic spline in a perceptual [0, 1] (aocompose.hlsl) - the line: none. By default
-    // a slight crush of the blacks and a darker low end (the curve tuned in Assetto Corsa EVO)
-    int curveN = 3;
-    float curveX[8] = {0.03145f, 0.228f, 1.0f}, curveY[8] = {0.0f, 0.2453f, 1.0f};
+    // a darker low end, the mids slightly lifted (the curve tuned in Assetto Corsa EVO)
+    int curveN = 5;
+    float curveX[8] = {0.0f, 0.1195f, 0.2516f, 0.4858f, 1.0f}, curveY[8] = {0.0f, 0.08962f, 0.261f, 0.522f, 1.0f};
     // ... their noise evened out after FastGI's: a spatial filter (aofilter.hlsl: 5 taps x then y, by depth and normal)
     // its taps aoSpatial x 2 pixels apart (1 - 2), then a temporal smoothing (aotemporal.hlsl: their history, reprojected
     // by the game's motion vectors, x aoTemporalWeight (0 - 0.95), less in motion)
@@ -299,7 +298,7 @@ private:
     // depth, all at half size; aoLastHalf_: the last frame's mode - the history is either size's)
     Tex aoHalfF_, aoNdHalf_, aoHh_[2], aoHDh_[2];
     Tex aoBlue_, aoBlueUp_;  // (the blue noise mask and its upload buffer - aoBlueMade_: copied)
-    Tex aoLocal_;  // (the area's luma - better albedo, local exposure: level 3's size)  // (the GI's probes; the blue noise mask and its upload buffer - aoBlueMade_: copied)
+    Tex aoLocal_;  // (the area's luma - the local exposure: level 3's size)  // (the GI's probes; the blue noise mask and its upload buffer - aoBlueMade_: copied)
     bool aoBlueMade_ = false;
     Tex aoCurveLut_;  // (ao_curve_lut: the curve's table, 4096 x 1 - curveKey_: the curve it was built for)
     float curveKey_[26] = {};

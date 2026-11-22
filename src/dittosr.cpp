@@ -756,18 +756,12 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             bool interleave = s_.aoGiInterleave && aoT && aoValid;
             bool fp16m = psoAoMain16H_ != nullptr;  // (FP16 where the GPU has it)
             bool uni = s_.aoUnified, atr = uni || s_.aoAtrous;  // (the unified filter: the a-trous one on both, no CACAO)
-            ka.flags2 |= (uni ? 2u : 0u) | (s_.aoAlbedo2 && mips ? 16u : 0u) | (s_.aoEdgeFill ? 32u : 0u) | (atr ? 128u : 0u) | (fp16m ? 256u : 0u) |
+            ka.flags2 |= (uni ? 2u : 0u) | (s_.aoEdgeFill ? 32u : 0u) | (atr ? 128u : 0u) | (fp16m ? 256u : 0u) |
                          (interleave ? 512u : 0u) | (s_.aoFarCheap ? 4096u : 0u);
-            {  // (the better albedo's strength in flags2's bits 16 - 23, 0 - 255)
-                float as = s_.aoAlbedoStrength < 0.0f ? 0.0f : s_.aoAlbedoStrength > 1.0f ? 1.0f : s_.aoAlbedoStrength;
-                ka.flags2 |= (uint32_t)(as * 255.0f + 0.5f) << 16;
-            }
-            // (the area's luma - better albedo, local exposure (its slider up): with the mips, made when first needed)
-            bool lexp = mips && (ka.params1 & 255u);
-            bool fx = (lexp || (ka.flags2 & 16u)) &&
+            // (the area's luma - the local exposure (its slider up): with the mips, made when first needed)
+            bool fx = mips && (ka.params1 & 255u) &&
                       (aoLocal_.res || makeTex(aoLocal_, (rw + 7) >> 3, (rh + 7) >> 3, DXGI_FORMAT_R32G32_FLOAT));
-            if (!fx) ka.flags2 &= ~16u;
-            if (fx && lexp) ka.flags2 |= 16384u;
+            if (fx) ka.flags2 |= 16384u;
             // (the render-size normal and depth the passes read: the half size's with hp)
             Tex &ndF = hp ? aoNdHalf_ : aoNd_, &ndFP = hp ? aoNdHalfP_ : aoNdP_;
             Tex *H = half ? aoHh_ : aoH_, *HD = half ? aoHDh_ : aoHD_;

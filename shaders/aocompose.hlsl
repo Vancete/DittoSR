@@ -21,7 +21,7 @@ Texture2D<float4> Res : register(t2);
 Texture2D<float> GDepth : register(t3);    // (the game's depth: flags 131072)
 Texture2D<float> CurveLut : register(t4);  // (the curve's table: flags 262144)
 #if !DITTO_VK
-Texture2D<float2> Local : register(t5);   // (better albedo, local exposure - flags2 16, 16384: aolocal.hlsl's area luma)
+Texture2D<float2> Local : register(t5);   // (the local exposure, flags2 16384: aolocal.hlsl's area luma)
 #endif
 AOFMT("rgba16f") RWTexture2D<float4> Out : register(u0);
 
@@ -39,36 +39,26 @@ void main(uint2 id : SV_DispatchThreadID) {
         float3 col = max(c.rgb, 0.0);
         float mx = max(col.r, max(col.g, col.b));
         float3 albedo = lerp((float3)0.5, 0.6 * col / max(mx, 1e-4), saturate(mx * 8.0));
-        // (the area's luma - the better albedo (flags2 16) and the local exposure (16384): aolocal.hlsl's, bilinear between
-        // level 3's texels, each x how near its depth is to the pixel's (another surface left out), at most 4 x the pixel's
-        // luma - smooth across the texels' borders)
-        float la = 0.0, le = 0.0;
+        // (the local exposure (flags2 16384): its area's luma, aolocal.hlsl's, bilinear between level 3's texels, each x how
+        // near its depth is to the pixel's (another surface left out) x e^(-(stops from the pixel)^2 / 2) (bilateral in
+        // brightness: a light beside a wall no longer darkens it), the pixel itself a little - smooth across the texels' borders)
+        float le = 0.0;
 #if !DITTO_VK
-        if ((flag2On(16u) || flag2On(16384u)) && mips > 0.5) {
+        if (flag2On(16384u) && mips > 0.5) {
             float lp = dot(col, float3(0.2126, 0.7152, 0.0722));
             uint2 d3 = ((uint2)rs + 7u) >> 3;
             float2 t = (float2(p) + 0.5) * rsRcp * float2(d3) - 0.5, tb = floor(t), tf = t - tb;
-            // (the local exposure's own, le: bilateral in brightness too - each texel x e^(-(stops from the pixel)^2 / 2),
-            // the pixel itself a little - a light beside a wall no longer darkens it: no halo, no notches along it)
-            float wa = 0.0, we = 0.05;
+            float we = 0.05;
             le = 0.05 * lp;
             [unroll] for (int k = 0; k < 4; k++) {
                 int2 o2 = int2(k & 1, k >> 1);
                 float2 m = Local.Load(int3(clamp(int2(tb) + o2, int2(0, 0), int2(d3) - 1), 0));
                 float2 bl = lerp(1.0 - tf, tf, float2(o2));
                 float w = bl.x * bl.y * (m.y > 0.0 ? saturate(1.0 - abs(m.y - nd.w) / (nd.w * 0.05 + 1e-3)) : 0.0) + 1e-6;
-                float st = log2(max(m.x, 1e-5) / max(lp, 1e-5)), wr = w * exp(-0.5 * st * st), wl = w * exp(-0.3 * st * st);
-                la += min(m.x, 4.0 * lp + 1e-3) * wl, wa += wl;  // (the albedo's: bilateral 1.3 stops wide)
+                float st = log2(max(m.x, 1e-5) / max(lp, 1e-5)), wr = w * exp(-0.5 * st * st);
                 le += m.x * wr, we += wr;
             }
-            la = wa > 1e-3 ? la / wa : lp;
             le /= we;
-            // (better albedo: the colour over the lighting there, retinex's way, x 0.5 - a mid grey's albedo where the pixel is
-            // as lit as its area. The lighting: the geometric mean of the pixel's luma and its area's - normalized: a pixel in
-            // shade (darker than its area) no longer taken for a dark material, its bounce no longer halved; its strength -
-            // flags2's bits 16 - 23: the old guess to this)
-            if (flag2On(16u))
-                albedo = lerp(albedo, saturate(0.5 * col / max(sqrt(max(lp, 1e-6) * la), 1e-4)), float((flags2 >> 16) & 255u) / 255.0);
         }
 #endif
         float dark = 1.0 - smoothstep(0.0, 0.25, dot(col, float3(0.2126, 0.7152, 0.0722)));
