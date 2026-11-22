@@ -29,6 +29,7 @@
 #include "cs_aoatrous.h"
 #include "cs_aolocal.h"
 #include "cs_aorestir.h"
+#include "cs_aorecon.h"
 #include "cs_aomain16h.h"
 #include "bluenoise64.h"
 #include "cs_aocompose.h"
@@ -182,7 +183,7 @@ DittoSR::~DittoSR() {
     if (psoAoPrep_) psoAoPrep_->Release();
     if (psoAoTemporal_) psoAoTemporal_->Release();
     if (psoAoFilter_) psoAoFilter_->Release();
-    for (auto *p : {psoAoMain16_, psoAoLut_, psoAoCacao_, psoAoMipAll_, psoAoCacao2_, psoAoCurve_, psoAoAtrous_, psoAoMain16H_, psoAoLocal_, psoAoRestir_})
+    for (auto *p : {psoAoMain16_, psoAoLut_, psoAoCacao_, psoAoMipAll_, psoAoCacao2_, psoAoCurve_, psoAoAtrous_, psoAoMain16H_, psoAoLocal_, psoAoRestir_, psoAoRecon_})
         if (p) p->Release();
     if (psoAoComp_) psoAoComp_->Release();
     if (psoUpscale16_) psoUpscale16_->Release();
@@ -241,6 +242,7 @@ bool DittoSR::createPipelines() {
         {g_cs_aoatrous, sizeof g_cs_aoatrous, &psoAoAtrous_, "ao GI a-trous"},
         {g_cs_aolocal, sizeof g_cs_aolocal, &psoAoLocal_, "ao area luma"},
         {g_cs_aorestir, sizeof g_cs_aorestir, &psoAoRestir_, "ao ReSTIR GI"},
+        {g_cs_aorecon, sizeof g_cs_aorecon, &psoAoRecon_, "ao full-size reconstruction"},
         {g_cs_aocompose, sizeof g_cs_aocompose, &psoAoComp_, "ao compose"},
     };
     for (auto &c : cs) {
@@ -647,7 +649,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     if (s_.relight && depth && !s_.debugView) {
         bool made = aoNd_.res && aoNd_.w == rw && aoNd_.h == rh;
         if (!made) {
-            for (Tex *t : {&aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoHalf_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1], &aoNdP_, &aoNdHalfP_, &aoLocal_, &aoRsA_, &aoRsB_, &aoRsTA_[0], &aoRsTA_[1], &aoRsTB_[0], &aoRsTB_[1]})
+            for (Tex *t : {&aoNd_, &aoRes_, &aoF_, &aoCol_, &aoH_[0], &aoH_[1], &aoHD_[0], &aoHD_[1], &aoMip_[0], &aoMip_[1], &aoMip_[2], &aoMip_[3], &aoHalf_, &aoHalfF_, &aoNdHalf_, &aoHh_[0], &aoHh_[1], &aoHDh_[0], &aoHDh_[1], &aoNdP_, &aoNdHalfP_, &aoLocal_, &aoRsA_, &aoRsB_, &aoRsTA_[0], &aoRsTA_[1], &aoRsTB_[0], &aoRsTB_[1], &aoCk_})
                 retire(*t, false);
             made = makeTex(aoNd_, rw, rh, DXGI_FORMAT_R32G32B32A32_FLOAT) && makeTex(aoRes_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
                    makeTex(aoF_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT) && makeTex(aoCol_, rw, rh, DXGI_FORMAT_R16G16B16A16_FLOAT);
@@ -694,22 +696,27 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             // made when first on; the history kept for one mode at a time)
             UINT hw2 = (rw + 1) / 2, hh2 = (rh + 1) / 2;
             const DXGI_FORMAT F16 = DXGI_FORMAT_R16G16B16A16_FLOAT;
-            bool half = s_.aoHalf && (aoHalf_.res || makeTex(aoHalf_, hw2, hh2, F16)) && (aoHalfF_.res || makeTex(aoHalfF_, hw2, hh2, F16)) &&
+            // (the resolution mode: 0 full, 1 half, 2 half rotating, 3 checkerboard - the last two reconstructed at render size)
+            int rmode = !s_.aoHalf ? 0 : s_.aoResMode == 1 ? 2 : s_.aoResMode == 2 ? 3 : 1;
+            if (rmode == 3 && !(aoCk_.res || makeTex(aoCk_, hw2, rh, F16))) rmode = 1;
+            if (rmode >= 2 && !psoAoRecon_) rmode = 1;
+            bool rot = rmode == 2, chk = rmode == 3, recon = rot || chk;
+            bool half = (rmode == 1 || rot) && (aoHalf_.res || makeTex(aoHalf_, hw2, hh2, F16)) && (aoHalfF_.res || makeTex(aoHalfF_, hw2, hh2, F16)) &&
                         (aoNdHalf_.res || makeTex(aoNdHalf_, hw2, hh2, DXGI_FORMAT_R32G32B32A32_FLOAT));
-            if (half && aoT && !aoHh_[0].res)
+            if (half && !rot && aoT && !aoHh_[0].res)
                 aoT = makeTex(aoHh_[0], hw2, hh2, F16) && makeTex(aoHh_[1], hw2, hh2, F16) && makeTex(aoHDh_[0], hw2, hh2, DXGI_FORMAT_R32_FLOAT) &&
                       makeTex(aoHDh_[1], hw2, hh2, DXGI_FORMAT_R32_FLOAT);
-            if (half != aoLastHalf_) aoValid = false, aoOk_ = false;
-            aoLastHalf_ = half;
+            if (rmode != aoLastMode_) aoValid = false, aoOk_ = false;
+            aoLastMode_ = rmode;
             ka.temporal = aoValid ? 1.0f : 0.0f;
             ka.halfRes = half ? 1.0f : 0.0f;
             // (the normal and depth packed at t7 (made when first needed: 8 bytes a texel), the half size's upsample in the
             // composition)
             bool pack = (aoNdP_.res || makeTex(aoNdP_, rw, rh, DXGI_FORMAT_R32G32_UINT)) &&
                         (!half || aoNdHalfP_.res || makeTex(aoNdHalfP_, hw2, hh2, DXGI_FORMAT_R32G32_UINT));
-            bool upc = half;
+            bool upc = half && !recon;  // (recon: the composition reads the render-size result)
             // (the prepass at half size: with half resolution and the mips - their level 1 the half size's normal and depth)
-            bool hp = half && mips;
+            bool hp = half && mips && !rot;  // (rotating: the main pass' pixel moves - the render-size prepass)
             // (the curve's table: made when first needed, built when the curve changes)
             bool cl8 = ka.curveN > 1.5f && (aoCurveLut_.res || (curveKey_[24] = -1.0f, makeTex(aoCurveLut_, 4096, 1, DXGI_FORMAT_R32_FLOAT)));  // (new: built again)
             if (cl8) {
@@ -755,7 +762,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             }
             ka.flags = (float)(((uint32_t)ka.flags & ~2u) | (blue ? 8388608u : 0u));  // (2, decorrelated noise: Vulkan's - blue noise here)
             // (interleaved GI (a valid history), the 16-bit main pass (its variants made))
-            bool interleave = s_.aoGiInterleave && aoT && aoValid;
+            bool interleave = s_.aoGiInterleave && aoT && aoValid && !recon;
             bool fp16m = psoAoMain16H_ != nullptr;  // (FP16 where the GPU has it)
             bool uni = s_.aoUnified, atr = uni || s_.aoAtrous;  // (the unified filter: the a-trous one on both, no CACAO)
             // (ReSTIR's reservoirs at the main pass' size: made when first on, again when that size changes; reflections with
@@ -763,11 +770,11 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             UINT mw = half ? hw2 : rw, mh = half ? hh2 : rh;
             if (aoRsA_.res && (aoRsA_.w != mw || aoRsA_.h != mh))
                 for (Tex *t : {&aoRsA_, &aoRsB_, &aoRsTA_[0], &aoRsTA_[1], &aoRsTB_[0], &aoRsTB_[1]}) retire(*t, false);
-            bool rst = s_.aoRestir && psoAoRestir_;
+            bool rst = s_.aoRestir && psoAoRestir_ && !recon;  // (ReSTIR: the fixed grids)
             for (Tex *t : {&aoRsA_, &aoRsTA_[0], &aoRsTA_[1]}) if (rst && !t->res) rst = makeTex(*t, mw, mh, DXGI_FORMAT_R32G32B32A32_FLOAT);
             for (Tex *t : {&aoRsB_, &aoRsTB_[0], &aoRsTB_[1]}) if (rst && !t->res) rst = makeTex(*t, mw, mh, F16);
             bool refl = s_.aoReflect && mips;
-            ka.flags2 |= (rst ? 8u : 0u) | (refl ? 64u : 0u);
+            ka.flags2 |= (rst ? 8u : 0u) | (refl ? 64u : 0u) | (rot ? 4u : 0u) | (chk ? 1024u : 0u);
             ka.flags2 |= (uni ? 2u : 0u) | (s_.aoEdgeFill ? 32u : 0u) | (atr ? 128u : 0u) | (fp16m ? 256u : 0u) |
                          (interleave ? 512u : 0u) | (s_.aoFarCheap ? 4096u : 0u);
             // (the area's luma - the local exposure (its slider up): with the mips, made when first needed)
@@ -776,7 +783,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             if (fx) ka.flags2 |= 16384u;
             // (the render-size normal and depth the passes read: the half size's with hp)
             Tex &ndF = hp ? aoNdHalf_ : aoNd_, &ndFP = hp ? aoNdHalfP_ : aoNdP_;
-            Tex *H = half ? aoHh_ : aoH_, *HD = half ? aoHDh_ : aoHD_;
+            Tex *H = half && !rot ? aoHh_ : aoH_, *HD = half && !rot ? aoHDh_ : aoHD_;  // (recon: the history at render size)
             // (a pass' packed normal and depth at t7: render size, or the main pass' size)
             auto p7 = [&](ID3D12Resource **s, DXGI_FORMAT *f, Tex &t) {
                 if (pack) s[7] = t.res, f[7] = t.fmt;
@@ -815,7 +822,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             }
             mark(6);
             {
-                Tex &tgt = half ? aoHalf_ : aoRes_;
+                Tex &tgt = chk ? aoCk_ : half ? aoHalf_ : aoRes_;
                 transition(cl, tgt, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
                 bool fh = half && !hp;  // (the half size's normal and depth written by it - hp: the prepass')
                 if (fh) transition(cl, pack ? aoNdHalfP_ : aoNdHalf_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -874,6 +881,20 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 ka.axis = 0.0f;
                 aoRsCur_ ^= 1;
             }
+            // (the passes after the main one at render size with recon; the spread to render size - aorecon.hlsl: the computed
+            // pixels as they are, the others from them by depth and normal)
+            Tex &nd2 = recon ? aoNd_ : nd, &q0 = recon ? aoRes_ : r0, &q1 = recon ? aoF_ : r1, &ndPm2 = recon ? aoNdP_ : ndPm;
+            auto spread = [&](Tex &src, Tex &dst) {
+                transition(cl, src, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                transition(cl, dst, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                ID3D12Resource *s[kSrvs] = {aoNd_.res, src.res};
+                DXGI_FORMAT f[kSrvs] = {aoNd_.fmt, src.fmt};
+                p7(s, f, aoNdP_);
+                ID3D12Resource *u[kUavs] = {dst.res};
+                DXGI_FORMAT uf[kUavs] = {dst.fmt};
+                runA(psoAoRecon_, s, f, u, uf, rw, rh);
+            };
+            if (chk) spread(aoCk_, r0);  // (checkerboard: to render size first - the filter and the rest there)
             Tex &fsrc = rst ? r1 : r0, &fdst = rst ? r0 : r1;
             {  // (the spatial filter: CORTAO's sparse one, r0 into r1 - after ReSTIR, r1 into r0)
                 transition(cl, fsrc, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -886,7 +907,13 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 runA(psoAoFilter_, s, f, u, uf, fdst.w, fdst.h);
             }
             mark(9);
-            Tex &filt = fdst;
+            Tex *src = &fdst;
+            if (rot) {  // (half rotating: the filtered half size to render size - its pixel of each 2 x 2 exact)
+                ka.rs[0] = (float)rw, ka.rs[1] = (float)rh, ka.rsRcp[0] = 1.0f / rw, ka.rsRcp[1] = 1.0f / rh;
+                spread(fdst, aoRes_);
+                src = &aoRes_;
+            }
+            Tex &filt = *src;
             transition(cl, filt, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             Tex *aoOut = &filt;
             if (aoT) {  // (the temporal smoothing: no valid history - never read, the filtered in its place)
@@ -895,9 +922,9 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 transition(cl, prevD, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 transition(cl, cur, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
                 transition(cl, curD, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                ID3D12Resource *s[kSrvs] = {nd.res, filt.res, aoValid ? prev.res : filt.res, prevD.res, mv};
-                DXGI_FORMAT f[kSrvs] = {nd.fmt, filt.fmt, aoValid ? prev.fmt : filt.fmt, prevD.fmt, md.Format};
-                p7(s, f, ndPm);
+                ID3D12Resource *s[kSrvs] = {nd2.res, filt.res, aoValid ? prev.res : filt.res, prevD.res, mv};
+                DXGI_FORMAT f[kSrvs] = {nd2.fmt, filt.fmt, aoValid ? prev.fmt : filt.fmt, prevD.fmt, md.Format};
+                p7(s, f, ndPm2);
                 ID3D12Resource *u[kUavs] = {cur.res, curD.res};
                 DXGI_FORMAT uf[kUavs] = {cur.fmt, curD.fmt};
                 runA(psoAoTemporal_, s, f, u, uf, cur.w, cur.h);
@@ -909,13 +936,13 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             }
             if (atr) {  // (the a-trous filter (the GI's; with uni the AO's too): 2 passes, spacing 1 then 2 (uni: 3, then 4) - r0 and r1 ping-ponged, the history kept)
                 for (int st = 1; st <= (uni ? 4 : 2); st *= 2) {  // (unified: a third at 4 - CACAO's 2 passes' reach)
-                    Tex &dst = aoOut == &r1 ? r0 : r1;
+                    Tex &dst = aoOut == &q1 ? q0 : q1;
                     transition(cl, *aoOut, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                     transition(cl, dst, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                    ka.axis = (float)st;
-                    ID3D12Resource *s[kSrvs] = {nd.res, aoOut->res};
-                    DXGI_FORMAT f[kSrvs] = {nd.fmt, aoOut->fmt};
-                    p7(s, f, ndPm);
+                    ka.axis = (float)(recon ? 2 * st : st);  // (recon: render size - twice the spacing)
+                    ID3D12Resource *s[kSrvs] = {nd2.res, aoOut->res};
+                    DXGI_FORMAT f[kSrvs] = {nd2.fmt, aoOut->fmt};
+                    p7(s, f, ndPm2);
                     ID3D12Resource *u[kUavs] = {dst.res};
                     DXGI_FORMAT uf[kUavs] = {dst.fmt};
                     runA(psoAoAtrous_, s, f, u, uf, dst.w, dst.h);
@@ -930,12 +957,12 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 bool two = cp == 2;  // (the 2 passes in one dispatch)
                 Tex *src = aoOut;
                 for (int k = 0; k < (two ? 1 : cp); k++) {
-                    Tex &dst = src == &r1 ? r0 : r1;
+                    Tex &dst = src == &q1 ? q0 : q1;
                     transition(cl, *src, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                     transition(cl, dst, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                    ID3D12Resource *s[kSrvs] = {nd.res, src->res};
-                    DXGI_FORMAT f[kSrvs] = {nd.fmt, src->fmt};
-                    p7(s, f, ndPm);
+                    ID3D12Resource *s[kSrvs] = {nd2.res, src->res};
+                    DXGI_FORMAT f[kSrvs] = {nd2.fmt, src->fmt};
+                    p7(s, f, ndPm2);
                     ID3D12Resource *u[kUavs] = {dst.res};
                     DXGI_FORMAT uf[kUavs] = {dst.fmt};
                     runA(two ? psoAoCacao2_ : psoAoCacao_, s, f, u, uf, dst.w, dst.h);

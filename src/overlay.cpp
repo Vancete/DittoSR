@@ -552,7 +552,7 @@ int shimmer_index(float v) {
 // the on / off rows (a click anywhere on them flips them)
 bool is_toggle(int i) {
     switch (i) {
-    case I_INDICATOR: case I_RELIGHT: case I_RTEMP: case I_TMIPS: case I_TBACK: case I_THALF: case I_TCACAO: case I_QCOS: case I_QNRM: case I_GWIDE: case I_QFALL: case I_QBLUE: case I_XEDGE: case I_XATROUS: case I_TUNI: case I_TRESTIR: case I_TREFL: case I_XINTER: case I_XFAR:
+    case I_INDICATOR: case I_RELIGHT: case I_RTEMP: case I_TMIPS: case I_TBACK: case I_TCACAO: case I_QCOS: case I_QNRM: case I_GWIDE: case I_QFALL: case I_QBLUE: case I_XEDGE: case I_XATROUS: case I_TUNI: case I_TRESTIR: case I_TREFL: case I_XINTER: case I_XFAR:
         return true;
     default: return false;
     }
@@ -592,7 +592,12 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_RTEMP: s.aoTemporal = !s.aoTemporal; return true;
     case I_TMIPS: s.aoMips = !s.aoMips; return true;
     case I_TBACK: s.aoBackBoost = !s.aoBackBoost; return true;
-    case I_THALF: s.aoHalf = !s.aoHalf; return true;
+    case I_THALF: {  // (Full, Half, Half rotating, Checkerboard)
+        int k = !s.aoHalf ? 0 : 1 + (s.aoResMode < 0 || s.aoResMode > 2 ? 0 : s.aoResMode);
+        k = (k + (dir < 0 ? 3 : 1)) % 4;
+        s.aoHalf = k > 0, s.aoResMode = k > 0 ? k - 1 : s.aoResMode;
+        return true;
+    }
     case I_TCACAO: s.aoCacao = !s.aoCacao; return true;
     case I_QFALL: s.aoGiFalloff = !s.aoGiFalloff; return true;
     case I_QBLUE: s.aoBlueNoise = !s.aoBlueNoise; return true;
@@ -842,6 +847,10 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         slider_row(I_RAO, "Ambient occlusion", "the darkening");
         slider_row(I_RGI, "Global illumination", "the bounce light");
         slider_row(I_RSAMPLES, "Samples", "more: less noise, slower");
+        {
+            static const char *const kRes[4] = {"Full", "Half", "Half rotating", "Checkerboard"};
+            choice_row(I_THALF, "Resolution", kRes[!s.aoHalf ? 0 : 1 + (s.aoResMode < 0 || s.aoResMode > 2 ? 0 : s.aoResMode)]);
+        }
         toggle_row(I_TUNI, "Unified filter", s.aoUnified);
         toggle_row(I_TRESTIR, "ReSTIR GI", s.aoRestir);
         toggle_row(I_TREFL, "Stochastic reflections", s.aoReflect);
@@ -855,7 +864,6 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         section("AO TESTS");
         toggle_row(I_RTEMP, "Temporal smoothing", s.aoTemporal);
         toggle_row(I_QBLUE, "Blue noise", s.aoBlueNoise);
-        toggle_row(I_THALF, "Half resolution", s.aoHalf);
         toggle_row(I_QNRM, "Better normals", s.aoBetterNormals);
         toggle_row(I_TMIPS, "Depth mips", s.aoMips);
         toggle_row(I_TBACK, "Backface boost", s.aoBackBoost);

@@ -140,9 +140,15 @@ int occluderAt(float3 Q, float w, float3 P, float3 n, float3 V, float R, float2 
 
 [numthreads(AO_WG, AO_WG, 1)]
 void main(uint2 id : SV_DispatchThreadID) {
-    uint2 hdims = halfRes > 0.5 ? ((uint2)rs + 1u) >> 1 : (uint2)rs;
-    uint hk = 0u;  // (the half size's pixel of each 2 x 2: 2x, 2y - FastGI's fixed grid)
-    uint2 pix = halfRes > 0.5 ? min(id * 2u + uint2(hk & 1u, hk >> 1u), (uint2)rs - 1u) : id;
+    // (the pixels computed: half - 2x, 2y of each 2 x 2 (FastGI's fixed grid; flags2 4, half rotating: a different one of
+    // the 4 each frame); flags2 1024, checkerboard - every other one of each row, alternating each frame, into a
+    // half-width target)
+    bool ck = flag2On(1024u);
+    uint2 hdims = ck ? uint2(((uint)rs.x + 1u) >> 1, (uint)rs.y) : halfRes > 0.5 ? ((uint2)rs + 1u) >> 1 : (uint2)rs;
+    if (any(id >= hdims)) return;
+    uint2 roff = flag2On(4u) ? rotOff(frame) : uint2(0u, 0u);
+    uint2 pix = ck ? min(uint2(id.x * 2u + ((id.y + (uint)frame) & 1u), id.y), (uint2)rs - 1u)
+                   : halfRes > 0.5 ? min(id * 2u + roff, (uint2)rs - 1u) : id;
     float4 nd = flagOn(131072u) ? LOAD_ND(Nd, id) : LOAD_ND(Nd, pix);  // (131072: Nd the half size's)
     if (flagOn(16u) && halfRes > 0.5) {  // (fused: the half size's normal and depth, as aohalfnd.hlsl's)
         if (flagOn(4u)) NdHalfP[id] = ndPack(nd);

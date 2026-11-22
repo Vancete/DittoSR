@@ -57,7 +57,10 @@ struct DittoSettings {
     // ... the main pass' samples a pixel (4 - 32: fewer, noisier; more, slower), and the main pass at half size (one
     // pixel of each 2 x 2 a frame, brought back by depth and normal - about a quarter of its cost)
     float aoSamples = 16.0f;
-    bool aoHalf = true;  // (FastGI's: the filter and the temporal smoothing at half size too, the result brought back at the end)
+    bool aoHalf = true;
+    // ... with it (D3D12; the menu's Resolution): 0 half (the same pixel of each 2 x 2), 1 half rotating (a different one
+    // each frame, reconstructed at render size - aorecon.hlsl), 2 checkerboard (every other pixel, alternating)
+    int aoResMode = 0;  // (FastGI's: the filter and the temporal smoothing at half size too, the result brought back at the end)
     // ... decorrelated noise (each random dimension of the main pass its own IGN moved along its own direction a frame:
     // no fixed pattern - the bands of light a thin light left down a wall) - a test
     // ... FidelityFX CACAO's edge-sensitive blur after the temporal smoothing (aocacao.hlsl; D3D12): on the accumulated AO
@@ -280,7 +283,7 @@ private:
     ID3D12PipelineState *psoAoPrep_ = nullptr, *psoAoTemporal_ = nullptr, *psoAoComp_ = nullptr, *psoAoFilter_ = nullptr;
     ID3D12PipelineState *psoAoMain16_ = nullptr, *psoAoLut_ = nullptr, *psoAoCacao_ = nullptr,
                          *psoAoMipAll_ = nullptr, *psoAoCacao2_ = nullptr, *psoAoCurve_ = nullptr,
-                         *psoAoAtrous_ = nullptr, *psoAoLocal_ = nullptr, *psoAoRestir_ = nullptr, *psoAoMain16H_ = nullptr;  // (the main pass (16 x 16; FP16), the mips in one pass, CACAO's 2 passes in one, the curve's table, the GI's a-trous, the area's luma)  // (EXPERIMENTAL: Ditto Relight)
+                         *psoAoAtrous_ = nullptr, *psoAoLocal_ = nullptr, *psoAoRestir_ = nullptr, *psoAoRecon_ = nullptr, *psoAoMain16H_ = nullptr;  // (the main pass (16 x 16; FP16), the mips in one pass, CACAO's 2 passes in one, the curve's table, the GI's a-trous, the area's luma)  // (EXPERIMENTAL: Ditto Relight)
     bool lastFp16_ = false;
     bool hdrFromFormat_ = false;  // (logged: a float colour without the HDR flag)
     // the game's output last checked (outputWritable): its format, whether it allows unordered access, and the verdict
@@ -309,7 +312,8 @@ private:
     Tex aoCurveLut_;  // (ao_curve_lut: the curve's table, 4096 x 1 - curveKey_: the curve it was built for)
     float curveKey_[26] = {};
     Tex aoNdP_, aoNdHalfP_;  // (ao_pack_nd: the normal and depth packed, render and half size)
-    bool aoLastHalf_ = false;
+    int aoLastMode_ = -1;  // (the last frame's resolution mode - the history is one mode's)
+    Tex aoCk_;  // (checkerboard: the main pass' half-width target)
     // (the F8 capture: per frame, the output's and Relight's colour's readback copies; capN_ the frames copied (-1: no
     // capture), capLast_ the frame of the last - written out kCapWait frames later, the GPU done with them)
     struct Cap {

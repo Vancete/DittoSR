@@ -108,6 +108,7 @@ static void load_config() {
     s.aoBackBoost = GetPrivateProfileIntA("dittosr", "ao_backface_boost", s.aoBackBoost, ini) != 0;
     s.aoSamples = ini_float(ini, "ao_samples", s.aoSamples);
     s.aoHalf = GetPrivateProfileIntA("dittosr", "ao_half", s.aoHalf, ini) != 0;
+    s.aoResMode = GetPrivateProfileIntA("dittosr", "ao_resolution_mode", s.aoResMode, ini);
     s.aoCacao = GetPrivateProfileIntA("dittosr", "ao_cacao", s.aoCacao, ini) != 0;
     s.aoUnified = GetPrivateProfileIntA("dittosr", "ao_unified_filter", s.aoUnified, ini) != 0;
     s.aoRestir = GetPrivateProfileIntA("dittosr", "ao_restir", s.aoRestir, ini) != 0;
@@ -237,6 +238,7 @@ bool ditto_save_settings() {
     ok = put("ao_backface_boost", b(s.aoBackBoost), b(d.aoBackBoost), false) && ok;
     ok = put("ao_samples", s.aoSamples, d.aoSamples, false) && ok;
     ok = put("ao_half", b(s.aoHalf), b(d.aoHalf), false) && ok;
+    ok = put("ao_resolution_mode", (float)s.aoResMode, (float)d.aoResMode, false) && ok;
     ok = put("ao_cacao", b(s.aoCacao), b(d.aoCacao), false) && ok;
     ok = put("ao_unified_filter", b(s.aoUnified), b(d.aoUnified), false) && ok;
     ok = put("ao_restir", b(s.aoRestir), b(d.aoRestir), false) && ok;

@@ -37,8 +37,8 @@ cbuffer A : register(b0) {
                           // 32768 a longer history for it; 131072 the prepass at half size; 262144 the curve from its table;
                           // 524288 FastGI's 8-frame noise cycle, 1048576 its GI falloff; 8388608 blue noise
                           // (D3D12)
-    uint flags2;          // bits: 1 the occluder lookup table (aolut.hlsl - 32 rays); (D3D12) 2 the unified filter, 8 ReSTIR GI, 32 edge
-                          // fill, 128 a-trous, 64 stochastic reflections, 256 FP16, 512 interleaved GI, 4096 cheaper far pixels;
+    uint flags2;          // bits: 1 the occluder lookup table (aolut.hlsl - 32 rays); (D3D12) 2 the unified filter, 4 half rotating, 8 ReSTIR GI, 32 edge
+                          // fill, 128 a-trous, 64 stochastic reflections, 256 FP16, 512 interleaved GI, 1024 checkerboard, 4096 cheaper far pixels;
                           //  2048 HDR, 8192 the AO as a power, 16384 the local
                           // exposure
     float cmips;          // 1: the GI's far occluders' colour from the colour mips (aocmip.hlsl)
@@ -167,6 +167,11 @@ float hdPack(float d, uint c) { return asfloat((asuint(d) & ~31u) | min(c, 31u))
 uint hdCount(float v) { return asuint(v) & 31u; }
 
 // interleaved gradient noise (Jimenez 2014)
+// (half rotating, flags2 4: the pixel of each 2 x 2 the main pass computes this frame - all 4 in 4 frames)
+uint2 rotOff(float f) {
+    const uint2 o[4] = {uint2(0, 0), uint2(1, 1), uint2(1, 0), uint2(0, 1)};
+    return o[(uint)f & 3u];
+}
 // (a PCG step: the next of a stream of uniform [0, 1) numbers)
 float rndNext(inout uint s) {
     s = s * 747796405u + 2891336453u;
