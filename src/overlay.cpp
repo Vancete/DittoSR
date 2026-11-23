@@ -466,6 +466,7 @@ bool visible(int i) {
     if (i == I_SHARP) return !g_m.sharpOff;
     if (i == I_UPSCALER || i == I_COMPARE) return g_stats.hasReal;
     if (i == I_RELIGHT) return g_stats.backend != 2;  // (D3D11: no Ditto Relight)
+    if (i == I_FGEN) return false;  // (frame generation: for later - ini frame_gen)
     // (Relight's: the AO and GI strengths, the samples, its filters, the albedo's and the local exposure's strengths,
     // the AO's fade, the AO tests, the curves editor; the rest ini keys)
     if (i == I_RAO || i == I_RGI || i == I_RSAMPLES || i == I_THALF || i == I_TUNI) return g_m.relight;  // (the local exposure, the AO's fade: ini keys)
@@ -841,13 +842,6 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
     }
     y += 10 * S;
     section("EXPERIMENTAL");
-    {  // (frame generation: on through the game or OptiScaler - FSR 3.1's; whose in-between images, AMD's DLL alongside)
-        LARGE_INTEGER q, f;
-        QueryPerformanceCounter(&q), QueryPerformanceFrequency(&f);
-        bool on = g_stats.fgMode && (q.QuadPart - g_stats.fgQpc) < f.QuadPart / 2;
-        const char *v = !on ? "Off (the game / OptiScaler)" : g_stats.fgMode == 1 ? "DittoSR" : s.fgAmd ? "AMD's" : "DittoSR";
-        choice_row(I_FGEN, "Frame generation", v);
-    }
     if (g_stats.backend != 2) toggle_row(I_RELIGHT, "Ditto Relight", s.relight);  // (D3D11: none)
     if (s.relight && g_stats.backend != 2) {  // (its strengths, its quality toggles)
         slider_row(I_RAO, "Ambient occlusion", "the darkening");

@@ -367,9 +367,9 @@ struct DittoConfig {
     // the sharpness the FidelityFX API's dispatch carries (when it enables sharpening) in place of dittosr.ini's: -1 only
     // when this DLL runs from OptiScaler's custom provider folder (its sharpness slider), 1 always, 0 never
     int gameSharpness = -1;
-    // frame generation: 1 DittoSR's in-between images when the game (or OptiScaler) turns FSR 3.1's on (AMD's swapchain
-    // still presents them: its DLL alongside); 0 AMD's own interpolation
-    int frameGen = 1;
+    // frame generation (for later - off by default, hidden): 1 DittoSR's in-between images when the game (or OptiScaler)
+    // turns FSR 3.1's on (AMD's swapchain still presents them: its DLL alongside); 0 AMD's own interpolation
+    int frameGen = 0;
     DittoSettings s;
 };
 extern DittoConfig g_cfg;

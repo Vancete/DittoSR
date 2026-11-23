@@ -157,7 +157,7 @@ static void load_config() {
     c.menuKey = (int)strtol(b, nullptr, 0);
     c.compare = GetPrivateProfileIntA("dittosr", "compare", 0, ini) != 0;
     c.gameSharpness = GetPrivateProfileIntA("dittosr", "game_sharpness", -1, ini);
-    c.frameGen = GetPrivateProfileIntA("dittosr", "frame_gen", 1, ini);
+    c.frameGen = GetPrivateProfileIntA("dittosr", "frame_gen", 0, ini);  // (off for now: FSR 3.1's frame generation AMD's own)
     s.indicator = GetPrivateProfileIntA("debug", "indicator", GetPrivateProfileIntA("dittosr", "indicator", 0, ini), ini) != 0;
     // (debug_view: 1 the motion, 2 the new frame's share, 3 the stability level, 4 clip / cut / confidence)
     s.debugView = GetPrivateProfileIntA("dittosr", "debug_view", 0, ini);
