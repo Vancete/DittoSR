@@ -37,13 +37,6 @@ AOFMT("rg32ui") RWTexture2D<uint2> NdHalfP : register(u2);
 #if !DITTO_VK
 Texture2D<float> Blue : register(t8);  // (blue noise, flags 8388608: 64 x 64, R8)
 Texture2D<float4> PrevH : register(t9);  // (interleaved GI, flags2 512: the temporal smoothing's last result)
-// (ReSTIR GI, flags2 8 - aorestir.hlsl: the reservoir - A: the chosen occluder's offset from the pixel, W; B: its light
-// over the cosine it was seen at, M the candidates)
-RWTexture2D<float4> RsvA : register(u3);
-RWTexture2D<float4> RsvB : register(u4);
-static float3 gRsD = 0.0, gRsC = 0.0;
-static float gRsW = 0.0;
-static uint gSeed = 1u;
 #endif
 
 // (FP16, flags2 256 - the AO_HALF variant: the directions' and sizes' math in 16 bits)
@@ -126,14 +119,6 @@ int occluderAt(float3 Q, float w, float3 P, float3 n, float3 V, float R, float2 
                      (flagOn(512u) ? 0.5 + 0.5 * saturate(dot(sn3, -dir0)) : 1.0) *
                      (flagOn(1048576u) ? saturate(1.0 - l2 / (R * R)) : 1.0);  // (1048576: FastGI's falloff, 1 - (d / reach)^2)
         gi += add;
-#if !DITTO_VK
-        if (flag2On(8u)) {  // (ReSTIR: weighted reservoir sampling - each occluder kept by its share of the luma so far)
-            float3 c = add / float(nr);
-            float wl = dot(c, float3(0.2126, 0.7152, 0.0722));
-            gRsW += wl;
-            if (wl > 0.0 && rndNext(gSeed) * gRsW < wl) gRsD = d, gRsC = c / max(dot(n, dir0), 0.2);
-        }
-#endif
     }
     return 0;
 }
@@ -155,14 +140,8 @@ void main(uint2 id : SV_DispatchThreadID) {
     float z = nd.w;
     if (z <= 0.0) {
         Res[id] = float4(0.0, 0.0, 0.0, 1.0);
-#if !DITTO_VK
-        if (flag2On(8u)) RsvA[id] = 0.0, RsvB[id] = 0.0;
-#endif
         return;
     }
-#if !DITTO_VK
-    gSeed = (pix.x * 1973u + pix.y * 9277u + (uint)frame * 26699u) | 1u;
-#endif
     float3 n = nd.xyz;
     uint nr = flag2On(1u) ? 32u : clamp((uint)rays, 4u, 32u);
     uint ns = clamp((uint)samples, 4u, 32u);
@@ -234,12 +213,6 @@ void main(uint2 id : SV_DispatchThreadID) {
     if (flag2On(32u) && off > 0u && off < ns) gi *= min(float(ns) / float(ns - off), 2.0);
     float ao = (1.0 - float(countbits(bits)) / float(nr)) * saturate(1.0 - contact * near / float(nr));
 #if !DITTO_VK
-    if (flag2On(8u)) {  // (the reservoir: W = the luma's sum / the chosen one's p^ (M = the samples, p^ its luma x cosine))
-        float l = dot(gRsD, gRsD);
-        float ph = l > 1e-12 ? dot(gRsC, float3(0.2126, 0.7152, 0.0722)) * saturate(dot(n, gRsD * rsqrt(l))) : 0.0;
-        RsvA[id] = float4(gRsD, ph > 0.0 ? gRsW / ph : 0.0);
-        RsvB[id] = float4(gRsC, giOn ? float(ns) : 0.0);  // (interleaved GI's reused pixels: no candidates)
-    }
     if (reuse) { Res[id] = float4(PrevH.Load(int3(id, 0)).rgb, ao); return; }
     if (ckgi) { Res[id] = float4(PrevH.Load(int3(pix, 0)).rgb, ao); return; }
 #endif

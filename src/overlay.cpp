@@ -349,7 +349,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_TMIPS, I_TBACK, I_RSAMPLES, I_THALF, I_TCACAO, I_QCOS, I_QNRM, I_GWIDE, I_QFALL, I_RFADE, I_QBLUE, I_XEDGE, I_XATROUS, I_TUNI, I_CKGI, I_CKFUSE, I_FULL2, I_TRESTIR, I_TREFL, I_XINTER, I_XFAR, I_RLEXP, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_TMIPS, I_TBACK, I_RSAMPLES, I_THALF, I_TCACAO, I_QCOS, I_QNRM, I_GWIDE, I_QFALL, I_RFADE, I_QBLUE, I_XEDGE, I_XATROUS, I_TUNI, I_CKGI, I_CKFUSE, I_FULL2, I_XINTER, I_XFAR, I_RLEXP, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -466,11 +466,10 @@ bool visible(int i) {
     if (i == I_UPSCALER || i == I_COMPARE) return g_stats.hasReal;
     // (Relight's: the AO and GI strengths, the samples, its filters, the albedo's and the local exposure's strengths,
     // the AO's fade, the AO tests, the curves editor; the rest ini keys)
-    if (i == I_RAO || i == I_RGI || i == I_RSAMPLES || i == I_TUNI || i == I_TRESTIR || i == I_TREFL || i == I_RLEXP || i == I_RFADE) return g_m.relight;
+    if (i == I_RAO || i == I_RGI || i == I_RSAMPLES || i == I_TUNI || i == I_RLEXP || i == I_RFADE) return g_m.relight;
     if (i == I_CKGI || i == I_CKFUSE) return g_m.relight && g_m.checker;  // (the checkerboard's)
     if (i == I_FULL2) return g_m.relight && g_m.checker && g_m.unified;
     if (i == I_TCACAO || i == I_XATROUS) return g_m.relight && !g_m.unified;  // (the separate filters: without the unified one)
-    if (i == I_RTEMP || i == I_QBLUE || i == I_THALF || i == I_QNRM || i == I_TMIPS || i == I_TBACK || i == I_XINTER || i == I_XFAR) return g_m.relight;  // (the AO tests)
     if (i == I_RCURVE) return kCurvesEditor && g_m.relight;
     if (i >= I_RAO && i <= I_RLEXP) return false;  // (Relight's other settings: ini keys)
     return true;
@@ -555,7 +554,7 @@ int shimmer_index(float v) {
 // the on / off rows (a click anywhere on them flips them)
 bool is_toggle(int i) {
     switch (i) {
-    case I_INDICATOR: case I_RELIGHT: case I_RTEMP: case I_TMIPS: case I_TBACK: case I_TCACAO: case I_QCOS: case I_QNRM: case I_GWIDE: case I_QFALL: case I_QBLUE: case I_XEDGE: case I_XATROUS: case I_TUNI: case I_CKGI: case I_CKFUSE: case I_FULL2: case I_TRESTIR: case I_TREFL: case I_XINTER: case I_XFAR:
+    case I_INDICATOR: case I_RELIGHT: case I_RTEMP: case I_TMIPS: case I_TBACK: case I_TCACAO: case I_QCOS: case I_QNRM: case I_GWIDE: case I_QFALL: case I_QBLUE: case I_XEDGE: case I_XATROUS: case I_TUNI: case I_CKGI: case I_CKFUSE: case I_FULL2: case I_XINTER: case I_XFAR:
         return true;
     default: return false;
     }
@@ -610,8 +609,6 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_CKGI: s.aoCkGiHalf = !s.aoCkGiHalf; return true;
     case I_CKFUSE: s.aoCkFuse = !s.aoCkFuse; return true;
     case I_FULL2: s.aoFull2Pass = !s.aoFull2Pass; return true;
-    case I_TRESTIR: s.aoRestir = !s.aoRestir; return true;
-    case I_TREFL: s.aoReflect = !s.aoReflect; return true;
     case I_XINTER: s.aoGiInterleave = !s.aoGiInterleave; return true;
     case I_XFAR: s.aoFarCheap = !s.aoFarCheap; return true;
     case I_QCOS: s.aoEmitterCos = !s.aoEmitterCos; return true;
@@ -863,23 +860,12 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         }
         toggle_row(I_TUNI, "Unified filter", s.aoUnified);
         if (s.aoUnified && s.aoHalf && s.aoResMode == 2) toggle_row(I_FULL2, "Unified filter: 2 passes", s.aoFull2Pass);
-        toggle_row(I_TRESTIR, "ReSTIR GI", s.aoRestir);
-        toggle_row(I_TREFL, "Stochastic reflections", s.aoReflect);
         if (!s.aoUnified) {
             toggle_row(I_TCACAO, "CACAO blur", s.aoCacao);
             toggle_row(I_XATROUS, "GI a-trous filter", s.aoAtrous);
         }
         slider_row(I_RLEXP, "Local exposure", "shade lifted, glare tamed");
         slider_row(I_RFADE, "AO fade distance", "faded out to twice it");
-        y += 8 * S;
-        section("AO TESTS");
-        toggle_row(I_RTEMP, "Temporal smoothing", s.aoTemporal);
-        toggle_row(I_QBLUE, "Blue noise", s.aoBlueNoise);
-        toggle_row(I_QNRM, "Better normals", s.aoBetterNormals);
-        toggle_row(I_TMIPS, "Depth mips", s.aoMips);
-        toggle_row(I_TBACK, "Backface boost", s.aoBackBoost);
-        toggle_row(I_XINTER, "Interleaved GI", s.aoGiInterleave);
-        toggle_row(I_XFAR, "Cheaper far pixels", s.aoFarCheap);
     }
     if (s.relight && kCurvesEditor) {
         // the curves editor (Photoshop's): the line, the curve, its points; the

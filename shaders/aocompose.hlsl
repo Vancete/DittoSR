@@ -22,41 +22,6 @@ Texture2D<float> GDepth : register(t3);    // (the game's depth: flags 131072)
 Texture2D<float> CurveLut : register(t4);  // (the curve's table: flags 262144)
 #if !DITTO_VK
 Texture2D<float2> Local : register(t5);   // (the local exposure, flags2 16384: aolocal.hlsl's area luma)
-Texture2D<uint4> Mip1r : register(t6);    // (stochastic reflections, flags2 64: the mips' level 1 - depth and colour)
-// stochastic reflections: the view reflected about the normal jittered within a cone (a glossy surface's, ~0.06 - a new
-// direction each frame: DittoSR's accumulation averages them), marched 24 steps (x 1.22 each) through level 1's depth;
-// where it passes behind a surface (within 4 % of the depth): that surface's colour x Schlick's Fresnel (F0 0.04 - the
-// glancing angles: wet roads, floors, glass; at most 0.5), faded toward the screen's edges; rays back toward the camera
-// and misses: none
-float4 reflectAt(int2 p, float4 nd) {
-    float2 uv = (float2(p) + 0.5) * rsRcp;
-    float3 P = viewPos(uv, nd.w), V = -normalize(P), n = nd.xyz;
-    float F = 0.04 + 0.96 * pow(1.0 - saturate(dot(n, V)), 5.0);
-    if (F < 0.05) return 0.0;
-    float2 fp = float2(p) + 5.588238 * float((uint)frame & 7u);  // (IGN, the 8-frame cycle: noise DittoSR's accumulation evens out)
-    float3 t, b;
-    basisOf(n, t, b);
-    float2 xi = float2(ign(fp), ign(fp.yx + 17.0)) * 2.0 - 1.0;
-    float3 h = normalize(n + 0.06 * (t * xi.x + b * xi.y));
-    float3 R = reflect(-V, h);
-    // (rays back toward the camera left out: what they meet lies behind what the screen shows - false hits, halos)
-    if (dot(R, n) <= 0.0 || R.z < 0.1) return 0.0;
-    uint2 d1 = ((uint2)rs + 1u) >> 1;
-    float tt = 0.015 * nd.w * (0.5 + ign(fp + 37.0));
-    [loop] for (uint i = 0u; i < 24u; i++, tt *= 1.22) {
-        float3 Q = P + R * tt;
-        if (Q.z <= 0.0) break;
-        float2 q = projUv(Q);
-        if (any(q <= 0.0) || any(q >= 1.0)) break;
-        float3 c;
-        float4 m = mipDecode(Mip1r.Load(int3(min(uint2(q * float2(d1)), d1 - 1u), 0)), c);
-        if (m.w > 0.0 && m.w < Q.z && Q.z - m.w < 0.04 * Q.z) {
-            float2 e = saturate(min(q, 1.0 - q) * 10.0);
-            return float4(c, min(F, 0.5) * e.x * e.y * saturate((R.z - 0.1) * 5.0));
-        }
-    }
-    return 0.0;
-}
 #endif
 AOFMT("rgba16f") RWTexture2D<float4> Out : register(u0);
 
@@ -106,12 +71,6 @@ void main(uint2 id : SV_DispatchThreadID) {
         float3 occ3 = occ;
         if (fadeZ > 0.0) occ3 = lerp(occ3, 1.0, saturate((nd.w - fadeZ) / fadeZ));  // (the AO faded from fadeZ to twice it)
         o = col * occ3 + b;
-#if !DITTO_VK
-        if (flag2On(64u) && mips > 0.5) {  // (stochastic reflections: their colour x Fresnel over the relit one)
-            float4 rf = reflectAt(p, nd);
-            o = lerp(o, rf.rgb, rf.a);
-        }
-#endif
         if (flag2On(16384u) && le > 0.0) {
             // (local exposure, flags2 16384: x (a mid grey / its area's luma) ^ (0.5 x strength) - the shade lifted, the
             // glare brought down, the contrast within each area kept; params1's bits 0 - 7 its strength, x 4 at most either

@@ -114,8 +114,6 @@ static void load_config() {
     s.aoFull2Pass = GetPrivateProfileIntA("dittosr", "ao_full_size_two_pass", s.aoFull2Pass, ini) != 0;
     s.aoCacao = GetPrivateProfileIntA("dittosr", "ao_cacao", s.aoCacao, ini) != 0;
     s.aoUnified = GetPrivateProfileIntA("dittosr", "ao_unified_filter", s.aoUnified, ini) != 0;
-    s.aoRestir = GetPrivateProfileIntA("dittosr", "ao_restir", s.aoRestir, ini) != 0;
-    s.aoReflect = GetPrivateProfileIntA("dittosr", "ao_reflections", s.aoReflect, ini) != 0;
     s.aoCacaoPasses = GetPrivateProfileIntA("dittosr", "ao_cacao_passes", s.aoCacaoPasses, ini);
     s.aoEmitterCos = GetPrivateProfileIntA("dittosr", "ao_emitter_cosine", s.aoEmitterCos, ini) != 0;
     s.aoBetterNormals = GetPrivateProfileIntA("dittosr", "ao_better_normals", s.aoBetterNormals, ini) != 0;
@@ -247,8 +245,6 @@ bool ditto_save_settings() {
     ok = put("ao_full_size_two_pass", b(s.aoFull2Pass), b(d.aoFull2Pass), false) && ok;
     ok = put("ao_cacao", b(s.aoCacao), b(d.aoCacao), false) && ok;
     ok = put("ao_unified_filter", b(s.aoUnified), b(d.aoUnified), false) && ok;
-    ok = put("ao_restir", b(s.aoRestir), b(d.aoRestir), false) && ok;
-    ok = put("ao_reflections", b(s.aoReflect), b(d.aoReflect), false) && ok;
     ok = put("ao_emitter_cosine", b(s.aoEmitterCos), b(d.aoEmitterCos), false) && ok;
     ok = put("ao_better_normals", b(s.aoBetterNormals), b(d.aoBetterNormals), false) && ok;
     ok = put("ao_gi_wide", b(s.aoGiWide), b(d.aoGiWide), false) && ok;

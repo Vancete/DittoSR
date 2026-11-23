@@ -37,8 +37,8 @@ cbuffer A : register(b0) {
                           // 32768 a longer history for it; 131072 the prepass at half size; 262144 the curve from its table;
                           // 524288 FastGI's 8-frame noise cycle, 1048576 its GI falloff; 8388608 blue noise
                           // (D3D12)
-    uint flags2;          // bits: 1 the occluder lookup table (aolut.hlsl - 32 rays); (D3D12) 2 the unified filter, 8 ReSTIR GI, 16 the checkerboard's GI on half its pixels, 32 edge
-                          // fill, 128 a-trous, 64 stochastic reflections, 256 FP16, 512 interleaved GI, 1024 checkerboard, 4096 cheaper far pixels;
+    uint flags2;          // bits: 1 the occluder lookup table (aolut.hlsl - 32 rays); (D3D12) 2 the unified filter, 16 the checkerboard's GI on half its pixels, 32 edge
+                          // fill, 128 a-trous, 256 FP16, 512 interleaved GI, 1024 checkerboard, 4096 cheaper far pixels;
                           //  2048 HDR, 8192 the checkerboard read by the filter, 16384 the local
                           // exposure
     float cmips;          // 1: the GI's far occluders' colour from the colour mips (aocmip.hlsl)
@@ -166,11 +166,5 @@ float4 ndUnpack(uint2 v) {
 float hdPack(float d, uint c) { return asfloat((asuint(d) & ~31u) | min(c, 31u)); }
 uint hdCount(float v) { return asuint(v) & 31u; }
 
-// (a PCG step: the next of a stream of uniform [0, 1) numbers)
-float rndNext(inout uint s) {
-    s = s * 747796405u + 2891336453u;
-    uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
-    return float((w >> 22u) ^ w) * (1.0 / 4294967296.0);
-}
 // interleaved gradient noise (Jimenez 2014)
 float ign(float2 p) { return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715)))); }
