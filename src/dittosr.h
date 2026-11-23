@@ -60,7 +60,11 @@ struct DittoSettings {
     bool aoHalf = true;
     // ... with it (D3D12; the menu's Resolution): 0 half (the same pixel of each 2 x 2), 1 half rotating (a different one
     // each frame, reconstructed at render size - aorecon.hlsl), 2 checkerboard (every other pixel, alternating)
-    int aoResMode = 0;  // (FastGI's: the filter and the temporal smoothing at half size too, the result brought back at the end)
+    int aoResMode = 0;
+    // ... the checkerboard cheaper (D3D12; the menu's toggles - off): aoCkGiHalf the GI on half its pixels (the others the
+    // history's), aoCkFuse its fill done by the sparse filter (no pass of its own); aoFull2Pass the unified filter in 2
+    // passes at render size (spacing 2 and 6, not 2, 4, 8)
+    bool aoCkGiHalf = false, aoCkFuse = false, aoFull2Pass = false;  // (FastGI's: the filter and the temporal smoothing at half size too, the result brought back at the end)
     // ... decorrelated noise (each random dimension of the main pass its own IGN moved along its own direction a frame:
     // no fixed pattern - the bands of light a thin light left down a wall) - a test
     // ... FidelityFX CACAO's edge-sensitive blur after the temporal smoothing (aocacao.hlsl; D3D12): on the accumulated AO

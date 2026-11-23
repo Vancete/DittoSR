@@ -763,6 +763,8 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             ka.flags = (float)(((uint32_t)ka.flags & ~2u) | (blue ? 8388608u : 0u));  // (2, decorrelated noise: Vulkan's - blue noise here)
             // (interleaved GI (a valid history), the 16-bit main pass (its variants made))
             bool interleave = s_.aoGiInterleave && aoT && aoValid && !recon;
+            // (the checkerboard cheaper: the GI on half its pixels - with a valid history -, its fill by the filter)
+            bool ckGi = chk && s_.aoCkGiHalf && aoT && aoValid, ckF = chk && s_.aoCkFuse;
             bool fp16m = psoAoMain16H_ != nullptr;  // (FP16 where the GPU has it)
             bool uni = s_.aoUnified, atr = uni || s_.aoAtrous;  // (the unified filter: the a-trous one on both, no CACAO)
             // (ReSTIR's reservoirs at the main pass' size: made when first on, again when that size changes; reflections with
@@ -774,7 +776,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             for (Tex *t : {&aoRsA_, &aoRsTA_[0], &aoRsTA_[1]}) if (rst && !t->res) rst = makeTex(*t, mw, mh, DXGI_FORMAT_R32G32B32A32_FLOAT);
             for (Tex *t : {&aoRsB_, &aoRsTB_[0], &aoRsTB_[1]}) if (rst && !t->res) rst = makeTex(*t, mw, mh, F16);
             bool refl = s_.aoReflect && mips;
-            ka.flags2 |= (rst ? 8u : 0u) | (refl ? 64u : 0u) | (rot ? 4u : 0u) | (chk ? 1024u : 0u);
+            ka.flags2 |= (rst ? 8u : 0u) | (refl ? 64u : 0u) | (rot ? 4u : 0u) | (chk ? 1024u : 0u) | (ckGi ? 16u : 0u) | (ckF ? 8192u : 0u);
             ka.flags2 |= (uni ? 2u : 0u) | (s_.aoEdgeFill ? 32u : 0u) | (atr ? 128u : 0u) | (fp16m ? 256u : 0u) |
                          (interleave ? 512u : 0u) | (s_.aoFarCheap ? 4096u : 0u);
             // (the area's luma - the local exposure (its slider up): with the mips, made when first needed)
@@ -833,7 +835,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 p7(s, f, ndFP);
                 if (blue) s[8] = aoBlue_.res, f[8] = aoBlue_.fmt;
                 Tex &prevH = H[aoCur_ ^ 1];  // (interleaved GI: the temporal smoothing's last result)
-                if (interleave) transition(cl, prevH, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE), s[9] = prevH.res, f[9] = prevH.fmt;
+                if (interleave || ckGi) transition(cl, prevH, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE), s[9] = prevH.res, f[9] = prevH.fmt;
                 ID3D12Resource *u[kUavs] = {tgt.res, fh && !pack ? aoNdHalf_.res : nullptr, fh && pack ? aoNdHalfP_.res : nullptr};
                 DXGI_FORMAT uf[kUavs] = {tgt.fmt, fh && !pack ? aoNdHalf_.fmt : X, fh && pack ? aoNdHalfP_.fmt : X};
                 if (rst) {  // (ReSTIR: this frame's reservoirs, u3 and u4)
@@ -894,8 +896,8 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 DXGI_FORMAT uf[kUavs] = {dst.fmt};
                 runA(psoAoRecon_, s, f, u, uf, rw, rh);
             };
-            if (chk) spread(aoCk_, r0);  // (checkerboard: to render size first - the filter and the rest there)
-            Tex &fsrc = rst ? r1 : r0, &fdst = rst ? r0 : r1;
+            if (chk && !ckF) spread(aoCk_, r0);  // (checkerboard: to render size first - the filter and the rest there)
+            Tex &fsrc = ckF ? aoCk_ : rst ? r1 : r0, &fdst = rst ? r0 : r1;  // (ckF: the filter reads the checkerboard)
             {  // (the spatial filter: CORTAO's sparse one, r0 into r1 - after ReSTIR, r1 into r0)
                 transition(cl, fsrc, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 transition(cl, fdst, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -935,11 +937,12 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 aoOk_ = false;
             }
             if (atr) {  // (the a-trous filter (the GI's; with uni the AO's too): 2 passes, spacing 1 then 2 (uni: 3, then 4) - r0 and r1 ping-ponged, the history kept)
-                for (int st = 1; st <= (uni ? 4 : 2); st *= 2) {  // (unified: a third at 4 - CACAO's 2 passes' reach)
+                bool two = recon && uni && s_.aoFull2Pass;  // (render size: 2 passes at 2 and 6 in place of 2, 4, 8)
+                for (int k = 0, st = 1; k < (two ? 2 : uni ? 3 : 2); k++, st *= 2) {  // (unified: a third at 4 - CACAO's 2 passes' reach)
                     Tex &dst = aoOut == &q1 ? q0 : q1;
                     transition(cl, *aoOut, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                     transition(cl, dst, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                    ka.axis = (float)(recon ? 2 * st : st);  // (recon: render size - twice the spacing)
+                    ka.axis = (float)(two ? (k ? 6 : 2) : recon ? 2 * st : st);  // (recon: render size - twice the spacing)
                     ID3D12Resource *s[kSrvs] = {nd2.res, aoOut->res};
                     DXGI_FORMAT f[kSrvs] = {nd2.fmt, aoOut->fmt};
                     p7(s, f, ndPm2);

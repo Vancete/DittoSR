@@ -349,7 +349,7 @@ struct Ui {
 
 // ---- the menu's state ----
 
-enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_TMIPS, I_TBACK, I_RSAMPLES, I_THALF, I_TCACAO, I_QCOS, I_QNRM, I_GWIDE, I_QFALL, I_RFADE, I_QBLUE, I_XEDGE, I_XATROUS, I_TUNI, I_TRESTIR, I_TREFL, I_XINTER, I_XFAR, I_RLEXP, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
+enum Item { I_UPSCALER, I_COMPARE, I_SHMODE, I_SHARP, I_WEIGHT, I_SHIMMER, I_FGEN, I_RELIGHT, I_RAO, I_RGI, I_RGIDARK, I_RGICEIL, I_RRADIUS, I_RSCREEN, I_RCONTACT, I_RSPATIAL, I_RTEMP, I_TMIPS, I_TBACK, I_RSAMPLES, I_THALF, I_TCACAO, I_QCOS, I_QNRM, I_GWIDE, I_QFALL, I_RFADE, I_QBLUE, I_XEDGE, I_XATROUS, I_TUNI, I_CKGI, I_CKFUSE, I_FULL2, I_TRESTIR, I_TREFL, I_XINTER, I_XFAR, I_RLEXP, I_RCURVE, I_DEBUG, I_INDICATOR, I_BUTTONS, I_COUNT };
 
 struct Key {
     int vk;
@@ -382,6 +382,7 @@ struct Menu : Perf {  // (its Perf: a copy of g_perf, taken before each draw)
     bool relight = false;  // (Ditto Relight on: its sliders shown)
     bool sharpOff = false;  // (the sharpening off: its slider hidden)
     bool unified = true;  // (the unified filter on: CACAO's and the a-trous filter's toggles hidden)
+    bool checker = false, recon = false;  // (the resolution: checkerboard; either render-size mode - their toggles shown)
     // the curves editor: its graph (gx0, gy0, gx1, gy1, in the rows' coordinates), the point selected, the point the
     // mouse holds (-1 none), the keyboard's editing, the last click (a double click resets), the UI's scale
     float cg[4] = {};
@@ -466,6 +467,8 @@ bool visible(int i) {
     // (Relight's: the AO and GI strengths, the samples, its filters, the albedo's and the local exposure's strengths,
     // the AO's fade, the AO tests, the curves editor; the rest ini keys)
     if (i == I_RAO || i == I_RGI || i == I_RSAMPLES || i == I_TUNI || i == I_TRESTIR || i == I_TREFL || i == I_RLEXP || i == I_RFADE) return g_m.relight;
+    if (i == I_CKGI || i == I_CKFUSE) return g_m.relight && g_m.checker;  // (the checkerboard's)
+    if (i == I_FULL2) return g_m.relight && g_m.recon && g_m.unified;
     if (i == I_TCACAO || i == I_XATROUS) return g_m.relight && !g_m.unified;  // (the separate filters: without the unified one)
     if (i == I_RTEMP || i == I_QBLUE || i == I_THALF || i == I_QNRM || i == I_TMIPS || i == I_TBACK || i == I_XINTER || i == I_XFAR) return g_m.relight;  // (the AO tests)
     if (i == I_RCURVE) return kCurvesEditor && g_m.relight;
@@ -552,7 +555,7 @@ int shimmer_index(float v) {
 // the on / off rows (a click anywhere on them flips them)
 bool is_toggle(int i) {
     switch (i) {
-    case I_INDICATOR: case I_RELIGHT: case I_RTEMP: case I_TMIPS: case I_TBACK: case I_TCACAO: case I_QCOS: case I_QNRM: case I_GWIDE: case I_QFALL: case I_QBLUE: case I_XEDGE: case I_XATROUS: case I_TUNI: case I_TRESTIR: case I_TREFL: case I_XINTER: case I_XFAR:
+    case I_INDICATOR: case I_RELIGHT: case I_RTEMP: case I_TMIPS: case I_TBACK: case I_TCACAO: case I_QCOS: case I_QNRM: case I_GWIDE: case I_QFALL: case I_QBLUE: case I_XEDGE: case I_XATROUS: case I_TUNI: case I_CKGI: case I_CKFUSE: case I_FULL2: case I_TRESTIR: case I_TREFL: case I_XINTER: case I_XFAR:
         return true;
     default: return false;
     }
@@ -604,6 +607,9 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_XEDGE: s.aoEdgeFill = !s.aoEdgeFill; return true;
     case I_XATROUS: s.aoAtrous = !s.aoAtrous; return true;
     case I_TUNI: s.aoUnified = !s.aoUnified; return true;
+    case I_CKGI: s.aoCkGiHalf = !s.aoCkGiHalf; return true;
+    case I_CKFUSE: s.aoCkFuse = !s.aoCkFuse; return true;
+    case I_FULL2: s.aoFull2Pass = !s.aoFull2Pass; return true;
     case I_TRESTIR: s.aoRestir = !s.aoRestir; return true;
     case I_TREFL: s.aoReflect = !s.aoReflect; return true;
     case I_XINTER: s.aoGiInterleave = !s.aoGiInterleave; return true;
@@ -851,7 +857,12 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
             static const char *const kRes[4] = {"Full", "Half", "Half rotating", "Checkerboard"};
             choice_row(I_THALF, "Resolution", kRes[!s.aoHalf ? 0 : 1 + (s.aoResMode < 0 || s.aoResMode > 2 ? 0 : s.aoResMode)]);
         }
+        if (s.aoHalf && s.aoResMode == 2) {
+            toggle_row(I_CKGI, "Checkerboard: GI on half", s.aoCkGiHalf);
+            toggle_row(I_CKFUSE, "Checkerboard: fill in filter", s.aoCkFuse);
+        }
         toggle_row(I_TUNI, "Unified filter", s.aoUnified);
+        if (s.aoUnified && s.aoHalf && (s.aoResMode == 1 || s.aoResMode == 2)) toggle_row(I_FULL2, "Unified filter: 2 passes", s.aoFull2Pass);
         toggle_row(I_TRESTIR, "ReSTIR GI", s.aoRestir);
         toggle_row(I_TREFL, "Stochastic reflections", s.aoReflect);
         if (!s.aoUnified) {
@@ -1096,10 +1107,12 @@ void make_panel(Ui &u, float W, float H, float scale, double t, bool focus) {
     take_perf();
     DittoSettings s = ditto_settings();
     bool changed = false;
-    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2, g_m.unified = s.aoUnified;
+    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2, g_m.unified = s.aoUnified, g_m.checker = s.aoHalf && s.aoResMode == 2,
+    g_m.recon = s.aoHalf && (s.aoResMode == 1 || s.aoResMode == 2);
     if (g_m.open && focus) input(s, changed, t);
     if (changed) ditto_set_settings(s);
-    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2, g_m.unified = s.aoUnified;
+    g_m.relight = s.relight, g_m.sharpOff = s.sharpenMode == 2, g_m.unified = s.aoUnified, g_m.checker = s.aoHalf && s.aoResMode == 2,
+    g_m.recon = s.aoHalf && (s.aoResMode == 1 || s.aoResMode == 2);
     if (!visible(g_m.sel)) g_m.sel = I_RELIGHT;  // (its sliders hidden under the selection: Relight off, or Defaults)
     u.s = scale, u.alpha = ease(g_m.anim), u.dx = -(1.0f - ease(g_m.anim)) * 420.0f * scale;
     u.q.reserve(2048);

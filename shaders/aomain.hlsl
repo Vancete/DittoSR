@@ -173,6 +173,10 @@ void main(uint2 id : SV_DispatchThreadID) {
     // temporal smoothing's last result, the AO alone with half the samples)
     bool reuse = flag2On(512u) && (((id.x + id.y + (uint)frame) & 1u) != 0u);
     if (reuse) giOn = false, ns = max(ns / 2u, 4u);
+    // (checkerboard, flags2 16: the GI on half its pixels - alternating every 2 frames, each pixel's every 4 -, the
+    // others' from the history at that pixel; the AO on all)
+    bool ckgi = ck && flag2On(16u) && (((id.x + id.y + ((uint)frame >> 1)) & 1u) != 0u);
+    if (ckgi) giOn = false;
     // (cheaper far pixels, flags2 4096: past twice the AO's fade distance - the AO faded out - half the samples)
     if (flag2On(4096u) && fadeZ > 0.0 && z > 2.0 * fadeZ) ns = max(ns / 2u, 4u);
     float2 uv = (float2(pix) + 0.5) * rsRcp;
@@ -239,6 +243,7 @@ void main(uint2 id : SV_DispatchThreadID) {
         RsvB[id] = float4(gRsC, giOn ? float(ns) : 0.0);  // (interleaved GI's reused pixels: no candidates)
     }
     if (reuse) { Res[id] = float4(PrevH.Load(int3(id, 0)).rgb, ao); return; }
+    if (ckgi) { Res[id] = float4(PrevH.Load(int3(pix, 0)).rgb, ao); return; }
 #endif
     Res[id] = float4(gi / float(nr), ao);
 }
