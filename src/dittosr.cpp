@@ -696,14 +696,14 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             // made when first on; the history kept for one mode at a time)
             UINT hw2 = (rw + 1) / 2, hh2 = (rh + 1) / 2;
             const DXGI_FORMAT F16 = DXGI_FORMAT_R16G16B16A16_FLOAT;
-            // (the resolution mode: 0 full, 1 half, 2 half rotating, 3 checkerboard - the last two reconstructed at render size)
-            int rmode = !s_.aoHalf ? 0 : s_.aoResMode == 1 ? 2 : s_.aoResMode == 2 ? 3 : 1;
+            // (the resolution mode: 0 full, 1 half, 3 checkerboard - spread to render size)
+            int rmode = !s_.aoHalf ? 0 : s_.aoResMode == 2 ? 3 : 1;
             if (rmode == 3 && !(aoCk_.res || makeTex(aoCk_, hw2, rh, F16))) rmode = 1;
             if (rmode >= 2 && !psoAoRecon_) rmode = 1;
-            bool rot = rmode == 2, chk = rmode == 3, recon = rot || chk;
-            bool half = (rmode == 1 || rot) && (aoHalf_.res || makeTex(aoHalf_, hw2, hh2, F16)) && (aoHalfF_.res || makeTex(aoHalfF_, hw2, hh2, F16)) &&
+            bool chk = rmode == 3, recon = chk;
+            bool half = rmode == 1 && (aoHalf_.res || makeTex(aoHalf_, hw2, hh2, F16)) && (aoHalfF_.res || makeTex(aoHalfF_, hw2, hh2, F16)) &&
                         (aoNdHalf_.res || makeTex(aoNdHalf_, hw2, hh2, DXGI_FORMAT_R32G32B32A32_FLOAT));
-            if (half && !rot && aoT && !aoHh_[0].res)
+            if (half && aoT && !aoHh_[0].res)
                 aoT = makeTex(aoHh_[0], hw2, hh2, F16) && makeTex(aoHh_[1], hw2, hh2, F16) && makeTex(aoHDh_[0], hw2, hh2, DXGI_FORMAT_R32_FLOAT) &&
                       makeTex(aoHDh_[1], hw2, hh2, DXGI_FORMAT_R32_FLOAT);
             if (rmode != aoLastMode_) aoValid = false, aoOk_ = false;
@@ -716,7 +716,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                         (!half || aoNdHalfP_.res || makeTex(aoNdHalfP_, hw2, hh2, DXGI_FORMAT_R32G32_UINT));
             bool upc = half && !recon;  // (recon: the composition reads the render-size result)
             // (the prepass at half size: with half resolution and the mips - their level 1 the half size's normal and depth)
-            bool hp = half && mips && !rot;  // (rotating: the main pass' pixel moves - the render-size prepass)
+            bool hp = half && mips;
             // (the curve's table: made when first needed, built when the curve changes)
             bool cl8 = ka.curveN > 1.5f && (aoCurveLut_.res || (curveKey_[24] = -1.0f, makeTex(aoCurveLut_, 4096, 1, DXGI_FORMAT_R32_FLOAT)));  // (new: built again)
             if (cl8) {
@@ -776,7 +776,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             for (Tex *t : {&aoRsA_, &aoRsTA_[0], &aoRsTA_[1]}) if (rst && !t->res) rst = makeTex(*t, mw, mh, DXGI_FORMAT_R32G32B32A32_FLOAT);
             for (Tex *t : {&aoRsB_, &aoRsTB_[0], &aoRsTB_[1]}) if (rst && !t->res) rst = makeTex(*t, mw, mh, F16);
             bool refl = s_.aoReflect && mips;
-            ka.flags2 |= (rst ? 8u : 0u) | (refl ? 64u : 0u) | (rot ? 4u : 0u) | (chk ? 1024u : 0u) | (ckGi ? 16u : 0u) | (ckF ? 8192u : 0u);
+            ka.flags2 |= (rst ? 8u : 0u) | (refl ? 64u : 0u) | (chk ? 1024u : 0u) | (ckGi ? 16u : 0u) | (ckF ? 8192u : 0u);
             ka.flags2 |= (uni ? 2u : 0u) | (s_.aoEdgeFill ? 32u : 0u) | (atr ? 128u : 0u) | (fp16m ? 256u : 0u) |
                          (interleave ? 512u : 0u) | (s_.aoFarCheap ? 4096u : 0u);
             // (the area's luma - the local exposure (its slider up): with the mips, made when first needed)
@@ -785,7 +785,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             if (fx) ka.flags2 |= 16384u;
             // (the render-size normal and depth the passes read: the half size's with hp)
             Tex &ndF = hp ? aoNdHalf_ : aoNd_, &ndFP = hp ? aoNdHalfP_ : aoNdP_;
-            Tex *H = half && !rot ? aoHh_ : aoH_, *HD = half && !rot ? aoHDh_ : aoHD_;  // (recon: the history at render size)
+            Tex *H = half ? aoHh_ : aoH_, *HD = half ? aoHDh_ : aoHD_;
             // (a pass' packed normal and depth at t7: render size, or the main pass' size)
             auto p7 = [&](ID3D12Resource **s, DXGI_FORMAT *f, Tex &t) {
                 if (pack) s[7] = t.res, f[7] = t.fmt;
@@ -909,13 +909,7 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
                 runA(psoAoFilter_, s, f, u, uf, fdst.w, fdst.h);
             }
             mark(9);
-            Tex *src = &fdst;
-            if (rot) {  // (half rotating: the filtered half size to render size - its pixel of each 2 x 2 exact)
-                ka.rs[0] = (float)rw, ka.rs[1] = (float)rh, ka.rsRcp[0] = 1.0f / rw, ka.rsRcp[1] = 1.0f / rh;
-                spread(fdst, aoRes_);
-                src = &aoRes_;
-            }
-            Tex &filt = *src;
+            Tex &filt = fdst;
             transition(cl, filt, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             Tex *aoOut = &filt;
             if (aoT) {  // (the temporal smoothing: no valid history - never read, the filtered in its place)

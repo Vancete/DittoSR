@@ -58,8 +58,9 @@ struct DittoSettings {
     // pixel of each 2 x 2 a frame, brought back by depth and normal - about a quarter of its cost)
     float aoSamples = 16.0f;
     bool aoHalf = true;
-    // ... with it (D3D12; the menu's Resolution): 0 half (the same pixel of each 2 x 2), 1 half rotating (a different one
-    // each frame, reconstructed at render size - aorecon.hlsl), 2 checkerboard (every other pixel, alternating)
+    // ... with it (D3D12; the menu's Resolution): 0 half (the same pixel of each 2 x 2), 2 checkerboard (every other pixel,
+    // alternating, spread to render size - aorecon.hlsl). (Tried and removed: 1 half rotating - a different pixel of each
+    // 2 x 2 each frame: its cost for half's look in motion)
     int aoResMode = 0;
     // ... the checkerboard cheaper (D3D12; the menu's toggles - off): aoCkGiHalf the GI on half its pixels (the others the
     // history's), aoCkFuse its fill done by the sparse filter (no pass of its own); aoFull2Pass the unified filter in 2
