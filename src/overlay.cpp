@@ -466,7 +466,7 @@ bool visible(int i) {
     if (i == I_UPSCALER || i == I_COMPARE) return g_stats.hasReal;
     // (Relight's: the AO and GI strengths, the samples, its filters, the albedo's and the local exposure's strengths,
     // the AO's fade, the AO tests, the curves editor; the rest ini keys)
-    if (i == I_RAO || i == I_RGI || i == I_RSAMPLES || i == I_TUNI || i == I_RLEXP || i == I_RFADE) return g_m.relight;
+    if (i == I_RAO || i == I_RGI || i == I_RSAMPLES || i == I_THALF || i == I_TUNI || i == I_RLEXP || i == I_RFADE) return g_m.relight;
     if (i == I_CKGI || i == I_CKFUSE) return g_m.relight && g_m.checker;  // (the checkerboard's)
     if (i == I_FULL2) return g_m.relight && g_m.checker && g_m.unified;
     if (i == I_TCACAO || i == I_XATROUS) return g_m.relight && !g_m.unified;  // (the separate filters: without the unified one)
