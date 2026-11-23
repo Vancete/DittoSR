@@ -20,9 +20,7 @@ Texture2D<float4> Color : register(t1);
 Texture2D<float4> Res : register(t2);
 Texture2D<float> GDepth : register(t3);    // (the game's depth: flags 131072)
 Texture2D<float> CurveLut : register(t4);  // (the curve's table: flags 262144)
-#if !DITTO_VK
 Texture2D<float2> Local : register(t5);   // (the local exposure, flags2 16384: aolocal.hlsl's area luma)
-#endif
 AOFMT("rgba16f") RWTexture2D<float4> Out : register(u0);
 
 #include "ao_up.hlsli"
@@ -43,7 +41,6 @@ void main(uint2 id : SV_DispatchThreadID) {
         // near its depth is to the pixel's (another surface left out) x e^(-(stops from the pixel)^2 / 2) (bilateral in
         // brightness: a light beside a wall no longer darkens it), the pixel itself a little - smooth across the texels' borders)
         float le = 0.0;
-#if !DITTO_VK
         if (flag2On(16384u) && mips > 0.5) {
             float lp = dot(col, float3(0.2126, 0.7152, 0.0722));
             uint2 d3 = ((uint2)rs + 7u) >> 3;
@@ -60,7 +57,6 @@ void main(uint2 id : SV_DispatchThreadID) {
             }
             le /= we;
         }
-#endif
         float dark = 1.0 - smoothstep(0.0, 0.25, dot(col, float3(0.2126, 0.7152, 0.0722)));
         float3 b = giStrength * lerp(1.0, giDark, dark) * albedo * r.rgb;
         if (giCeiling > 0.0) {

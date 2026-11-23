@@ -51,7 +51,7 @@ rem the in-game menu (overlay.cpp): a vertex and a pixel shader
 %DXC% -nologo -T ps_6_0 -E ps -O3 -Fh "%OUT%\gen\ov_ps.h" -Vn g_ov_ps "%ROOT%shaders\overlay.hlsl" || exit /b 1
 rem Vulkan (SPIR-V): one descriptor set - b0 the constants at 0, t0-t7 at 10, u0-u2 at 20, s0 at 30 (dittosr_vk.cpp)
 set SPVF=-nologo -spirv -fspv-target-env=vulkan1.1 -fvk-b-shift 0 0 -fvk-t-shift 10 0 -fvk-u-shift 20 0 -fvk-s-shift 30 0 -D DITTO_VK=1 -T cs_6_0 -E main -O3
-for %%s in (convert motion aoprep aofilter aotemporal aocompose aolut aocacao aomipall aocurve) do (
+for %%s in (convert motion aoprep aofilter aotemporal aocompose aolut aocacao aomipall aocurve aoatrous aolocal) do (
   "%SPV%" %SPVF% -Fh "%OUT%\gen\spv_%%s.h" -Vn g_spv_%%s "%ROOT%shaders\%%s.hlsl" || exit /b 1
 )
 "%SPV%" %SPVF% -DAO_WG=16 -Fh "%OUT%\gen\spv_aomain16.h" -Vn g_spv_aomain16 "%ROOT%shaders\aomain.hlsl" || exit /b 1

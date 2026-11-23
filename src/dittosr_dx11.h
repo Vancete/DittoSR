@@ -1,8 +1,8 @@
 // DittoSR on D3D11: the convert, motion, upscale and sharpening passes of dittosr.cpp (D3D12), compiled to SM 5.0 with
 // FXC, run on the game's device context. Feature level 11_0 is all it needs: at most 5 UAVs a pass, no typed UAV loads
 // (every pass writes its UAVs and reads its inputs as shader resources), the shaders FP32. The context's compute stage
-// bindings DittoSR touches are put back as they were after each upscale. Ditto Relight (the AO / GI) and the F8 capture
-// are D3D12's and Vulkan's.
+// bindings DittoSR touches are put back as they were after each upscale. Ditto Relight (the AO / GI) is D3D12's
+// and Vulkan's.
 #pragma once
 #include <d3d11.h>
 #include <stdint.h>

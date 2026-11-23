@@ -131,9 +131,6 @@ DittoSR::~DittoSR() {
     releaseTextures(true);
     collectRetired(true);
     if (timeRb_) timeRb_->Release();
-    for (int i = 0; i < kCapFrames; i++)
-        for (Cap *c : {&capOut_[i], &capRel_[i]})
-            if (c->rb) c->rb->Release();
     if (timeQ_) timeQ_->Release();
     if (psoConvert_) psoConvert_->Release();
     if (psoMotion_) psoMotion_->Release();
@@ -427,67 +424,12 @@ bool ditto_frame_from_ffx(const ffxDispatchDescUpscale *d, const DittoCreateInfo
     return true;
 }
 
-// The F8 capture: src (its whole subresource 0) copied into c's readback buffer (made for it); false: no buffer
-bool DittoSR::capCopy(ID3D12GraphicsCommandList *cl, ID3D12Resource *src, Cap &c) {
-    D3D12_RESOURCE_DESC d = src->GetDesc();
-    UINT64 size = 0;
-    dev_->GetCopyableFootprints(&d, 0, 1, 0, &c.fp, nullptr, nullptr, &size);
-    if (!c.rb) {
-        D3D12_HEAP_PROPERTIES hp = {D3D12_HEAP_TYPE_READBACK};
-        D3D12_RESOURCE_DESC bd = {};
-        bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, bd.Width = size, bd.Height = 1, bd.DepthOrArraySize = 1;
-        bd.MipLevels = 1, bd.SampleDesc.Count = 1, bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&c.rb))))
-            return c.rb = nullptr, false;
-    }
-    c.w = (uint32_t)d.Width, c.h = d.Height;
-    D3D12_TEXTURE_COPY_LOCATION dst = {}, s = {};
-    dst.pResource = c.rb, dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, dst.PlacedFootprint = c.fp;
-    s.pResource = src, s.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, s.SubresourceIndex = 0;
-    cl->CopyTextureRegion(&dst, 0, 0, 0, &s, nullptr);
-    return true;
-}
-
-// ... written out: dittosr-capture\fNN_output.raw, fNN_relight.raw - "DSRCAP1\0", width, height, DXGI format, row pitch
-// (uint32 each), then the rows; the buffers released
-void DittoSR::capWrite() {
-    char dir[300];
-    snprintf(dir, sizeof dir, "%sdittosr-capture", g_dir);
-    CreateDirectoryA(dir, nullptr);
-    int n = 0;
-    for (int i = 0; i < kCapFrames; i++)
-        for (int k = 0; k < 2; k++) {
-            Cap &c = k ? capRel_[i] : capOut_[i];
-            if (!c.rb) continue;
-            void *p = nullptr;
-            D3D12_RANGE all = {0, (SIZE_T)(c.fp.Footprint.RowPitch * (UINT64)c.h)}, none = {0, 0};
-            if (SUCCEEDED(c.rb->Map(0, &all, &p))) {
-                char path[360];
-                snprintf(path, sizeof path, "%s\\f%02d_%s.raw", dir, i, k ? "relight" : "output");
-                if (FILE *f = fopen(path, "wb")) {
-                    uint32_t h[5] = {c.w, c.h, (uint32_t)c.fp.Footprint.Format, c.fp.Footprint.RowPitch, 0};
-                    fwrite("DSRCAP1", 1, 8, f), fwrite(h, 4, 4, f);
-                    fwrite((const uint8_t *)p + c.fp.Offset, 1, (size_t)c.fp.Footprint.RowPitch * c.h, f);
-                    fclose(f), n++;
-                }
-                c.rb->Unmap(0, &none);
-            }
-            c.rb->Release(), c = Cap();
-        }
-    ditto_log("capture: %d images written to %s\n", n, dir);
-}
-
 bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     if (!ok_ || !fr.cl || !fr.color || !fr.mv || !fr.output || !fr.rw || !fr.rh || !fr.ow || !fr.oh) return false;
     ID3D12GraphicsCommandList *cl = fr.cl;
     ID3D12Resource *color = fr.color, *depth = fr.depth, *mv = fr.mv, *out = fr.output, *expo = fr.exposure, *reac = fr.reactive;
     collectRetired(false);
-    {  // (F8: the next kCapFrames frames captured; written out once the GPU is surely done with the last)
-        bool down = g_cfg.captureKey && (GetAsyncKeyState(g_cfg.captureKey) & 0x8000);
-        if (((down && !capKeyDown_) || (g_cfg.captureFrame > 0 && frames_ == (uint64_t)g_cfg.captureFrame)) && capN_ < 0) capN_ = 0, ditto_log("capture: the next %d frames (Relight %s)\n", kCapFrames, s_.relight ? (depth ? "on" : "on, but no depth") : "off");
-        capKeyDown_ = down;
-        if (capN_ == kCapFrames && frames_ >= capLast_ + kCapWait) capWrite(), capN_ = -1;
-    }
+    g_stats.backend = 0;  // (the menu: D3D12's options)
     // (no depth - an API that leaves it out: the convert pass reads 0 everywhere: the centre's motion, no disocclusion)
     D3D12_RESOURCE_DESC cd = color->GetDesc(), dd = depth ? depth->GetDesc() : D3D12_RESOURCE_DESC{}, md = mv->GetDesc(), od = out->GetDesc();
     uint32_t rw = fr.rw, rh = fr.rh, ow = fr.ow, oh = fr.oh;
@@ -606,7 +548,6 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     // and y, aotemporal, aocompose at render size - into aoCol_, the colour every later pass reads in the game's place;
     // their own root constants)
     DXGI_FORMAT cfmt = cd.Format;
-    bool relit = false;  // (Relight's colour made this frame: the F8 capture takes it too)
     if (s_.relight && depth && !s_.debugView) {
         bool made = aoNd_.res && aoNd_.w == rw && aoNd_.h == rh;
         if (!made) {
@@ -899,7 +840,6 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
             }
             transition(cl, aoCol_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             color = aoCol_.res, cfmt = aoCol_.fmt;
-            relit = true;
         }
     }
 
@@ -976,22 +916,6 @@ bool DittoSR::dispatch(const DittoFrame &fr, bool forceReset) {
     D3D12_RESOURCE_BARRIER ub = {};
     ub.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV, ub.UAV.pResource = out;
     cl->ResourceBarrier(1, &ub);
-    if (capN_ >= 0 && capN_ < kCapFrames) {  // (F8: this frame's output and Relight's colour copied)
-        D3D12_RESOURCE_BARRIER cb = {};
-        cb.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION, cb.Transition.pResource = out;
-        cb.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        cb.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS, cb.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-        cl->ResourceBarrier(1, &cb);
-        if (!capCopy(cl, out, capOut_[capN_])) ditto_log("capture: frame %d's output not copied (no readback buffer)\n", capN_);
-        std::swap(cb.Transition.StateBefore, cb.Transition.StateAfter);
-        cl->ResourceBarrier(1, &cb);
-        if (relit && aoCol_.res) {
-            transition(cl, aoCol_, D3D12_RESOURCE_STATE_COPY_SOURCE);
-            if (!capCopy(cl, aoCol_.res, capRel_[capN_])) ditto_log("capture: frame %d's Relight colour not copied (no readback buffer)\n", capN_);
-            transition(cl, aoCol_, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        }
-        if (++capN_ == kCapFrames) capLast_ = frames_;
-    }
     if (nu) cl->ResourceBarrier(nu, bs);
     if (tickMs_ > 0.0) {
         cl->EndQuery(timeQ_, D3D12_QUERY_TYPE_TIMESTAMP, kStamps * ts + 4);

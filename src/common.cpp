@@ -155,9 +155,6 @@ static void load_config() {
     c.compareKey = (int)strtol(b, nullptr, 0);
     GetPrivateProfileStringA("dittosr", "menu_key", "0x76", b, sizeof b, ini);
     c.menuKey = (int)strtol(b, nullptr, 0);
-    GetPrivateProfileStringA("dittosr", "capture_key", "0", b, sizeof b, ini);
-    c.captureKey = (int)strtol(b, nullptr, 0);
-    c.captureFrame = GetPrivateProfileIntA("dittosr", "capture_frame", 0, ini);
     c.compare = GetPrivateProfileIntA("dittosr", "compare", 0, ini) != 0;
     c.gameSharpness = GetPrivateProfileIntA("dittosr", "game_sharpness", -1, ini);
     c.frameGen = GetPrivateProfileIntA("dittosr", "frame_gen", 1, ini);

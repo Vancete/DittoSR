@@ -199,6 +199,7 @@ void DittoSR11::readTimes(ID3D11DeviceContext *imm) {
 bool DittoSR11::dispatch(const DittoFrame11 &fr, bool forceReset) {
     if (!ok_ || !fr.ctx || !fr.color || !fr.mv || !fr.output || !fr.rw || !fr.rh || !fr.ow || !fr.oh) return false;
     ID3D11DeviceContext *ctx = fr.ctx;
+    g_stats.backend = 2;  // (the menu: D3D11's options - no Ditto Relight)
     D3D11_TEXTURE2D_DESC cd, dd = {}, md, od;
     DXGI_FORMAT cfmt = tex_format(fr.color, &cd), mfmt = tex_format(fr.mv, &md), ofmt = tex_format(fr.output, &od);
     DXGI_FORMAT dfmt = fr.depth ? tex_format(fr.depth, &dd) : DXGI_FORMAT_UNKNOWN;

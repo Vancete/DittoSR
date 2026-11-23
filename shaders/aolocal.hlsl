@@ -1,4 +1,4 @@
-// Ditto Relight (experimental), the area's luma for the local exposure (D3D12; the mips' level 3 -
+// Ditto Relight (experimental), the area's luma for the local exposure (the mips' level 3 -
 // one texel each, 8 x 8 pixels): each texel's luma blurred over its 3 x 3 neighbours on its own surface - a Gaussian by
 // distance x how near each one's depth is to its own, each neighbour's luma at most 4 x its own (a light bar beside a
 // wall no longer brightens the wall's area) -, and its depth. The composition reads it bilinearly, each of the 4 x how

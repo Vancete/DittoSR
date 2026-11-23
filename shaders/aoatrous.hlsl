@@ -1,4 +1,4 @@
-// Ditto Relight (experimental), the a-trous filter (D3D12): after the temporal smoothing - a 3 x 3 at a spacing of axis
+// Ditto Relight (experimental), the a-trous filter: after the temporal smoothing - a 3 x 3 at a spacing of axis
 // pixels (1, then 2), each tap x 0.25 / 0.5 / 1 by its place x geoWeight (its depth and normal); the GI's also x its
 // luma's closeness to this pixel's (edge-stopping: e^(-|dl| / (0.25 x l + 0.02)) - the GI's own edges kept).
 //   flags2 128 (ao_gi_atrous): the GI alone, after it CACAO's blur on both; flags2 2 (ao_unified_filter): the AO too, a third pass at

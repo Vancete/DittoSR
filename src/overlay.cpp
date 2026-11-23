@@ -465,6 +465,7 @@ constexpr bool kCurvesEditor = false;
 bool visible(int i) {
     if (i == I_SHARP) return !g_m.sharpOff;
     if (i == I_UPSCALER || i == I_COMPARE) return g_stats.hasReal;
+    if (i == I_RELIGHT) return g_stats.backend != 2;  // (D3D11: no Ditto Relight)
     // (Relight's: the AO and GI strengths, the samples, its filters, the albedo's and the local exposure's strengths,
     // the AO's fade, the AO tests, the curves editor; the rest ini keys)
     if (i == I_RAO || i == I_RGI || i == I_RSAMPLES || i == I_THALF || i == I_TUNI) return g_m.relight;  // (the local exposure, the AO's fade: ini keys)
@@ -595,9 +596,10 @@ bool adjust(DittoSettings &s, int i, int dir) {
     case I_RTEMP: s.aoTemporal = !s.aoTemporal; return true;
     case I_TMIPS: s.aoMips = !s.aoMips; return true;
     case I_TBACK: s.aoBackBoost = !s.aoBackBoost; return true;
-    case I_THALF: {  // (Full, Half, Checkerboard - ao_resolution_mode 0, 2)
-        int k = !s.aoHalf ? 0 : s.aoResMode == 2 ? 2 : 1;
-        k = (k + (dir < 0 ? 2 : 1)) % 3;
+    case I_THALF: {  // (Full, Half, Checkerboard - ao_resolution_mode 0, 2; Checkerboard D3D12's)
+        int nk = g_stats.backend == 0 ? 3 : 2;
+        int k = !s.aoHalf ? 0 : s.aoResMode == 2 && nk == 3 ? 2 : 1;
+        k = (k + (dir < 0 ? nk - 1 : 1)) % nk;
         s.aoHalf = k > 0, s.aoResMode = k == 2 ? 2 : 0;
         return true;
     }
@@ -846,14 +848,14 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
         const char *v = !on ? "Off (the game / OptiScaler)" : g_stats.fgMode == 1 ? "DittoSR" : s.fgAmd ? "AMD's" : "DittoSR";
         choice_row(I_FGEN, "Frame generation", v);
     }
-    toggle_row(I_RELIGHT, "Ditto Relight", s.relight);
-    if (s.relight) {  // (its strengths, its quality toggles)
+    if (g_stats.backend != 2) toggle_row(I_RELIGHT, "Ditto Relight", s.relight);  // (D3D11: none)
+    if (s.relight && g_stats.backend != 2) {  // (its strengths, its quality toggles)
         slider_row(I_RAO, "Ambient occlusion", "the darkening");
         slider_row(I_RGI, "Global illumination", "the bounce light");
         slider_row(I_RSAMPLES, "Samples", "more: less noise, slower");
         {
             static const char *const kRes[3] = {"Full", "Half", "Checkerboard"};
-            choice_row(I_THALF, "Resolution", kRes[!s.aoHalf ? 0 : s.aoResMode == 2 ? 2 : 1]);
+            choice_row(I_THALF, "Resolution", kRes[!s.aoHalf ? 0 : s.aoResMode == 2 && g_stats.backend == 0 ? 2 : 1]);
         }
         toggle_row(I_TUNI, "Unified filter", s.aoUnified);
         if (!s.aoUnified) {

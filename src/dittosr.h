@@ -9,7 +9,7 @@
 #include "ffx_api/ffx_upscale.h"
 
 // the version both front ends report (the FidelityFX API provider, the libxess.dll proxy)
-#define DITTOSR_VERSION "0.5.4"
+#define DITTOSR_VERSION "0.5.6"
 #define DITTOSR_VERSION_NAME "DittoSR " DITTOSR_VERSION
 
 struct DittoSettings {
@@ -313,20 +313,6 @@ private:
     Tex aoNdP_, aoNdHalfP_;  // (ao_pack_nd: the normal and depth packed, render and half size)
     int aoLastMode_ = -1;  // (the last frame's resolution mode - the history is one mode's)
     Tex aoCk_;  // (checkerboard: the main pass' half-width target)
-    // (the F8 capture: per frame, the output's and Relight's colour's readback copies; capN_ the frames copied (-1: no
-    // capture), capLast_ the frame of the last - written out kCapWait frames later, the GPU done with them)
-    struct Cap {
-        ID3D12Resource *rb = nullptr;
-        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp = {};
-        uint32_t w = 0, h = 0;
-    };
-    static constexpr int kCapFrames = 8, kCapWait = 6;
-    Cap capOut_[kCapFrames], capRel_[kCapFrames];
-    int capN_ = -1;
-    uint64_t capLast_ = 0;
-    bool capKeyDown_ = false;
-    bool capCopy(ID3D12GraphicsCommandList *cl, ID3D12Resource *src, Cap &c);
-    void capWrite();
     bool aoLutMade_ = false;
     int aoCur_ = 0;
     bool aoOk_ = false;
@@ -374,10 +360,6 @@ struct DittoConfig {
     // the output's right half, DittoSR on the left; it needs the game's DLL alongside (<name>.orig.dll, libxess_orig.dll)
     int compareKey = 0;
     int menuKey = 0x76;  // (F7: the in-game menu - overlay.cpp)
-    // F8: the next 8 frames captured (D3D12) - the output and Ditto Relight's colour, raw files in dittosr-capture\
-    // next to the DLL (test/capture.py turns them into PNGs and measures the flicker); 0: none
-    int captureKey = 0;  // (capture_key=0x77: F8 - off by default, F8 is many games' quick load)
-    int captureFrame = 0;  // (capture_frame=N: the capture started at the Nth upscale - the harness has no keys)
     bool compare = false;  // ([dittosr] compare=1: from the start)
     // the ratios the FidelityFX API answers the quality modes with: quality, balanced, performance, ultra performance
     // (0: FSR 3.1's 1.5, 1.7, 2, 3) - games that ask, not those that work them out themselves
@@ -412,6 +394,7 @@ struct DittoStats {
     volatile float upscaleMs = 0.0f;  // (DittoSR's passes on the GPU, a few frames late; 0: unknown)
     volatile uint32_t rw = 0, rh = 0, ow = 0, oh = 0;
     volatile int api = 0;  // 1 the FidelityFX API (AMD's FSR), 2 XeSS, 3 NGX (DLSS's inputs, D3D11)
+    volatile int backend = 0;  // the graphics API of the last upscale: 0 D3D12, 1 Vulkan, 2 D3D11 (the menu's options)
     volatile bool active = false, compare = false, hasReal = false;
     volatile int64_t lastQpc = 0;  // (QueryPerformanceCounter at the last upscale)
     // the frame weight FSR 3.1's velocity factor and reactiveness scale set in place of the settings' (OptiScaler's

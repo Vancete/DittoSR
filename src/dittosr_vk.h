@@ -86,7 +86,7 @@ private:
     // (EXPERIMENTAL, Ditto Relight: prepass, main, filter, temporal, compose)
     VkPipeline psoAoPrep_ = VK_NULL_HANDLE, psoAoFilter_ = VK_NULL_HANDLE, psoAoTemporal_ = VK_NULL_HANDLE,
                psoAoComp_ = VK_NULL_HANDLE, psoAoMain16_ = VK_NULL_HANDLE, psoAoLut_ = VK_NULL_HANDLE, psoAoCacao_ = VK_NULL_HANDLE,
-               psoAoMipAll_ = VK_NULL_HANDLE, psoAoCacao2_ = VK_NULL_HANDLE, psoAoCurve_ = VK_NULL_HANDLE;  // (ao_fuse; the curve's table)
+               psoAoMipAll_ = VK_NULL_HANDLE, psoAoCacao2_ = VK_NULL_HANDLE, psoAoCurve_ = VK_NULL_HANDLE, psoAoAtrous_ = VK_NULL_HANDLE, psoAoLocal_ = VK_NULL_HANDLE;  // (ao_fuse; the curve's table)
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> sets_;
     VkBuffer ubo_ = VK_NULL_HANDLE;
@@ -104,7 +104,7 @@ private:
     Img aoHalfF_, aoNdHalf_, aoHh_[2], aoHDh_[2];
     // (... the normal and depth packed (render and half size: ao_pack_nd), the curve's table (ao_curve_lut - curveKey_: the
     // curve it was built for))
-    Img aoNdP_, aoNdHalfP_, aoCurveLut_;
+    Img aoNdP_, aoNdHalfP_, aoCurveLut_, aoLocal_;  // (... the local exposure's area luma)
     float curveKey_[26] = {};
     bool aoLastHalf_ = false;
     bool aoLutMade_ = false;
