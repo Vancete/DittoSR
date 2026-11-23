@@ -459,16 +459,16 @@ bool key_pressed(Key &k, double t, bool repeat) {
 float fsr_weight(const DittoSettings &s) { return s.frameWeightOverride ? -1.0f : (float)g_stats.fsrFrameWeight; }
 
 // the curves editor under Ditto Relight (the curve also ini curve)
-constexpr bool kCurvesEditor = true;
+constexpr bool kCurvesEditor = false;
 
 bool visible(int i) {
     if (i == I_SHARP) return !g_m.sharpOff;
     if (i == I_UPSCALER || i == I_COMPARE) return g_stats.hasReal;
     // (Relight's: the AO and GI strengths, the samples, its filters, the albedo's and the local exposure's strengths,
     // the AO's fade, the AO tests, the curves editor; the rest ini keys)
-    if (i == I_RAO || i == I_RGI || i == I_RSAMPLES || i == I_THALF || i == I_TUNI || i == I_RLEXP || i == I_RFADE) return g_m.relight;
-    if (i == I_CKGI || i == I_CKFUSE) return g_m.relight && g_m.checker;  // (the checkerboard's)
-    if (i == I_FULL2) return g_m.relight && g_m.checker && g_m.unified;
+    if (i == I_RAO || i == I_RGI || i == I_RSAMPLES || i == I_THALF || i == I_TUNI) return g_m.relight;  // (the local exposure, the AO's fade: ini keys)
+    if (i == I_CKGI || i == I_CKFUSE) return false;  // (the checkerboard's: ini keys)
+    if (i == I_FULL2) return false;
     if (i == I_TCACAO || i == I_XATROUS) return g_m.relight && !g_m.unified;  // (the separate filters: without the unified one)
     if (i == I_RCURVE) return kCurvesEditor && g_m.relight;
     if (i >= I_RAO && i <= I_RLEXP) return false;  // (Relight's other settings: ini keys)
@@ -854,18 +854,11 @@ float build(Ui &u, const DittoSettings &s, float W, float H) {
             static const char *const kRes[3] = {"Full", "Half", "Checkerboard"};
             choice_row(I_THALF, "Resolution", kRes[!s.aoHalf ? 0 : s.aoResMode == 2 ? 2 : 1]);
         }
-        if (s.aoHalf && s.aoResMode == 2) {
-            toggle_row(I_CKGI, "Checkerboard: GI on half", s.aoCkGiHalf);
-            toggle_row(I_CKFUSE, "Checkerboard: fill in filter", s.aoCkFuse);
-        }
         toggle_row(I_TUNI, "Unified filter", s.aoUnified);
-        if (s.aoUnified && s.aoHalf && s.aoResMode == 2) toggle_row(I_FULL2, "Unified filter: 2 passes", s.aoFull2Pass);
         if (!s.aoUnified) {
             toggle_row(I_TCACAO, "CACAO blur", s.aoCacao);
             toggle_row(I_XATROUS, "GI a-trous filter", s.aoAtrous);
         }
-        slider_row(I_RLEXP, "Local exposure", "shade lifted, glare tamed");
-        slider_row(I_RFADE, "AO fade distance", "faded out to twice it");
     }
     if (s.relight && kCurvesEditor) {
         // the curves editor (Photoshop's): the line, the curve, its points; the
